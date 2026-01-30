@@ -265,6 +265,23 @@
       font-family: 'JetBrains Mono', monospace !important;
       font-size: 12px !important;
     }
+
+    /* Panel styling */
+    .panel {
+      background: var(--bg-panel);
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      padding: 10px;
+      backdrop-filter: blur(10px);
+    }
+    
+    .panel-header {
+      font-size: 10px;
+      font-weight: 700;
+      color: var(--accent-cyan);
+      margin-bottom: 8px;
+      letter-spacing: 0.5px;
+    }
   </style>
 </head>
 <body>
@@ -802,9 +819,11 @@
     };
 
     // ============================================
-    // PROPAGATION PANEL COMPONENT
+    // PROPAGATION PANEL COMPONENT (Toggleable views)
     // ============================================
     const PropagationPanel = ({ propagation, loading }) => {
+      const [viewMode, setViewMode] = useState('bars'); // 'bars' or 'chart'
+      
       if (loading || !propagation) {
         return (
           <div className="panel">
@@ -818,7 +837,25 @@
 
       const { solarData, distance, currentBands, currentHour, hourlyPredictions } = propagation;
       
-      // Get status color
+      // Get reliability color for heat map (VOACAP style - red=good, green=poor)
+      const getHeatColor = (rel) => {
+        if (rel >= 80) return '#ff0000'; // Red - excellent
+        if (rel >= 60) return '#ff6600'; // Orange - good
+        if (rel >= 40) return '#ffcc00'; // Yellow - fair
+        if (rel >= 20) return '#88cc00'; // Yellow-green - poor
+        if (rel >= 10) return '#00aa00'; // Green - marginal
+        return '#004400'; // Dark green - closed
+      };
+
+      // Get reliability bar color (standard - green=good)
+      const getReliabilityColor = (rel) => {
+        if (rel >= 70) return '#00ff88';
+        if (rel >= 50) return '#88ff00';
+        if (rel >= 30) return '#ffcc00';
+        if (rel >= 15) return '#ff8800';
+        return '#ff4444';
+      };
+
       const getStatusColor = (status) => {
         switch (status) {
           case 'EXCELLENT': return '#00ff88';
@@ -830,137 +867,237 @@
         }
       };
 
-      // Get reliability bar color
-      const getReliabilityColor = (rel) => {
-        if (rel >= 70) return '#00ff88';
-        if (rel >= 50) return '#88ff00';
-        if (rel >= 30) return '#ffcc00';
-        if (rel >= 15) return '#ff8800';
-        return '#ff4444';
-      };
+      const bands = ['80m', '40m', '30m', '20m', '17m', '15m', '12m', '10m'];
 
       return (
-        <div className="panel">
-          <div className="panel-header">
-            📡 HF Propagation to DX
-            <span style={{ fontSize: '10px', marginLeft: '8px', color: 'var(--text-muted)' }}>
-              {Math.round(distance).toLocaleString()} km
+        <div className="panel" style={{ cursor: 'pointer' }} onClick={() => setViewMode(v => v === 'bars' ? 'chart' : 'bars')}>
+          <div className="panel-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span>📡 VOACAP DE-DX</span>
+            <span style={{ fontSize: '9px', color: 'var(--text-muted)' }}>
+              {viewMode === 'bars' ? '▦ bars' : '▤ chart'} • click to toggle
             </span>
           </div>
           
-          {/* Solar Conditions Summary */}
-          <div style={{ 
-            display: 'grid', 
-            gridTemplateColumns: '1fr 1fr 1fr', 
-            gap: '8px', 
-            padding: '8px',
-            marginBottom: '8px',
-            background: 'var(--bg-tertiary)',
-            borderRadius: '4px',
-            fontSize: '11px'
-          }}>
-            <div style={{ textAlign: 'center' }}>
-              <div style={{ color: 'var(--text-muted)' }}>SFI</div>
-              <div style={{ color: 'var(--accent-primary)', fontWeight: 'bold' }}>{solarData.sfi}</div>
-            </div>
-            <div style={{ textAlign: 'center' }}>
-              <div style={{ color: 'var(--text-muted)' }}>SSN</div>
-              <div style={{ color: 'var(--accent-secondary)', fontWeight: 'bold' }}>{solarData.ssn}</div>
-            </div>
-            <div style={{ textAlign: 'center' }}>
-              <div style={{ color: 'var(--text-muted)' }}>K</div>
+          {viewMode === 'chart' ? (
+            /* VOACAP Heat Map Chart View */
+            <div style={{ padding: '4px' }}>
+              {/* Heat map grid */}
               <div style={{ 
-                color: solarData.kIndex >= 4 ? '#ff4444' : solarData.kIndex >= 3 ? '#ffcc00' : '#00ff88',
-                fontWeight: 'bold' 
-              }}>{solarData.kIndex}</div>
-            </div>
-          </div>
-          
-          {/* Band Predictions */}
-          <div style={{ fontSize: '11px' }}>
-            <div style={{ 
-              display: 'grid', 
-              gridTemplateColumns: '45px 1fr 55px', 
-              gap: '4px',
-              padding: '4px 0',
-              borderBottom: '1px solid var(--border-color)',
-              marginBottom: '4px',
-              color: 'var(--text-muted)',
-              fontSize: '10px'
-            }}>
-              <span>BAND</span>
-              <span>RELIABILITY</span>
-              <span style={{ textAlign: 'right' }}>STATUS</span>
-            </div>
-            
-            {currentBands.slice(0, 8).map((band, idx) => (
-              <div key={band.band} style={{ 
                 display: 'grid', 
-                gridTemplateColumns: '45px 1fr 55px', 
-                gap: '4px',
-                padding: '3px 0',
-                alignItems: 'center',
-                borderBottom: idx < 7 ? '1px solid var(--bg-tertiary)' : 'none'
+                gridTemplateColumns: '28px repeat(24, 1fr)',
+                gridTemplateRows: `repeat(${bands.length}, 12px)`,
+                gap: '1px',
+                fontSize: '8px',
+                fontFamily: 'JetBrains Mono, monospace'
               }}>
-                <span style={{ 
-                  fontFamily: 'JetBrains Mono, monospace',
-                  color: band.reliability >= 50 ? 'var(--color-primary)' : 'var(--text-muted)'
+                {bands.map((band, bandIdx) => (
+                  <React.Fragment key={band}>
+                    {/* Band label */}
+                    <div style={{ 
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      justifyContent: 'flex-end',
+                      paddingRight: '4px',
+                      color: 'var(--text-muted)',
+                      fontSize: '8px'
+                    }}>
+                      {band.replace('m', '')}
+                    </div>
+                    {/* 24 hour cells */}
+                    {Array.from({ length: 24 }, (_, hour) => {
+                      const bandData = hourlyPredictions?.[band];
+                      const hourData = bandData?.find(h => h.hour === hour);
+                      const rel = hourData?.reliability || 0;
+                      return (
+                        <div 
+                          key={hour}
+                          style={{ 
+                            background: getHeatColor(rel),
+                            borderRadius: '1px',
+                            border: hour === currentHour ? '1px solid white' : 'none'
+                          }}
+                          title={`${band} @ ${hour}:00 UTC: ${rel}%`}
+                        />
+                      );
+                    })}
+                  </React.Fragment>
+                ))}
+              </div>
+              
+              {/* Hour labels */}
+              <div style={{ 
+                display: 'grid', 
+                gridTemplateColumns: '28px repeat(24, 1fr)',
+                marginTop: '2px',
+                fontSize: '7px',
+                color: 'var(--text-muted)'
+              }}>
+                <div>UTC</div>
+                {[0, '', '', 3, '', '', 6, '', '', 9, '', '', 12, '', '', 15, '', '', 18, '', '', 21, '', ''].map((h, i) => (
+                  <div key={i} style={{ textAlign: 'center' }}>{h}</div>
+                ))}
+              </div>
+              
+              {/* Legend & Info */}
+              <div style={{ 
+                marginTop: '6px', 
+                display: 'flex', 
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                fontSize: '8px'
+              }}>
+                <div style={{ display: 'flex', gap: '2px', alignItems: 'center' }}>
+                  <span style={{ color: 'var(--text-muted)' }}>REL:</span>
+                  <div style={{ width: '8px', height: '8px', background: '#004400', borderRadius: '1px' }} />
+                  <div style={{ width: '8px', height: '8px', background: '#00aa00', borderRadius: '1px' }} />
+                  <div style={{ width: '8px', height: '8px', background: '#88cc00', borderRadius: '1px' }} />
+                  <div style={{ width: '8px', height: '8px', background: '#ffcc00', borderRadius: '1px' }} />
+                  <div style={{ width: '8px', height: '8px', background: '#ff6600', borderRadius: '1px' }} />
+                  <div style={{ width: '8px', height: '8px', background: '#ff0000', borderRadius: '1px' }} />
+                </div>
+                <div style={{ color: 'var(--text-muted)' }}>
+                  {Math.round(distance/1000)}Kkm, SSN={solarData.ssn}
+                </div>
+              </div>
+            </div>
+          ) : (
+            /* Bar Chart View */
+            <div style={{ fontSize: '11px' }}>
+              {/* Solar quick stats */}
+              <div style={{ 
+                display: 'flex', 
+                justifyContent: 'space-around',
+                padding: '4px',
+                marginBottom: '4px',
+                background: 'var(--bg-tertiary)',
+                borderRadius: '4px',
+                fontSize: '10px'
+              }}>
+                <span><span style={{ color: 'var(--text-muted)' }}>SFI </span><span style={{ color: 'var(--accent-amber)' }}>{solarData.sfi}</span></span>
+                <span><span style={{ color: 'var(--text-muted)' }}>SSN </span><span style={{ color: 'var(--accent-cyan)' }}>{solarData.ssn}</span></span>
+                <span><span style={{ color: 'var(--text-muted)' }}>K </span><span style={{ color: solarData.kIndex >= 4 ? '#ff4444' : '#00ff88' }}>{solarData.kIndex}</span></span>
+              </div>
+              
+              {currentBands.slice(0, 8).map((band, idx) => (
+                <div key={band.band} style={{ 
+                  display: 'grid', 
+                  gridTemplateColumns: '32px 1fr 40px', 
+                  gap: '4px',
+                  padding: '2px 0',
+                  alignItems: 'center'
                 }}>
-                  {band.band}
-                </span>
-                <div style={{ position: 'relative', height: '12px' }}>
-                  <div style={{
-                    position: 'absolute',
-                    top: 0,
-                    left: 0,
-                    height: '100%',
-                    width: '100%',
-                    background: 'var(--bg-tertiary)',
-                    borderRadius: '2px'
-                  }} />
-                  <div style={{
-                    position: 'absolute',
-                    top: 0,
-                    left: 0,
-                    height: '100%',
-                    width: `${band.reliability}%`,
-                    background: getReliabilityColor(band.reliability),
-                    borderRadius: '2px',
-                    transition: 'width 0.3s ease'
-                  }} />
-                  <span style={{
-                    position: 'absolute',
-                    right: '4px',
-                    top: '50%',
-                    transform: 'translateY(-50%)',
+                  <span style={{ 
+                    fontFamily: 'JetBrains Mono, monospace',
+                    fontSize: '10px',
+                    color: band.reliability >= 50 ? 'var(--accent-green)' : 'var(--text-muted)'
+                  }}>
+                    {band.band}
+                  </span>
+                  <div style={{ position: 'relative', height: '10px', background: 'var(--bg-tertiary)', borderRadius: '2px' }}>
+                    <div style={{
+                      position: 'absolute',
+                      top: 0,
+                      left: 0,
+                      height: '100%',
+                      width: `${band.reliability}%`,
+                      background: getReliabilityColor(band.reliability),
+                      borderRadius: '2px'
+                    }} />
+                  </div>
+                  <span style={{ 
+                    textAlign: 'right',
                     fontSize: '9px',
-                    color: band.reliability > 50 ? '#000' : 'var(--text-muted)'
+                    color: getStatusColor(band.status)
                   }}>
                     {band.reliability}%
                   </span>
                 </div>
-                <span style={{ 
-                  textAlign: 'right',
-                  fontSize: '9px',
-                  fontWeight: 'bold',
-                  color: getStatusColor(band.status)
-                }}>
-                  {band.status}
-                </span>
-              </div>
-            ))}
-          </div>
-          
-          {/* Footer */}
+              ))}
+            </div>
+          )}
+        </div>
+      );
+    };
+
+    // ============================================
+    // SOLAR IMAGE COMPONENT
+    // ============================================
+    const SolarImage = () => {
+      const [imageType, setImageType] = useState('0193'); // AIA 193 (corona)
+      
+      // SDO/AIA image types
+      const imageTypes = {
+        '0193': { name: 'AIA 193Å', desc: 'Corona' },
+        '0304': { name: 'AIA 304Å', desc: 'Chromosphere' },
+        '0171': { name: 'AIA 171Å', desc: 'Quiet Corona' },
+        '0094': { name: 'AIA 94Å', desc: 'Flaring' },
+        'HMIIC': { name: 'HMI Int', desc: 'Visible' }
+      };
+      
+      // SDO images update every ~15 minutes
+      const timestamp = Math.floor(Date.now() / 900000) * 900000; // Round to 15 min
+      const imageUrl = `https://sdo.gsfc.nasa.gov/assets/img/latest/latest_256_${imageType}.jpg?t=${timestamp}`;
+      
+      return (
+        <div className="panel" style={{ padding: '8px' }}>
           <div style={{ 
-            marginTop: '8px', 
-            paddingTop: '8px',
-            borderTop: '1px solid var(--border-color)',
-            fontSize: '9px',
-            color: 'var(--text-muted)',
-            textAlign: 'center'
+            display: 'flex', 
+            justifyContent: 'space-between', 
+            alignItems: 'center',
+            marginBottom: '6px'
           }}>
-            Predictions at {String(currentHour).padStart(2, '0')}:00 UTC • Based on current solar conditions
+            <span style={{ fontSize: '10px', color: 'var(--accent-amber)', fontWeight: '700' }}>☀ SOLAR</span>
+            <select 
+              value={imageType}
+              onChange={(e) => setImageType(e.target.value)}
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                background: 'var(--bg-tertiary)',
+                border: '1px solid var(--border-color)',
+                color: 'var(--text-secondary)',
+                fontSize: '9px',
+                padding: '2px 4px',
+                borderRadius: '3px',
+                cursor: 'pointer'
+              }}
+            >
+              {Object.entries(imageTypes).map(([key, val]) => (
+                <option key={key} value={key}>{val.desc}</option>
+              ))}
+            </select>
+          </div>
+          <div style={{ 
+            position: 'relative',
+            width: '100%',
+            paddingBottom: '100%', // Square aspect ratio
+            background: '#000',
+            borderRadius: '50%',
+            overflow: 'hidden'
+          }}>
+            <img 
+              src={imageUrl}
+              alt="Current Sun"
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                width: '100%',
+                height: '100%',
+                objectFit: 'cover',
+                borderRadius: '50%'
+              }}
+              onError={(e) => {
+                e.target.style.display = 'none';
+              }}
+            />
+          </div>
+          <div style={{ 
+            textAlign: 'center', 
+            marginTop: '4px', 
+            fontSize: '8px', 
+            color: 'var(--text-muted)' 
+          }}>
+            SDO/AIA • Live from NASA
           </div>
         </div>
       );
@@ -2246,10 +2383,10 @@
             </div>
             
             {/* Band Conditions - Compact with color coding */}
-            <div className="panel" style={{ padding: '10px', flex: '1 1 auto', overflow: 'hidden', minHeight: 0 }}>
+            <div className="panel" style={{ padding: '10px', flex: '0 0 auto', overflow: 'hidden' }}>
               <div style={{ fontSize: '10px', color: 'var(--accent-purple)', fontWeight: '700', marginBottom: '6px' }}>📊 BAND CONDITIONS</div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '4px', fontSize: '10px', fontFamily: 'JetBrains Mono' }}>
-                {bandConditions.data.map(band => {
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '3px', fontSize: '9px', fontFamily: 'JetBrains Mono' }}>
+                {bandConditions.data.slice(0, 12).map(band => {
                   const colors = {
                     GOOD: { bg: 'rgba(0,255,136,0.2)', color: '#00ff88', border: 'rgba(0,255,136,0.4)' },
                     FAIR: { bg: 'rgba(255,180,50,0.2)', color: '#ffb432', border: 'rgba(255,180,50,0.4)' },
@@ -2259,41 +2396,23 @@
                   return (
                     <div key={band.band} style={{ 
                       textAlign: 'center', 
-                      padding: '4px 2px',
+                      padding: '3px 1px',
                       background: style.bg,
                       border: `1px solid ${style.border}`,
-                      borderRadius: '3px'
+                      borderRadius: '2px'
                     }}>
-                      <div style={{ fontWeight: '600', color: style.color }}>{band.band}</div>
-                      <div style={{ fontSize: '8px', color: style.color, opacity: 0.8 }}>{band.condition}</div>
+                      <div style={{ fontWeight: '600', color: style.color, fontSize: '8px' }}>{band.band}</div>
                     </div>
                   );
                 })}
               </div>
             </div>
             
-            {/* Propagation Compact */}
-            <div className="panel" style={{ padding: '10px', flex: '1 1 auto', overflow: 'hidden', minHeight: 0 }}>
-              <div style={{ fontSize: '10px', color: 'var(--accent-cyan)', fontWeight: '700', marginBottom: '6px' }}>📡 PROPAGATION TO DX</div>
-              {propagation.data ? (
-                <div style={{ fontSize: '10px', fontFamily: 'JetBrains Mono' }}>
-                  <div style={{ marginBottom: '6px', color: 'var(--text-muted)', fontSize: '9px' }}>
-                    {Math.round(propagation.data.distance).toLocaleString()} km path
-                  </div>
-                  {propagation.data.currentBands.slice(0, 6).map(b => (
-                    <div key={b.band} style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '3px' }}>
-                      <span style={{ width: '32px', color: b.reliability >= 50 ? 'var(--accent-green)' : 'var(--text-muted)' }}>{b.band}</span>
-                      <div style={{ flex: 1, height: '8px', background: 'var(--bg-tertiary)', borderRadius: '2px', overflow: 'hidden' }}>
-                        <div style={{ width: `${b.reliability}%`, height: '100%', background: b.reliability >= 70 ? '#00ff88' : b.reliability >= 50 ? '#88ff00' : b.reliability >= 30 ? '#ffcc00' : '#ff4444', borderRadius: '2px' }} />
-                      </div>
-                      <span style={{ width: '28px', fontSize: '9px', color: b.reliability >= 50 ? 'var(--accent-green)' : 'var(--text-muted)' }}>{b.reliability}%</span>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div style={{ color: 'var(--text-muted)', fontSize: '10px' }}>Loading...</div>
-              )}
-            </div>
+            {/* Solar Image */}
+            <SolarImage />
+            
+            {/* VOACAP Propagation - Toggleable */}
+            <PropagationPanel propagation={propagation.data} loading={propagation.loading} />
           </div>
           
           {/* CENTER - MAP */}
