@@ -657,8 +657,9 @@ app.get('/api/dxcluster/sources', (req, res) => {
 // ============================================
 
 // Cache for DX spot paths to avoid excessive lookups
-let dxSpotPathsCache = { paths: [], timestamp: 0 };
-const DXPATHS_CACHE_TTL = 30000; // 30 seconds cache
+let dxSpotPathsCache = { paths: [], allPaths: [], timestamp: 0 };
+const DXPATHS_CACHE_TTL = 5000; // 5 seconds cache between fetches
+const DXPATHS_RETENTION = 30 * 60 * 1000; // 30 minute spot retention
 
 app.get('/api/dxcluster/paths', async (req, res) => {
   // Check cache first
@@ -673,22 +674,24 @@ app.get('/api/dxcluster/paths', async (req, res) => {
     const timeout = setTimeout(() => controller.abort(), 10000);
     
     const response = await fetch('https://www.hamqth.com/dxc_csv.php?limit=50', {
-      headers: { 'User-Agent': 'OpenHamClock/3.5' },
+      headers: { 'User-Agent': 'OpenHamClock/3.7' },
       signal: controller.signal
     });
     clearTimeout(timeout);
     
+    const now = Date.now();
+    
     if (!response.ok) {
-      return res.json([]);
+      // Return existing paths if fetch failed
+      const validPaths = dxSpotPathsCache.allPaths.filter(p => (now - p.timestamp) < DXPATHS_RETENTION);
+      return res.json(validPaths.slice(0, 50));
     }
     
     const text = await response.text();
     const lines = text.trim().split('\n').filter(line => line.includes('^'));
     
-    // Parse spots and filter to last 5 minutes
-    const now = new Date();
-    const fiveMinutesAgo = new Date(now.getTime() - 5 * 60 * 1000);
-    const spots = [];
+    // Parse new spots
+    const newSpots = [];
     
     for (const line of lines) {
       const parts = line.split('^');
@@ -702,37 +705,24 @@ app.get('/api/dxcluster/paths', async (req, res) => {
       
       if (!spotter || !dxCall || freqKhz <= 0) continue;
       
-      // Parse time: "2149 2025-05-27" -> check if within last 5 minutes
-      // Note: HamQTH shows UTC time, format is "HHMM YYYY-MM-DD"
-      let spotTime = null;
-      if (timeDate.length >= 15) {
-        const timeStr = timeDate.substring(0, 4); // HHMM
-        const dateStr = timeDate.substring(5);    // YYYY-MM-DD
-        const hours = parseInt(timeStr.substring(0, 2));
-        const minutes = parseInt(timeStr.substring(2, 4));
-        spotTime = new Date(`${dateStr}T${String(hours).padStart(2,'0')}:${String(minutes).padStart(2,'0')}:00Z`);
-      }
-      
-      // Include spot if we couldn't parse time or if it's within 5 minutes
-      if (!spotTime || spotTime >= fiveMinutesAgo) {
-        spots.push({
-          spotter,
-          dxCall,
-          freq: (freqKhz / 1000).toFixed(3),
-          comment,
-          time: timeDate.length >= 4 ? timeDate.substring(0, 2) + ':' + timeDate.substring(2, 4) + 'z' : ''
-        });
-      }
+      newSpots.push({
+        spotter,
+        dxCall,
+        freq: (freqKhz / 1000).toFixed(3),
+        comment,
+        time: timeDate.length >= 4 ? timeDate.substring(0, 2) + ':' + timeDate.substring(2, 4) + 'z' : '',
+        id: `${dxCall}-${freqKhz}-${spotter}`
+      });
     }
     
     // Get unique callsigns to look up
     const allCalls = new Set();
-    spots.forEach(s => {
+    newSpots.forEach(s => {
       allCalls.add(s.spotter);
       allCalls.add(s.dxCall);
     });
     
-    // Look up locations for all callsigns (limit to 40 to avoid timeouts)
+    // Look up locations for all callsigns
     const locations = {};
     const callsToLookup = [...allCalls].slice(0, 40);
     
@@ -743,8 +733,8 @@ app.get('/api/dxcluster/paths', async (req, res) => {
       }
     }
     
-    // Build paths with both locations
-    const paths = spots
+    // Build new paths with locations
+    const newPaths = newSpots
       .map(spot => {
         const spotterLoc = locations[spot.spotter];
         const dxLoc = locations[spot.dxCall];
@@ -761,23 +751,50 @@ app.get('/api/dxcluster/paths', async (req, res) => {
             dxCountry: dxLoc.country,
             freq: spot.freq,
             comment: spot.comment,
-            time: spot.time
+            time: spot.time,
+            id: spot.id,
+            timestamp: now
           };
         }
         return null;
       })
-      .filter(p => p !== null)
-      .slice(0, 25); // Limit to 25 paths to avoid cluttering the map
+      .filter(p => p !== null);
     
-    console.log('[DX Paths]', paths.length, 'paths with locations from', spots.length, 'spots');
+    // Merge with existing paths, removing expired and duplicates
+    const existingValidPaths = dxSpotPathsCache.allPaths.filter(p => 
+      (now - p.timestamp) < DXPATHS_RETENTION
+    );
+    
+    // Add new paths, avoiding duplicates (same dxCall+freq within 2 minutes)
+    const mergedPaths = [...existingValidPaths];
+    for (const newPath of newPaths) {
+      const isDuplicate = mergedPaths.some(existing => 
+        existing.dxCall === newPath.dxCall && 
+        existing.freq === newPath.freq &&
+        (now - existing.timestamp) < 120000 // 2 minute dedup window
+      );
+      if (!isDuplicate) {
+        mergedPaths.push(newPath);
+      }
+    }
+    
+    // Sort by timestamp (newest first) and limit
+    const sortedPaths = mergedPaths.sort((a, b) => b.timestamp - a.timestamp).slice(0, 100);
+    
+    console.log('[DX Paths]', sortedPaths.length, 'total paths (', newPaths.length, 'new from', newSpots.length, 'spots)');
     
     // Update cache
-    dxSpotPathsCache = { paths, timestamp: Date.now() };
+    dxSpotPathsCache = { 
+      paths: sortedPaths.slice(0, 50), // Return 50 for display
+      allPaths: sortedPaths, // Keep all for accumulation
+      timestamp: now 
+    };
     
-    res.json(paths);
+    res.json(dxSpotPathsCache.paths);
   } catch (error) {
     console.error('[DX Paths] Error:', error.message);
-    res.json([]);
+    // Return cached data on error
+    res.json(dxSpotPathsCache.paths || []);
   }
 });
 

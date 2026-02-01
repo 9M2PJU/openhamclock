@@ -696,71 +696,162 @@
       return { data, loading };
     };
 
-    const useDXCluster = (source = 'auto') => {
-      const [data, setData] = useState([]);
+    const useDXCluster = (source = 'auto', filters = {}) => {
+      const [allSpots, setAllSpots] = useState([]); // All accumulated spots
+      const [data, setData] = useState([]); // Filtered spots for display
       const [loading, setLoading] = useState(true);
       const [activeSource, setActiveSource] = useState('');
+      const spotRetentionMs = 30 * 60 * 1000; // 30 minutes
+      const pollInterval = 5000; // 5 seconds
+
+      // Apply filters to spots
+      const applyFilters = useCallback((spots, filters) => {
+        if (!filters || Object.keys(filters).length === 0) return spots;
+        
+        return spots.filter(spot => {
+          // Zone filter
+          if (filters.zones && filters.zones.length > 0) {
+            // Extract zone from callsign prefix (simplified)
+            const zone = spot.zone || null;
+            if (zone && !filters.zones.includes(zone)) return false;
+          }
+          
+          // Band filter
+          if (filters.bands && filters.bands.length > 0) {
+            const freq = parseFloat(spot.freq);
+            const band = getBandFromFreq(freq);
+            if (!filters.bands.includes(band)) return false;
+          }
+          
+          // Mode filter
+          if (filters.modes && filters.modes.length > 0) {
+            const mode = spot.mode || detectMode(spot.comment);
+            if (mode && !filters.modes.includes(mode)) return false;
+          }
+          
+          // Callsign filter (search in DX call or spotter)
+          if (filters.callsign && filters.callsign.trim()) {
+            const search = filters.callsign.toUpperCase().trim();
+            const matchesDX = spot.call && spot.call.toUpperCase().includes(search);
+            const matchesSpotter = spot.spotter && spot.spotter.toUpperCase().includes(search);
+            if (!matchesDX && !matchesSpotter) return false;
+          }
+          
+          // Exclude callsign patterns
+          if (filters.exclude && filters.exclude.trim()) {
+            const excludePatterns = filters.exclude.toUpperCase().split(',').map(p => p.trim()).filter(p => p);
+            for (const pattern of excludePatterns) {
+              if (spot.call && spot.call.toUpperCase().includes(pattern)) return false;
+            }
+          }
+          
+          return true;
+        });
+      }, []);
+      
+      // Helper to get band from frequency
+      const getBandFromFreq = (freq) => {
+        if (freq >= 1800 && freq <= 2000) return '160m';
+        if (freq >= 3500 && freq <= 4000) return '80m';
+        if (freq >= 5330 && freq <= 5405) return '60m';
+        if (freq >= 7000 && freq <= 7300) return '40m';
+        if (freq >= 10100 && freq <= 10150) return '30m';
+        if (freq >= 14000 && freq <= 14350) return '20m';
+        if (freq >= 18068 && freq <= 18168) return '17m';
+        if (freq >= 21000 && freq <= 21450) return '15m';
+        if (freq >= 24890 && freq <= 24990) return '12m';
+        if (freq >= 28000 && freq <= 29700) return '10m';
+        if (freq >= 50000 && freq <= 54000) return '6m';
+        if (freq >= 144000 && freq <= 148000) return '2m';
+        return 'other';
+      };
+      
+      // Helper to detect mode from comment
+      const detectMode = (comment) => {
+        if (!comment) return null;
+        const upper = comment.toUpperCase();
+        if (upper.includes('FT8') || upper.includes('FT4')) return 'DIGI';
+        if (upper.includes('CW')) return 'CW';
+        if (upper.includes('SSB') || upper.includes('LSB') || upper.includes('USB')) return 'SSB';
+        if (upper.includes('RTTY') || upper.includes('PSK')) return 'DIGI';
+        return null;
+      };
 
       useEffect(() => {
         const fetchDX = async () => {
           try {
-            // Use our proxy endpoint with source parameter
             const response = await fetch(`/api/dxcluster/spots?source=${source}`);
             
             if (response.ok) {
-              const spots = await response.json();
-              if (spots && spots.length > 0) {
-                // Track the active source from the first spot
-                if (spots[0].source) {
-                  setActiveSource(spots[0].source);
+              const newSpots = await response.json();
+              const now = Date.now();
+              
+              if (newSpots && newSpots.length > 0) {
+                if (newSpots[0].source) {
+                  setActiveSource(newSpots[0].source);
                 }
-                setData(spots.slice(0, 15).map(s => ({
+                
+                // Process new spots with timestamps
+                const processedSpots = newSpots.map(s => ({
                   freq: s.freq || (s.frequency ? (parseFloat(s.frequency) / 1000).toFixed(3) : '0.000'),
                   call: s.call || s.dx_call || 'UNKNOWN',
                   comment: s.comment || s.info || '',
                   time: s.time || new Date().toISOString().substr(11, 5) + 'z',
-                  spotter: s.spotter || ''
-                })));
-              } else {
-                setData([{
-                  freq: '---',
-                  call: 'NO SPOTS',
-                  comment: 'No DX spots available',
-                  time: '--:--z',
-                  spotter: ''
-                }]);
-                setActiveSource('');
+                  spotter: s.spotter || '',
+                  zone: s.zone || null,
+                  mode: s.mode || null,
+                  timestamp: now,
+                  id: `${s.call || s.dx_call}-${s.freq}-${s.spotter}-${now}`
+                }));
+                
+                setAllSpots(prev => {
+                  // Remove expired spots (older than 30 minutes)
+                  const validSpots = prev.filter(s => (now - s.timestamp) < spotRetentionMs);
+                  
+                  // Merge new spots, avoiding duplicates (same call+freq within 2 minutes)
+                  const merged = [...validSpots];
+                  for (const newSpot of processedSpots) {
+                    const isDuplicate = merged.some(existing => 
+                      existing.call === newSpot.call && 
+                      existing.freq === newSpot.freq &&
+                      (now - existing.timestamp) < 120000 // 2 minute dedup window
+                    );
+                    if (!isDuplicate) {
+                      merged.push(newSpot);
+                    }
+                  }
+                  
+                  // Sort by timestamp (newest first) and limit
+                  return merged.sort((a, b) => b.timestamp - a.timestamp).slice(0, 200);
+                });
               }
-            } else {
-              setData([{
-                freq: '---',
-                call: 'OFFLINE',
-                comment: 'DX cluster unavailable',
-                time: '--:--z',
-                spotter: ''
-              }]);
-              setActiveSource('');
             }
           } catch (err) { 
             console.error('DX Cluster error:', err);
-            setData([{
-              freq: '---',
-              call: 'ERROR',
-              comment: 'Failed to fetch',
-              time: '--:--z',
-              spotter: ''
-            }]);
-            setActiveSource('');
           } finally {
             setLoading(false);
           }
         };
+        
         fetchDX();
-        const interval = setInterval(fetchDX, DEFAULT_CONFIG.refreshIntervals.dxCluster);
+        const interval = setInterval(fetchDX, pollInterval);
         return () => clearInterval(interval);
       }, [source]);
+      
+      // Update filtered data when allSpots or filters change
+      useEffect(() => {
+        const filtered = applyFilters(allSpots, filters);
+        setData(filtered.slice(0, 50)); // Return up to 50 filtered spots
+      }, [allSpots, filters, applyFilters]);
 
-      return { data, loading, activeSource };
+      return { 
+        data, 
+        allSpots, // All accumulated spots (unfiltered)
+        loading, 
+        activeSource,
+        spotCount: allSpots.length,
+        filteredCount: data.length
+      };
     };
 
     // ============================================
@@ -791,8 +882,8 @@
         };
         
         fetchPaths();
-        // Refresh every 30 seconds
-        const interval = setInterval(fetchPaths, 30000);
+        // Refresh every 10 seconds to keep up with faster cluster polling
+        const interval = setInterval(fetchPaths, 10000);
         return () => clearInterval(interval);
       }, []);
 
@@ -2504,47 +2595,208 @@
       );
     };
 
-    const DXClusterPanel = ({ spots, loading, activeSource, showOnMap, onToggleMap }) => (
-      <div style={{ background: 'var(--bg-panel)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '20px', backdropFilter: 'blur(10px)', maxHeight: '280px', overflow: 'hidden' }}>
-        <div style={{ fontSize: '12px', fontWeight: '600', color: 'var(--accent-cyan)', letterSpacing: '2px', marginBottom: '16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <span>🌐 DX CLUSTER</span>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            {loading && <div className="loading-spinner" />}
-            {activeSource && <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>{activeSource}</span>}
-            <button
-              onClick={onToggleMap}
-              style={{
-                background: showOnMap ? 'rgba(68, 136, 255, 0.3)' : 'rgba(100, 100, 100, 0.3)',
-                border: `1px solid ${showOnMap ? '#4488ff' : '#666'}`,
-                color: showOnMap ? '#4488ff' : '#888',
-                padding: '2px 8px',
-                borderRadius: '4px',
-                fontSize: '10px',
-                fontFamily: 'JetBrains Mono',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '4px'
-              }}
-              title={showOnMap ? 'Hide DX paths on map' : 'Show DX paths on map'}
-            >
-              🗺️ {showOnMap ? 'ON' : 'OFF'}
-            </button>
-            <span style={{ fontSize: '12px', color: 'var(--accent-green)' }}>● LIVE</span>
+    const DXClusterPanel = ({ spots, loading, activeSource, showOnMap, onToggleMap, spotCount, filteredCount, filters, onFilterChange }) => {
+      const [showFilters, setShowFilters] = useState(false);
+      
+      const bandOptions = ['160m', '80m', '60m', '40m', '30m', '20m', '17m', '15m', '12m', '10m', '6m', '2m'];
+      const modeOptions = ['CW', 'SSB', 'DIGI'];
+      
+      const toggleBand = (band) => {
+        const current = filters?.bands || [];
+        const newBands = current.includes(band) 
+          ? current.filter(b => b !== band)
+          : [...current, band];
+        onFilterChange({ ...filters, bands: newBands.length > 0 ? newBands : undefined });
+      };
+      
+      const toggleMode = (mode) => {
+        const current = filters?.modes || [];
+        const newModes = current.includes(mode)
+          ? current.filter(m => m !== mode)
+          : [...current, mode];
+        onFilterChange({ ...filters, modes: newModes.length > 0 ? newModes : undefined });
+      };
+      
+      const hasActiveFilters = (filters?.bands?.length > 0) || (filters?.modes?.length > 0) || filters?.callsign || filters?.exclude;
+      
+      return (
+        <div style={{ background: 'var(--bg-panel)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '20px', backdropFilter: 'blur(10px)', maxHeight: showFilters ? '400px' : '280px', overflow: 'hidden', transition: 'max-height 0.3s' }}>
+          <div style={{ fontSize: '12px', fontWeight: '600', color: 'var(--accent-cyan)', letterSpacing: '2px', marginBottom: '12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span>🌐 DX CLUSTER</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              {loading && <div className="loading-spinner" />}
+              <span style={{ fontSize: '9px', color: 'var(--text-muted)' }}>
+                {filteredCount !== undefined && spotCount !== undefined ? `${filteredCount}/${spotCount}` : ''}
+              </span>
+              <button
+                onClick={() => setShowFilters(!showFilters)}
+                style={{
+                  background: hasActiveFilters ? 'rgba(255, 170, 0, 0.3)' : 'rgba(100, 100, 100, 0.3)',
+                  border: `1px solid ${hasActiveFilters ? '#ffaa00' : '#666'}`,
+                  color: hasActiveFilters ? '#ffaa00' : '#888',
+                  padding: '2px 8px',
+                  borderRadius: '4px',
+                  fontSize: '10px',
+                  fontFamily: 'JetBrains Mono',
+                  cursor: 'pointer'
+                }}
+                title="Filter spots"
+              >
+                🔍 {showFilters ? '▲' : '▼'}
+              </button>
+              <button
+                onClick={onToggleMap}
+                style={{
+                  background: showOnMap ? 'rgba(68, 136, 255, 0.3)' : 'rgba(100, 100, 100, 0.3)',
+                  border: `1px solid ${showOnMap ? '#4488ff' : '#666'}`,
+                  color: showOnMap ? '#4488ff' : '#888',
+                  padding: '2px 8px',
+                  borderRadius: '4px',
+                  fontSize: '10px',
+                  fontFamily: 'JetBrains Mono',
+                  cursor: 'pointer'
+                }}
+                title={showOnMap ? 'Hide DX paths on map' : 'Show DX paths on map'}
+              >
+                🗺️ {showOnMap ? 'ON' : 'OFF'}
+              </button>
+              <span style={{ fontSize: '12px', color: 'var(--accent-green)' }}>● LIVE</span>
+            </div>
+          </div>
+          
+          {/* Filter controls */}
+          {showFilters && (
+            <div style={{ marginBottom: '12px', padding: '10px', background: 'rgba(0,0,0,0.2)', borderRadius: '6px', fontSize: '11px' }}>
+              {/* Callsign search */}
+              <div style={{ marginBottom: '8px' }}>
+                <input
+                  type="text"
+                  placeholder="Search callsign..."
+                  value={filters?.callsign || ''}
+                  onChange={(e) => onFilterChange({ ...filters, callsign: e.target.value || undefined })}
+                  style={{
+                    width: '100%',
+                    padding: '4px 8px',
+                    background: 'var(--bg-secondary)',
+                    border: '1px solid var(--border-color)',
+                    borderRadius: '4px',
+                    color: 'var(--text-primary)',
+                    fontSize: '11px',
+                    fontFamily: 'JetBrains Mono'
+                  }}
+                />
+              </div>
+              
+              {/* Band filters */}
+              <div style={{ marginBottom: '8px' }}>
+                <div style={{ color: 'var(--text-muted)', marginBottom: '4px' }}>Bands:</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                  {bandOptions.map(band => (
+                    <button
+                      key={band}
+                      onClick={() => toggleBand(band)}
+                      style={{
+                        padding: '2px 6px',
+                        background: filters?.bands?.includes(band) ? 'rgba(0, 255, 136, 0.3)' : 'rgba(60,60,60,0.5)',
+                        border: `1px solid ${filters?.bands?.includes(band) ? '#00ff88' : '#444'}`,
+                        color: filters?.bands?.includes(band) ? '#00ff88' : '#888',
+                        borderRadius: '3px',
+                        fontSize: '9px',
+                        cursor: 'pointer',
+                        fontFamily: 'JetBrains Mono'
+                      }}
+                    >
+                      {band}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              
+              {/* Mode filters */}
+              <div style={{ marginBottom: '8px' }}>
+                <div style={{ color: 'var(--text-muted)', marginBottom: '4px' }}>Modes:</div>
+                <div style={{ display: 'flex', gap: '4px' }}>
+                  {modeOptions.map(mode => (
+                    <button
+                      key={mode}
+                      onClick={() => toggleMode(mode)}
+                      style={{
+                        padding: '2px 8px',
+                        background: filters?.modes?.includes(mode) ? 'rgba(0, 170, 255, 0.3)' : 'rgba(60,60,60,0.5)',
+                        border: `1px solid ${filters?.modes?.includes(mode) ? '#00aaff' : '#444'}`,
+                        color: filters?.modes?.includes(mode) ? '#00aaff' : '#888',
+                        borderRadius: '3px',
+                        fontSize: '9px',
+                        cursor: 'pointer',
+                        fontFamily: 'JetBrains Mono'
+                      }}
+                    >
+                      {mode}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              
+              {/* Exclude patterns */}
+              <div style={{ marginBottom: '8px' }}>
+                <input
+                  type="text"
+                  placeholder="Exclude (comma-separated)..."
+                  value={filters?.exclude || ''}
+                  onChange={(e) => onFilterChange({ ...filters, exclude: e.target.value || undefined })}
+                  style={{
+                    width: '100%',
+                    padding: '4px 8px',
+                    background: 'var(--bg-secondary)',
+                    border: '1px solid var(--border-color)',
+                    borderRadius: '4px',
+                    color: 'var(--text-primary)',
+                    fontSize: '11px',
+                    fontFamily: 'JetBrains Mono'
+                  }}
+                />
+              </div>
+              
+              {/* Clear filters */}
+              {hasActiveFilters && (
+                <button
+                  onClick={() => onFilterChange({})}
+                  style={{
+                    padding: '4px 12px',
+                    background: 'rgba(255, 100, 100, 0.2)',
+                    border: '1px solid #ff6666',
+                    color: '#ff6666',
+                    borderRadius: '4px',
+                    fontSize: '10px',
+                    cursor: 'pointer',
+                    fontFamily: 'JetBrains Mono'
+                  }}
+                >
+                  Clear All Filters
+                </button>
+              )}
+            </div>
+          )}
+          
+          {activeSource && <div style={{ fontSize: '9px', color: 'var(--text-muted)', marginBottom: '8px' }}>Source: {activeSource}</div>}
+          
+          <div style={{ overflowY: 'auto', maxHeight: showFilters ? '120px' : '200px' }}>
+            {spots.length > 0 ? spots.map((s, i) => (
+              <div key={i} style={{ display: 'grid', gridTemplateColumns: '65px 75px 1fr auto', gap: '10px', padding: '8px 0', borderBottom: '1px solid rgba(255,255,255,0.03)', fontFamily: 'JetBrains Mono, monospace', fontSize: '13px', alignItems: 'center' }}>
+                <span style={{ color: 'var(--accent-green)' }}>{s.freq}</span>
+                <span style={{ color: 'var(--accent-amber)', fontWeight: '600' }}>{s.call}</span>
+                <span style={{ color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.comment}</span>
+                <span style={{ color: 'var(--text-muted)' }}>{s.time}</span>
+              </div>
+            )) : (
+              <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '20px' }}>
+                {hasActiveFilters ? 'No spots match filters' : 'No spots available'}
+              </div>
+            )}
           </div>
         </div>
-        <div style={{ overflowY: 'auto', maxHeight: '200px' }}>
-          {spots.map((s, i) => (
-            <div key={i} style={{ display: 'grid', gridTemplateColumns: '65px 75px 1fr auto', gap: '10px', padding: '8px 0', borderBottom: '1px solid rgba(255,255,255,0.03)', fontFamily: 'JetBrains Mono, monospace', fontSize: '13px', alignItems: 'center' }}>
-              <span style={{ color: 'var(--accent-green)' }}>{s.freq}</span>
-              <span style={{ color: 'var(--accent-amber)', fontWeight: '600' }}>{s.call}</span>
-              <span style={{ color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.comment}</span>
-              <span style={{ color: 'var(--text-muted)' }}>{s.time}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-    );
+      );
+    };
 
     const POTAPanel = ({ activities, loading, showOnMap, onToggleMap }) => (
       <div style={{ background: 'var(--bg-panel)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '20px', backdropFilter: 'blur(10px)' }}>
@@ -3038,7 +3290,7 @@
             {/* DX Cluster */}
             <div>
               <div style={{ ...labelStyle, marginBottom: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span>🌐 DX CLUSTER</span>
+                <span>🌐 DX CLUSTER <span style={{ fontSize: '8px', color: 'var(--text-muted)' }}>{dxCluster.filteredCount}/{dxCluster.spotCount}</span></span>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                   <button
                     onClick={toggleDXPaths}
@@ -3059,6 +3311,41 @@
                   <span style={{ color: 'var(--accent-green)', fontSize: '10px' }}>● LIVE</span>
                 </div>
               </div>
+              {/* Filter bar */}
+              <div style={{ display: 'flex', gap: '4px', marginBottom: '6px' }}>
+                <input
+                  type="text"
+                  placeholder="🔍 Filter..."
+                  value={dxFilters?.callsign || ''}
+                  onChange={(e) => setDxFilters(prev => ({ ...prev, callsign: e.target.value || undefined }))}
+                  style={{
+                    flex: 1,
+                    padding: '3px 6px',
+                    background: 'var(--bg-secondary)',
+                    border: '1px solid var(--border-color)',
+                    borderRadius: '3px',
+                    color: 'var(--text-primary)',
+                    fontSize: '10px',
+                    fontFamily: 'JetBrains Mono'
+                  }}
+                />
+                {(dxFilters?.callsign || dxFilters?.bands?.length || dxFilters?.modes?.length) && (
+                  <button
+                    onClick={() => setDxFilters({})}
+                    style={{
+                      padding: '3px 6px',
+                      background: 'rgba(255,100,100,0.2)',
+                      border: '1px solid #ff6666',
+                      color: '#ff6666',
+                      borderRadius: '3px',
+                      fontSize: '9px',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
               <div style={{ maxHeight: '180px', overflowY: 'auto' }}>
                 {dxCluster.data.slice(0, 8).map((s, i) => (
                   <div key={i} style={{ padding: '4px 0', borderBottom: '1px solid rgba(255,255,255,0.05)', fontSize: '12px' }}>
@@ -3069,6 +3356,7 @@
                     <div style={{ color: 'var(--text-muted)', fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.comment}</div>
                   </div>
                 ))}
+                {dxCluster.data.length === 0 && <div style={{ color: 'var(--text-muted)', fontSize: '11px', textAlign: 'center', padding: '10px' }}>No spots match filter</div>}
               </div>
             </div>
 
@@ -3698,7 +3986,23 @@
       const bandConditions = useBandConditions(spaceWeather.data);
       const solarIndices = useSolarIndices();
       const potaSpots = usePOTASpots();
-      const dxCluster = useDXCluster(config.dxClusterSource || 'auto');
+      
+      // DX Cluster filters with localStorage persistence
+      const [dxFilters, setDxFilters] = useState(() => {
+        try {
+          const stored = localStorage.getItem('openhamclock_dxFilters');
+          return stored ? JSON.parse(stored) : {};
+        } catch (e) { return {}; }
+      });
+      
+      // Save DX filters when changed
+      useEffect(() => {
+        try {
+          localStorage.setItem('openhamclock_dxFilters', JSON.stringify(dxFilters));
+        } catch (e) {}
+      }, [dxFilters]);
+      
+      const dxCluster = useDXCluster(config.dxClusterSource || 'auto', dxFilters);
       const dxPaths = useDXPaths();
       const dxpeditions = useDXpeditions();
       const contests = useContests();
@@ -3972,11 +4276,12 @@
           
           {/* RIGHT SIDEBAR */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', overflow: 'hidden' }}>
-            {/* DX Cluster - Compact */}
+            {/* DX Cluster - Compact with filters */}
             <div className="panel" style={{ padding: '10px', flex: '1 1 auto', overflow: 'hidden', minHeight: 0 }}>
               <div style={{ fontSize: '12px', color: 'var(--accent-green)', fontWeight: '700', marginBottom: '6px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <span>🌐 DX CLUSTER <span style={{ color: 'var(--accent-green)', fontSize: '10px' }}>● LIVE</span></span>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span style={{ fontSize: '8px', color: 'var(--text-muted)' }}>{dxCluster.filteredCount}/{dxCluster.spotCount}</span>
                   <button
                     onClick={toggleDXPaths}
                     style={{
@@ -3996,7 +4301,42 @@
                   {dxCluster.activeSource && <span style={{ fontSize: '9px', color: 'var(--text-muted)', fontWeight: '400' }}>{dxCluster.activeSource}</span>}
                 </div>
               </div>
-              <div style={{ overflow: 'auto', maxHeight: 'calc(100% - 20px)' }}>
+              {/* Filter bar */}
+              <div style={{ display: 'flex', gap: '4px', marginBottom: '6px' }}>
+                <input
+                  type="text"
+                  placeholder="🔍 Filter..."
+                  value={dxFilters?.callsign || ''}
+                  onChange={(e) => setDxFilters(prev => ({ ...prev, callsign: e.target.value || undefined }))}
+                  style={{
+                    flex: 1,
+                    padding: '3px 6px',
+                    background: 'var(--bg-secondary)',
+                    border: '1px solid var(--border-color)',
+                    borderRadius: '3px',
+                    color: 'var(--text-primary)',
+                    fontSize: '10px',
+                    fontFamily: 'JetBrains Mono'
+                  }}
+                />
+                {(dxFilters?.callsign || dxFilters?.bands?.length || dxFilters?.modes?.length) && (
+                  <button
+                    onClick={() => setDxFilters({})}
+                    style={{
+                      padding: '3px 6px',
+                      background: 'rgba(255,100,100,0.2)',
+                      border: '1px solid #ff6666',
+                      color: '#ff6666',
+                      borderRadius: '3px',
+                      fontSize: '9px',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+              <div style={{ overflow: 'auto', maxHeight: 'calc(100% - 50px)' }}>
                 {dxCluster.data.slice(0, 8).map((s, i) => (
                   <div key={i} style={{ padding: '3px 0', borderBottom: '1px solid rgba(255,255,255,0.05)', fontSize: '12px', fontFamily: 'JetBrains Mono' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between' }}>
