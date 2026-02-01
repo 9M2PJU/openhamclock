@@ -1829,23 +1829,29 @@
       const storedSettings = getStoredMapSettings();
       
       const [mapStyle, setMapStyle] = useState(storedSettings.mapStyle || 'dark');
+      const [mapView, setMapView] = useState({
+        center: storedSettings.center || [20, 0],
+        zoom: storedSettings.zoom || 2.5
+      });
       
-      // Save map style to localStorage when changed
+      // Save map settings to localStorage when changed
       useEffect(() => {
         try {
           localStorage.setItem('openhamclock_mapSettings', JSON.stringify({
-            mapStyle
+            mapStyle,
+            center: mapView.center,
+            zoom: mapView.zoom
           }));
         } catch (e) { console.error('Failed to save map settings:', e); }
-      }, [mapStyle]);
+      }, [mapStyle, mapView]);
 
       // Initialize map
       useEffect(() => {
         if (!mapRef.current || mapInstanceRef.current) return;
 
         const map = L.map(mapRef.current, {
-          center: [20, 0],
-          zoom: 2.5,
+          center: mapView.center,
+          zoom: mapView.zoom,
           minZoom: 2.3,
           maxZoom: 18,
           worldCopyJump: true,
@@ -1891,6 +1897,13 @@
           if (onDXChange) {
             onDXChange({ lat: e.latlng.lat, lon: e.latlng.lng });
           }
+        });
+        
+        // Save map view when user pans or zooms
+        map.on('moveend', () => {
+          const center = map.getCenter();
+          const zoom = map.getZoom();
+          setMapView({ center: [center.lat, center.lng], zoom });
         });
 
         mapInstanceRef.current = map;
@@ -3571,7 +3584,26 @@
       const [currentTime, setCurrentTime] = useState(new Date());
       const [startTime] = useState(Date.now());
       const [uptime, setUptime] = useState('0d 0h 0m');
-      const [dxLocation, setDxLocation] = useState(config.defaultDX);
+      
+      // DX Location with localStorage persistence
+      const [dxLocation, setDxLocation] = useState(() => {
+        try {
+          const stored = localStorage.getItem('openhamclock_dxLocation');
+          if (stored) {
+            const parsed = JSON.parse(stored);
+            if (parsed.lat && parsed.lon) return parsed;
+          }
+        } catch (e) {}
+        return config.defaultDX;
+      });
+      
+      // Save DX location when changed
+      useEffect(() => {
+        try {
+          localStorage.setItem('openhamclock_dxLocation', JSON.stringify(dxLocation));
+        } catch (e) { console.error('Failed to save DX location:', e); }
+      }, [dxLocation]);
+      
       const [showSettings, setShowSettings] = useState(false);
       const [isFullscreen, setIsFullscreen] = useState(false);
       
