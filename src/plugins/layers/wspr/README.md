@@ -127,6 +127,65 @@ The WSPR (Weak Signal Propagation Reporter) Heatmap Plugin provides real-time vi
 - **Max Spots Displayed**: 500 (for performance)
 - **Supported Bands**: All WSPR bands (2200m - 70cm)
 
+---
+
+## 📖 Usage Instructions
+
+### Basic Setup
+1. Open OpenHamClock in your browser
+2. Navigate to **Settings** (⚙️ icon)
+3. Open **Map Layers** tab
+4. Find "WSPR Propagation" in the list
+5. Toggle the switch to **ON**
+6. Adjust opacity slider if needed (default: 70%)
+7. The map will now display real-time WSPR propagation paths
+
+### Moving Control Panels (CTRL+Drag)
+- **How to Move**: Hold **CTRL** key and drag any panel to reposition it
+  - Cursor changes to "grab" hand (✋) when CTRL is held
+  - Cursor returns to normal when CTRL is released
+  - Panel positions are saved automatically to localStorage
+  - Positions persist when toggling plugin off/on
+- **Panels You Can Move**:
+  - Filters Panel (top-right)
+  - Statistics Panel (top-left)
+  - Legend Panel (bottom-right)
+  - Band Activity Chart (bottom-left)
+
+### Using the Filter Panel
+- **Band Selector**: Choose specific band (160m-6m) or "All Bands"
+- **Time Window**: Select 15min, 30min, 1hr, 2hr, or 6hr
+- **Min SNR**: Adjust slider to filter weak signals (-30 to +10 dB)
+- **Animate Paths**: Toggle smooth pulse animation along paths
+- **Show Heatmap**: Switch to density heatmap view
+
+### Understanding the Display
+- **Curved Lines**: Propagation paths (great circle routes)
+- **Colors**: Signal strength (Red=weak, Green=strong)
+- **Cyan Paths**: Best DX paths (⭐ top 10 longest/strongest)
+- **Orange Circles**: Transmitting stations
+- **Blue Circles**: Receiving stations
+- **Click Paths**: View detailed spot information
+
+### Reading the Statistics Panel
+- **Propagation Score**: 0-100 overall HF conditions
+  - Green (>70): Excellent propagation
+  - Orange (40-70): Good propagation
+  - Red (<40): Poor propagation
+- **Paths**: Total number of propagation paths displayed
+- **TX/RX Stations**: Unique transmitter/receiver counts
+- **Total**: Combined station count
+
+### Tips & Best Practices
+- Try different time windows to see propagation changes
+- Use SNR threshold to focus on strong signals
+- Move panels to avoid covering map areas of interest
+- Best DX paths are automatically highlighted
+- Enable heatmap to see activity density hot spots
+- Panel positions are saved per browser
+
+---
+
 ### 🌐 Backend API
 
 **Endpoint**: `/api/wspr/heatmap`
