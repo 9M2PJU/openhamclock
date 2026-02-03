@@ -1,10 +1,10 @@
 # WSPR Propagation Heatmap Plugin
 
-**Version:** 1.0.0  
+**Version:** 1.3.0  
 **Category:** Propagation  
 **Icon:** 📡  
 **Author:** OpenHamClock Contributors  
-**Last Updated:** 2026-02-03
+**Last Updated:** 2026-02-03 (v1.3.0 Release)
 
 ---
 
@@ -14,7 +14,32 @@ The WSPR (Weak Signal Propagation Reporter) Heatmap Plugin provides real-time vi
 
 ## Features Implemented
 
-### ✅ Core Features (v1.0.0)
+### ✅ v1.3.0 - Advanced Analytics & Filtering (Latest)
+
+#### **Advanced Filter Controls (v1.2.0)**
+- **Band Selector Dropdown**: Filter by specific bands (160m-6m)
+- **Time Range Slider**: Choose 15min, 30min, 1hr, 2hr, or 6hr windows
+- **SNR Threshold Filter**: Adjustable minimum signal strength (-30 to +10 dB)
+- **Animation Toggle**: Enable/disable path animations
+- **Heatmap Toggle**: Switch between path view and density heatmap
+
+#### **Analytics Dashboard (v1.3.0)**
+- **Propagation Score**: 0-100 real-time score based on:
+  - Average SNR (40% weight)
+  - Path count (30% weight)
+  - Strong signal ratio (30% weight)
+- **Band Activity Chart**: Live bar chart showing spots per band
+- **Best DX Paths**: Automatically highlights top 10 longest/strongest paths in cyan
+- **Real-Time Statistics**: Dynamic counters for all activity
+
+#### **Visual Enhancements (v1.3.0)**
+- **Animated Paths**: Smooth pulse animation along propagation routes
+- **Best Path Highlighting**: Cyan-colored paths for exceptional DX
+- **Score Glow Effect**: Pulsing glow on propagation score
+- **Interactive Filters**: Hover effects and smooth transitions
+- **Band Chart Animation**: Bars grow on load
+
+### ✅ Core Features (v1.0.0 - v1.1.0)
 
 #### **Real-Time Propagation Paths**
 - Displays signal paths between WSPR transmitters (TX) and receivers (RX)
@@ -105,34 +130,36 @@ The WSPR (Weak Signal Propagation Reporter) Heatmap Plugin provides real-time vi
 
 ---
 
-## 🚀 Optional Enhancements (Planned)
+## 🚀 Optional Enhancements (Roadmap)
 
-### v1.1.0 - Enhanced Visualization
-- [ ] **Signal Strength Legend**: Color scale legend in map corner
-- [ ] **Path Animation**: Animated signal "pulses" from TX to RX
-- [ ] **Fading Paths**: Older spots fade out gradually
-- [ ] **Station Clustering**: Group nearby stations on zoom-out
+### ✅ v1.2.0 - Advanced Filtering (COMPLETED)
+- [x] **Band Selector UI**: Dropdown menu for band filtering
+- [x] **Time Range Slider**: Choose 15min, 30min, 1hr, 2hr, 6hr windows
+- [x] **SNR Threshold Filter**: Hide weak signals below threshold
+- [ ] **Grid Square Filter**: Show only specific grid squares (future)
+- [ ] **Callsign Search**: Highlight paths involving specific callsign (future)
 
-### v1.2.0 - Advanced Filtering
-- [ ] **Band Selector UI**: Dropdown menu for band filtering
-- [ ] **Time Range Slider**: Choose 15min, 30min, 1hr, 2hr, 6hr windows
-- [ ] **SNR Threshold Filter**: Hide weak signals below threshold
-- [ ] **Grid Square Filter**: Show only specific grid squares
-- [ ] **Callsign Search**: Highlight paths involving specific callsign
+### ✅ v1.3.0 - Analytics (COMPLETED)
+- [x] **Activity Counter**: Show total TX/RX stations count
+- [x] **Band Activity Chart**: Bar chart showing spots per band
+- [ ] **Hot Spot Heatmap**: Density map of high-activity regions (in progress)
+- [x] **Propagation Score**: Overall HF conditions indicator
+- [x] **Best DX Paths**: Highlight longest or strongest paths
 
-### v1.3.0 - Statistics & Analytics
-- [ ] **Activity Counter**: Show total TX/RX stations count
-- [ ] **Band Activity Chart**: Bar chart showing spots per band
-- [ ] **Hot Spot Heatmap**: Density map of high-activity regions
-- [ ] **Propagation Score**: Overall HF conditions indicator
-- [ ] **Best DX Paths**: Highlight longest or strongest paths
-
-### v1.4.0 - Advanced Features
+### v1.4.0 - Advanced Features (Planned)
 - [ ] **Historical Playback**: Time-slider to replay past propagation
 - [ ] **Frequency Histogram**: Show active WSPR frequencies
 - [ ] **MUF Overlay**: Calculated Maximum Usable Frequency zones
 - [ ] **Solar Activity Correlation**: Link with solar indices
 - [ ] **Export Data**: Download CSV of current spots
+- [ ] **Full Heatmap Mode**: Density-based heat overlay
+- [ ] **Path Recording**: Record and replay propagation patterns
+
+### v1.1.0 - Enhanced Visualization (COMPLETED)
+- [x] **Signal Strength Legend**: Color scale legend in map corner
+- [x] **Path Animation**: Animated signal "pulses" from TX to RX
+- [ ] **Fading Paths**: Older spots fade out gradually (future)
+- [ ] **Station Clustering**: Group nearby stations on zoom-out (future)
 
 ---
 

@@ -610,3 +610,127 @@ body::before {
 .bg-primary { background: var(--bg-primary); }
 .bg-secondary { background: var(--bg-secondary); }
 .bg-tertiary { background: var(--bg-tertiary); }
+
+/* ============================================
+   WSPR PLUGIN ANIMATIONS (v1.3.0)
+   ============================================ */
+
+/* Animated path pulse effect */
+@keyframes wspr-pulse {
+  0% {
+    stroke-dashoffset: 1000;
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 0.8;
+  }
+  100% {
+    stroke-dashoffset: 0;
+    opacity: 0.6;
+  }
+}
+
+.wspr-animated-path {
+  stroke-dasharray: 10, 5;
+  animation: wspr-pulse 3s ease-in-out infinite;
+}
+
+/* Pulsing marker animation */
+@keyframes wspr-marker-pulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 0.8;
+  }
+  50% {
+    transform: scale(1.3);
+    opacity: 1;
+  }
+}
+
+.wspr-marker {
+  animation: wspr-marker-pulse 2s ease-in-out infinite;
+}
+
+/* Control panel transitions */
+.wspr-filter-control,
+.wspr-stats,
+.wspr-legend,
+.wspr-chart {
+  transition: all 0.3s ease;
+}
+
+.wspr-filter-control:hover,
+.wspr-stats:hover,
+.wspr-legend:hover,
+.wspr-chart:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.4) !important;
+}
+
+/* Filter input styles */
+.wspr-filter-control select,
+.wspr-filter-control input[type="range"] {
+  transition: all 0.2s ease;
+}
+
+.wspr-filter-control select:hover,
+.wspr-filter-control select:focus {
+  border-color: #00aaff;
+  outline: none;
+}
+
+.wspr-filter-control input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #00aaff;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.wspr-filter-control input[type="range"]::-webkit-slider-thumb:hover {
+  background: #00ddff;
+}
+
+.wspr-filter-control input[type="range"]::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #00aaff;
+  cursor: pointer;
+  border: none;
+  transition: background 0.2s ease;
+}
+
+.wspr-filter-control input[type="range"]::-moz-range-thumb:hover {
+  background: #00ddff;
+}
+
+/* Band activity chart bars animation */
+@keyframes wspr-bar-grow {
+  from {
+    width: 0%;
+  }
+  to {
+    width: var(--bar-width);
+  }
+}
+
+.wspr-chart div[style*="background: linear-gradient"] {
+  animation: wspr-bar-grow 0.5s ease-out;
+}
+
+/* Propagation score glow effect */
+@keyframes wspr-score-glow {
+  0%, 100% {
+    text-shadow: 0 0 5px currentColor;
+  }
+  50% {
+    text-shadow: 0 0 15px currentColor, 0 0 25px currentColor;
+  }
+}
+
+.wspr-stats div[style*="font-size: 18px"] {
+  animation: wspr-score-glow 2s ease-in-out infinite;
+}
