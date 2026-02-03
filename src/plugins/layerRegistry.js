@@ -1,14 +1,15 @@
 /**
  * Layer Plugin Registry
- * Only Weather Radar for now
  */
 
 import * as WXRadarPlugin from './layers/useWXRadar.js';
 import * as EarthquakesPlugin from './layers/useEarthquakes.js';
+import * as AuroraPlugin from './layers/useAurora.js';
 
 const layerPlugins = [
   WXRadarPlugin,
   EarthquakesPlugin,
+  AuroraPlugin,
 ];
 
 export function getAllLayers() {
