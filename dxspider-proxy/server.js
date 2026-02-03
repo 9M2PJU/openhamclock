@@ -49,8 +49,35 @@ let buffer = '';
 let reconnectTimer = null;
 let keepAliveTimer = null;
 
-// Logging helper
+// Logging helper with log levels
+// LOG_LEVEL: 'debug' = verbose, 'info' = normal, 'warn' = warnings+errors only
+const LOG_LEVEL = (process.env.LOG_LEVEL || 'info').toLowerCase();
+const LOG_LEVELS = { debug: 0, info: 1, warn: 2, error: 3 };
+const currentLogLevel = LOG_LEVELS[LOG_LEVEL] ?? LOG_LEVELS.info;
+
+// Map log categories to levels
+const CATEGORY_LEVELS = {
+  'SPOT': 'debug',     // Per-spot logging is debug-only
+  'CLEANUP': 'debug',  // Periodic cleanup is debug-only
+  'KEEPALIVE': 'debug', // Keepalive pings are debug-only
+  'CMD': 'debug',      // Command logging is debug-only
+  'AUTH': 'info',      // Auth events are informational
+  'CONNECT': 'info',   // Connection events are informational
+  'CLOSE': 'info',
+  'RECONNECT': 'info',
+  'FAILOVER': 'info',
+  'API': 'info',
+  'START': 'info',
+  'CONFIG': 'info',
+  'SHUTDOWN': 'info',
+  'ERROR': 'warn',
+  'TIMEOUT': 'warn',
+};
+
 const log = (level, message, data = null) => {
+  const categoryLevel = LOG_LEVELS[CATEGORY_LEVELS[level] || 'info'] ?? LOG_LEVELS.info;
+  if (categoryLevel < currentLogLevel) return;
+  
   const timestamp = new Date().toISOString();
   const logLine = `[${timestamp}] [${level}] ${message}`;
   if (data) {

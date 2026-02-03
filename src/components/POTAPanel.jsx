@@ -1,6 +1,6 @@
 /**
  * POTAPanel Component
- * Displays Parks on the Air activations with ON/OFF toggle (compact version)
+ * Displays Parks on the Air activations with ON/OFF toggle
  */
 import React from 'react';
 
@@ -14,14 +14,14 @@ export const POTAPanel = ({ data, loading, showOnMap, onToggleMap }) => {
         marginBottom: '6px',
         fontSize: '11px'
       }}>
-        <span>△ POTA ACTIVATORS</span>
+        <span>▲ POTA ACTIVATORS {data?.length > 0 ? `(${data.length})` : ''}</span>
         <button
           onClick={onToggleMap}
           title={showOnMap ? 'Hide POTA activators on map' : 'Show POTA activators on map'}
           style={{
-            background: showOnMap ? 'rgba(170, 102, 255, 0.3)' : 'rgba(100, 100, 100, 0.3)',
-            border: `1px solid ${showOnMap ? '#aa66ff' : '#666'}`,
-            color: showOnMap ? '#aa66ff' : '#888',
+            background: showOnMap ? 'rgba(68, 204, 68, 0.3)' : 'rgba(100, 100, 100, 0.3)',
+            border: `1px solid ${showOnMap ? '#44cc44' : '#666'}`,
+            color: showOnMap ? '#44cc44' : '#888',
             padding: '1px 6px',
             borderRadius: '3px',
             fontSize: '9px',
@@ -40,25 +40,28 @@ export const POTAPanel = ({ data, loading, showOnMap, onToggleMap }) => {
           </div>
         ) : data && data.length > 0 ? (
           <div style={{ fontSize: '10px', fontFamily: 'JetBrains Mono, monospace' }}>
-            {data.slice(0, 5).map((spot, i) => (
+            {data.map((spot, i) => (
               <div 
-                key={`${spot.call}-${i}`}
+                key={`${spot.call}-${spot.ref}-${i}`}
                 style={{ 
                   display: 'grid',
-                  gridTemplateColumns: '60px 60px 1fr',
-                  gap: '6px',
+                  gridTemplateColumns: '62px 50px 58px 1fr',
+                  gap: '4px',
                   padding: '3px 0',
-                  borderBottom: i < Math.min(data.length, 5) - 1 ? '1px solid var(--border-color)' : 'none'
+                  borderBottom: i < data.length - 1 ? '1px solid var(--border-color)' : 'none'
                 }}
               >
-                <span style={{ color: 'var(--accent-purple)', fontWeight: '600' }}>
+                <span style={{ color: '#44cc44', fontWeight: '600', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {spot.call}
                 </span>
-                <span style={{ color: 'var(--text-muted)' }}>
-                  {spot.ref}
+                <span style={{ color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {spot.locationDesc || spot.ref}
                 </span>
                 <span style={{ color: 'var(--accent-cyan)', textAlign: 'right' }}>
                   {spot.freq}
+                </span>
+                <span style={{ color: 'var(--text-muted)', textAlign: 'right', fontSize: '9px' }}>
+                  {spot.time}
                 </span>
               </div>
             ))}

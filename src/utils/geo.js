@@ -130,9 +130,9 @@ export const getMoonPosition = (date) => {
 export const getMoonPhase = (date) => {
   const JD = date.getTime() / 86400000 + 2440587.5;
   const T = (JD - 2451545.0) / 36525;
-  const D = (297.850 + 445267.1115 * T) % 360; // Mean elongation: 0=new, 180=full
-  // Map to phase: 0=new, 0.5=full, 1=new again
-  const phase = (((D % 360) + 360) % 360) / 360;
+  const D = (297.850 + 445267.1115 * T) % 360; // Mean elongation
+  // Phase angle (simplified)
+  const phase = ((D + 180) % 360) / 360;
   return phase;
 };
 

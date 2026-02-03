@@ -229,9 +229,24 @@ app.use('/api', (req, res, next) => {
 });
 
 // ============================================
-// RATE-LIMITED LOGGING
+// LOGGING SYSTEM
 // ============================================
-// Prevents log spam when services are down
+// LOG_LEVEL: 'debug' = verbose, 'info' = normal, 'warn' = warnings+errors, 'error' = errors only
+const LOG_LEVEL = (process.env.LOG_LEVEL || 'warn').toLowerCase();
+const LOG_LEVELS = { debug: 0, info: 1, warn: 2, error: 3 };
+const currentLogLevel = LOG_LEVELS[LOG_LEVEL] ?? LOG_LEVELS.warn;
+
+function logDebug(...args) {
+  if (currentLogLevel <= LOG_LEVELS.debug) console.log(...args);
+}
+function logInfo(...args) {
+  if (currentLogLevel <= LOG_LEVELS.info) console.log(...args);
+}
+function logWarn(...args) {
+  if (currentLogLevel <= LOG_LEVELS.warn) console.warn(...args);
+}
+
+// Rate-limited error logging - prevents log spam when services are down
 const errorLogState = {};
 const ERROR_LOG_INTERVAL = 5 * 60 * 1000; // Only log same error once per 5 minutes
 
@@ -310,7 +325,7 @@ app.get('/api/noaa/flux', async (req, res) => {
     noaaCache.flux = { data, timestamp: Date.now() };
     res.json(data);
   } catch (error) {
-    console.error('NOAA Flux API error:', error.message);
+    logErrorOnce('NOAA Flux', error.message);
     if (noaaCache.flux.data) return res.json(noaaCache.flux.data);
     res.status(500).json({ error: 'Failed to fetch solar flux data' });
   }
@@ -327,7 +342,7 @@ app.get('/api/noaa/kindex', async (req, res) => {
     noaaCache.kindex = { data, timestamp: Date.now() };
     res.json(data);
   } catch (error) {
-    console.error('NOAA K-Index API error:', error.message);
+    logErrorOnce('NOAA K-Index', error.message);
     if (noaaCache.kindex.data) return res.json(noaaCache.kindex.data);
     res.status(500).json({ error: 'Failed to fetch K-index data' });
   }
@@ -344,7 +359,7 @@ app.get('/api/noaa/sunspots', async (req, res) => {
     noaaCache.sunspots = { data, timestamp: Date.now() };
     res.json(data);
   } catch (error) {
-    console.error('NOAA Sunspots API error:', error.message);
+    logErrorOnce('NOAA Sunspots', error.message);
     if (noaaCache.sunspots.data) return res.json(noaaCache.sunspots.data);
     res.status(500).json({ error: 'Failed to fetch sunspot data' });
   }
@@ -431,7 +446,7 @@ app.get('/api/solar-indices', async (req, res) => {
     
     res.json(result);
   } catch (error) {
-    console.error('Solar Indices API error:', error.message);
+    logErrorOnce('Solar Indices', error.message);
     // Return stale cache on error
     if (noaaCache.solarIndices.data) return res.json(noaaCache.solarIndices.data);
     res.status(500).json({ error: 'Failed to fetch solar indices' });
@@ -444,24 +459,24 @@ let dxpeditionCache = { data: null, timestamp: 0, maxAge: 30 * 60 * 1000 }; // 3
 app.get('/api/dxpeditions', async (req, res) => {
   try {
     const now = Date.now();
-    console.log('[DXpeditions] API called');
+    logDebug('[DXpeditions] API called');
     
     // Return cached data if fresh
     if (dxpeditionCache.data && (now - dxpeditionCache.timestamp) < dxpeditionCache.maxAge) {
-      console.log('[DXpeditions] Returning cached data:', dxpeditionCache.data.dxpeditions?.length, 'entries');
+      logDebug('[DXpeditions] Returning cached data:', dxpeditionCache.data.dxpeditions?.length, 'entries');
       return res.json(dxpeditionCache.data);
     }
     
     // Fetch NG3K ADXO plain text version
-    console.log('[DXpeditions] Fetching from NG3K...');
+    logDebug('[DXpeditions] Fetching from NG3K...');
     const response = await fetch('https://www.ng3k.com/Misc/adxoplain.html');
     if (!response.ok) {
-      console.log('[DXpeditions] NG3K fetch failed:', response.status);
+      logDebug('[DXpeditions] NG3K fetch failed:', response.status);
       throw new Error('Failed to fetch NG3K: ' + response.status);
     }
     
     let text = await response.text();
-    console.log('[DXpeditions] Received', text.length, 'bytes raw');
+    logDebug('[DXpeditions] Received', text.length, 'bytes raw');
     
     // Strip HTML tags and decode entities - the "plain" page is actually HTML!
     text = text
@@ -478,8 +493,8 @@ app.get('/api/dxpeditions', async (req, res) => {
       .replace(/\s+/g, ' ') // Normalize whitespace
       .trim();
     
-    console.log('[DXpeditions] Cleaned text length:', text.length);
-    console.log('[DXpeditions] First 500 chars:', text.substring(0, 500));
+    logDebug('[DXpeditions] Cleaned text length:', text.length);
+    logDebug('[DXpeditions] First 500 chars:', text.substring(0, 500));
     
     const dxpeditions = [];
     
@@ -488,11 +503,11 @@ app.get('/api/dxpeditions', async (req, res) => {
     const entryPattern = /((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2}[^D]*?DXCC:[^·]+?)(?=(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2}|$)/gi;
     const entries = text.match(entryPattern) || [];
     
-    console.log('[DXpeditions] Found', entries.length, 'potential entries');
+    logDebug('[DXpeditions] Found', entries.length, 'potential entries');
     
     // Log first 3 entries for debugging
     entries.slice(0, 3).forEach((e, i) => {
-      console.log(`[DXpeditions] Entry ${i}:`, e.substring(0, 150));
+      logDebug(`[DXpeditions] Entry ${i}:`, e.substring(0, 150));
     });
     
     for (const entry of entries) {
@@ -557,7 +572,7 @@ app.get('/api/dxpeditions', async (req, res) => {
       
       // Log first few successful parses
       if (dxpeditions.length < 3) {
-        console.log(`[DXpeditions] Parsed: ${callsign} - ${entity} - ${dateStr}`);
+        logDebug(`[DXpeditions] Parsed: ${callsign} - ${entity} - ${dateStr}`);
       }
       
       // Try to extract entity from context if not found
@@ -646,9 +661,9 @@ app.get('/api/dxpeditions', async (req, res) => {
       return 0;
     });
     
-    console.log('[DXpeditions] Parsed', uniqueDxpeditions.length, 'unique entries');
+    logDebug('[DXpeditions] Parsed', uniqueDxpeditions.length, 'unique entries');
     if (uniqueDxpeditions.length > 0) {
-      console.log('[DXpeditions] First entry:', JSON.stringify(uniqueDxpeditions[0]));
+      logDebug('[DXpeditions] First entry:', JSON.stringify(uniqueDxpeditions[0]));
     }
     
     const result = {
@@ -659,17 +674,17 @@ app.get('/api/dxpeditions', async (req, res) => {
       timestamp: new Date().toISOString()
     };
     
-    console.log('[DXpeditions] Result:', result.active, 'active,', result.upcoming, 'upcoming');
+    logDebug('[DXpeditions] Result:', result.active, 'active,', result.upcoming, 'upcoming');
     
     dxpeditionCache.data = result;
     dxpeditionCache.timestamp = now;
     
     res.json(result);
   } catch (error) {
-    console.error('[DXpeditions] API error:', error.message);
+    logErrorOnce('DXpeditions', error.message);
     
     if (dxpeditionCache.data) {
-      console.log('[DXpeditions] Returning stale cache');
+      logDebug('[DXpeditions] Returning stale cache');
       return res.json({ ...dxpeditionCache.data, stale: true });
     }
     
@@ -688,7 +703,7 @@ app.get('/api/noaa/xray', async (req, res) => {
     noaaCache.xray = { data, timestamp: Date.now() };
     res.json(data);
   } catch (error) {
-    console.error('NOAA X-Ray API error:', error.message);
+    logErrorOnce('NOAA X-Ray', error.message);
     if (noaaCache.xray.data) return res.json(noaaCache.xray.data);
     res.status(500).json({ error: 'Failed to fetch X-ray data' });
   }
@@ -706,7 +721,7 @@ app.get('/api/noaa/aurora', async (req, res) => {
     noaaCache.aurora = { data, timestamp: Date.now() };
     res.json(data);
   } catch (error) {
-    console.error('NOAA Aurora API error:', error.message);
+    logErrorOnce('NOAA Aurora', error.message);
     if (noaaCache.aurora.data) return res.json(noaaCache.aurora.data);
     res.status(500).json({ error: 'Failed to fetch aurora data' });
   }
@@ -776,16 +791,16 @@ app.get('/api/dxnews', async (req, res) => {
     dxNewsCache = { data: result, timestamp: Date.now() };
     res.json(result);
   } catch (error) {
-    console.error('DX News fetch error:', error.message);
+    logErrorOnce('DX News', error.message);
     if (dxNewsCache.data) return res.json(dxNewsCache.data);
     res.status(500).json({ error: 'Failed to fetch DX news', items: [] });
   }
 });
 
 // POTA Spots
-// POTA cache (2 minutes)
+// POTA cache (1 minute)
 let potaCache = { data: null, timestamp: 0 };
-const POTA_CACHE_TTL = 2 * 60 * 1000; // 2 minutes
+const POTA_CACHE_TTL = 60 * 1000; // 1 minute
 
 app.get('/api/pota/spots', async (req, res) => {
   try {
@@ -797,12 +812,25 @@ app.get('/api/pota/spots', async (req, res) => {
     const response = await fetch('https://api.pota.app/spot/activator');
     const data = await response.json();
     
+    // Log diagnostic info about the response
+    if (Array.isArray(data) && data.length > 0) {
+      const sample = data[0];
+      logDebug('[POTA] API returned', data.length, 'spots. Sample fields:', Object.keys(sample).join(', '));
+      
+      // Count coordinate coverage
+      const withLatLon = data.filter(s => s.latitude && s.longitude).length;
+      const withGrid6 = data.filter(s => s.grid6).length;
+      const withGrid4 = data.filter(s => s.grid4).length;
+      const noCoords = data.filter(s => !s.latitude && !s.longitude && !s.grid6 && !s.grid4).length;
+      logDebug(`[POTA] Coords: ${withLatLon} lat/lon, ${withGrid6} grid6, ${withGrid4} grid4, ${noCoords} no coords`);
+    }
+    
     // Cache the response
     potaCache = { data, timestamp: Date.now() };
     
     res.json(data);
   } catch (error) {
-    console.error('POTA API error:', error.message);
+    logErrorOnce('POTA', error.message);
     // Return stale cache on error
     if (potaCache.data) return res.json(potaCache.data);
     res.status(500).json({ error: 'Failed to fetch POTA spots' });
@@ -829,7 +857,7 @@ app.get('/api/sota/spots', async (req, res) => {
     
     res.json(data);
   } catch (error) {
-    console.error('SOTA API error:', error.message);
+    logErrorOnce('SOTA', error.message);
     if (sotaCache.data) return res.json(sotaCache.data);
     res.status(500).json({ error: 'Failed to fetch SOTA spots' });
   }
@@ -857,7 +885,7 @@ app.get('/api/hamqsl/conditions', async (req, res) => {
     res.set('Content-Type', 'application/xml');
     res.send(text);
   } catch (error) {
-    console.error('HamQSL API error:', error.message);
+    logErrorOnce('HamQSL', error.message);
     if (hamqslCache.data) {
       res.set('Content-Type', 'application/xml');
       return res.send(hamqslCache.data);
@@ -927,7 +955,7 @@ app.get('/api/dxcluster/spots', async (req, res) => {
               source: 'HamQTH'
             };
           });
-          console.log('[DX Cluster] HamQTH:', spots.length, 'spots');
+          logDebug('[DX Cluster] HamQTH:', spots.length, 'spots');
           return spots;
         }
       }
@@ -955,7 +983,7 @@ app.get('/api/dxcluster/spots', async (req, res) => {
       if (response.ok) {
         const spots = await response.json();
         if (Array.isArray(spots) && spots.length > 0) {
-          console.log('[DX Cluster] DX Spider Proxy:', spots.length, 'spots');
+          logDebug('[DX Cluster] DX Spider Proxy:', spots.length, 'spots');
           return spots;
         }
       }
@@ -983,7 +1011,7 @@ app.get('/api/dxcluster/spots', async (req, res) => {
   async function fetchDXSpider() {
     // Check cache first (use longer cache to reduce connection attempts)
     if (Date.now() - dxSpiderCache.timestamp < DXSPIDER_CACHE_TTL && dxSpiderCache.spots.length > 0) {
-      console.log('[DX Cluster] DX Spider: returning', dxSpiderCache.spots.length, 'cached spots');
+      logDebug('[DX Cluster] DX Spider: returning', dxSpiderCache.spots.length, 'cached spots');
       return dxSpiderCache.spots;
     }
     
@@ -995,7 +1023,7 @@ app.get('/api/dxcluster/spots', async (req, res) => {
       }
     }
     
-    console.log('[DX Cluster] DX Spider: all nodes failed');
+    logDebug('[DX Cluster] DX Spider: all nodes failed');
     return null;
   }
   
@@ -1019,7 +1047,7 @@ app.get('/api/dxcluster/spots', async (req, res) => {
       
       // Try connecting to DX Spider node
       client.connect(node.port, node.host, () => {
-        console.log(`[DX Cluster] DX Spider: connected to ${node.host}:${node.port}`);
+        logDebug(`[DX Cluster] DX Spider: connected to ${node.host}:${node.port}`);
       });
       
       client.on('data', (data) => {
@@ -1098,7 +1126,7 @@ app.get('/api/dxcluster/spots', async (req, res) => {
         if (!resolved) {
           resolved = true;
           if (spots.length > 0) {
-            console.log('[DX Cluster] DX Spider:', spots.length, 'spots from', node.host);
+            logDebug('[DX Cluster] DX Spider:', spots.length, 'spots from', node.host);
             dxSpiderCache = { spots: spots, timestamp: Date.now() };
             resolve(spots);
           } else {
@@ -1112,7 +1140,7 @@ app.get('/api/dxcluster/spots', async (req, res) => {
         if (!resolved) {
           if (spots.length > 0) {
             resolved = true;
-            console.log('[DX Cluster] DX Spider:', spots.length, 'spots from', node.host);
+            logDebug('[DX Cluster] DX Spider:', spots.length, 'spots from', node.host);
             dxSpiderCache = { spots: spots, timestamp: Date.now() };
             resolve(spots);
           }
@@ -1135,14 +1163,14 @@ app.get('/api/dxcluster/spots', async (req, res) => {
     spots = await fetchDXSpiderProxy();
     // Fallback to HamQTH if proxy fails
     if (!spots) {
-      console.log('[DX Cluster] Proxy failed, falling back to HamQTH');
+      logDebug('[DX Cluster] Proxy failed, falling back to HamQTH');
       spots = await fetchHamQTH();
     }
   } else if (source === 'dxspider') {
     spots = await fetchDXSpider();
     // Fallback to HamQTH if DX Spider fails
     if (!spots) {
-      console.log('[DX Cluster] DX Spider failed, falling back to HamQTH');
+      logDebug('[DX Cluster] DX Spider failed, falling back to HamQTH');
       spots = await fetchHamQTH();
     }
   } else {
@@ -1182,7 +1210,7 @@ const DXPATHS_RETENTION = 30 * 60 * 1000; // 30 minute spot retention
 app.get('/api/dxcluster/paths', async (req, res) => {
   // Check cache first
   if (Date.now() - dxSpotPathsCache.timestamp < DXPATHS_CACHE_TTL && dxSpotPathsCache.paths.length > 0) {
-    console.log('[DX Paths] Returning', dxSpotPathsCache.paths.length, 'cached paths');
+    logDebug('[DX Paths] Returning', dxSpotPathsCache.paths.length, 'cached paths');
     return res.json(dxSpotPathsCache.paths);
   }
   
@@ -1215,11 +1243,11 @@ app.get('/api/dxcluster/paths', async (req, res) => {
             time: s.time || '',
             id: `${s.call}-${s.freqKhz || s.freq}-${s.spotter}`
           }));
-          console.log('[DX Paths] Got', newSpots.length, 'spots from proxy');
+          logDebug('[DX Paths] Got', newSpots.length, 'spots from proxy');
         }
       }
     } catch (proxyErr) {
-      console.log('[DX Paths] Proxy failed, trying HamQTH');
+      logDebug('[DX Paths] Proxy failed, trying HamQTH');
     }
     
     // Fallback to HamQTH if proxy failed
@@ -1261,10 +1289,10 @@ app.get('/api/dxcluster/paths', async (req, res) => {
               id: `${dxCall}-${freqKhz}-${spotter}`
             });
           }
-          console.log('[DX Paths] Got', newSpots.length, 'spots from HamQTH');
+          logDebug('[DX Paths] Got', newSpots.length, 'spots from HamQTH');
         }
       } catch (hamqthErr) {
-        console.log('[DX Paths] HamQTH also failed');
+        logDebug('[DX Paths] HamQTH also failed');
       }
     }
     
@@ -1415,7 +1443,7 @@ app.get('/api/dxcluster/paths', async (req, res) => {
     // Sort by timestamp (newest first) and limit
     const sortedPaths = mergedPaths.sort((a, b) => b.timestamp - a.timestamp).slice(0, 100);
     
-    console.log('[DX Paths]', sortedPaths.length, 'total paths (', newPaths.length, 'new from', newSpots.length, 'spots)');
+    logDebug('[DX Paths]', sortedPaths.length, 'total paths (', newPaths.length, 'new from', newSpots.length, 'spots)');
     
     // Update cache
     dxSpotPathsCache = { 
@@ -1426,7 +1454,7 @@ app.get('/api/dxcluster/paths', async (req, res) => {
     
     res.json(dxSpotPathsCache.paths);
   } catch (error) {
-    console.error('[DX Paths] Error:', error.message);
+    logErrorOnce('DX Paths', error.message);
     // Return cached data on error
     res.json(dxSpotPathsCache.paths || []);
   }
@@ -1439,7 +1467,7 @@ app.get('/api/dxcluster/paths', async (req, res) => {
 // Simple callsign to grid/location lookup using HamQTH
 app.get('/api/callsign/:call', async (req, res) => {
   const callsign = req.params.call.toUpperCase();
-  console.log('[Callsign Lookup] Looking up:', callsign);
+  logDebug('[Callsign Lookup] Looking up:', callsign);
   
   try {
     // Try HamQTH XML API (no auth needed for basic lookup)
@@ -1463,7 +1491,7 @@ app.get('/api/callsign/:call', async (req, res) => {
           cqZone: cqMatch ? cqMatch[1] : '',
           ituZone: ituMatch ? ituMatch[1] : ''
         };
-        console.log('[Callsign Lookup] Found:', result);
+        logDebug('[Callsign Lookup] Found:', result);
         return res.json(result);
       }
     }
@@ -1471,13 +1499,13 @@ app.get('/api/callsign/:call', async (req, res) => {
     // Fallback: estimate location from callsign prefix
     const estimated = estimateLocationFromPrefix(callsign);
     if (estimated) {
-      console.log('[Callsign Lookup] Estimated from prefix:', estimated);
+      logDebug('[Callsign Lookup] Estimated from prefix:', estimated);
       return res.json(estimated);
     }
     
     res.status(404).json({ error: 'Callsign not found' });
   } catch (error) {
-    console.error('[Callsign Lookup] Error:', error.message);
+    logErrorOnce('Callsign Lookup', error.message);
     res.status(500).json({ error: 'Lookup failed' });
   }
 });
@@ -1590,57 +1618,21 @@ function extractGridFromComment(comment) {
 function estimateLocationFromPrefix(callsign) {
   if (!callsign) return null;
   
-  // Handle slash/portable callsigns: TI5/N3KS, F/G3ABC, W1ABC/7, N3KS/P
-  let lookupCall = callsign.toUpperCase().trim();
-  if (lookupCall.includes('/')) {
-    const parts = lookupCall.split('/');
-    // Common suffixes to ignore (operating modifiers, not location)
-    const modifierSuffixes = ['P', 'M', 'MM', 'AM', 'QRP', 'R', 'T', 'B', 'LH'];
-    
-    if (parts.length === 2) {
-      const [left, right] = parts;
-      
-      // Right side is a modifier suffix like /P, /M, /MM, /QRP
-      if (modifierSuffixes.includes(right)) {
-        lookupCall = left;
-      }
-      // Right side is a single digit (district change): W1ABC/7
-      else if (/^\d$/.test(right)) {
-        // Replace the district digit in the callsign
-        lookupCall = left.replace(/\d/, right);
-      }
-      // Left side looks like a short prefix (1-4 chars, e.g. TI5/, F/, VP8/)
-      // and right side looks like a full callsign
-      else if (left.length <= 4 && right.length > left.length) {
-        lookupCall = left; // Use the operating prefix (TI5, F, VP8, etc.)
-      }
-      // Right side looks like a short prefix and left is the full callsign
-      else if (right.length <= 4 && left.length > right.length) {
-        lookupCall = right;
-      }
-      // Default: use the longer part (more likely the actual callsign)
-      else {
-        lookupCall = left.length >= right.length ? left : right;
-      }
-    }
-  }
-  
-  const upper = lookupCall.toUpperCase();
-  
   // Comprehensive prefix to grid mapping
-  // Uses typical/central grid for each DXCC entity
+  // Uses typical/central grid for each prefix area
   const prefixGrids = {
-    // === USA - by call district ===
-    'W1': 'FN41', 'K1': 'FN41', 'N1': 'FN41', 'AA1': 'FN41',
-    'W2': 'FN20', 'K2': 'FN20', 'N2': 'FN20', 'AA2': 'FN20',
-    'W3': 'FM19', 'K3': 'FM19', 'N3': 'FM19', 'AA3': 'FM19',
-    'W4': 'EM73', 'K4': 'EM73', 'N4': 'EM73', 'AA4': 'EM73',
-    'W5': 'EM12', 'K5': 'EM12', 'N5': 'EM12', 'AA5': 'EM12',
-    'W6': 'CM97', 'K6': 'CM97', 'N6': 'CM97', 'AA6': 'CM97',
-    'W7': 'DN31', 'K7': 'DN31', 'N7': 'DN31', 'AA7': 'DN31',
-    'W8': 'EN81', 'K8': 'EN81', 'N8': 'EN81', 'AA8': 'EN81',
-    'W9': 'EN52', 'K9': 'EN52', 'N9': 'EN52', 'AA9': 'EN52',
-    'W0': 'EN31', 'K0': 'EN31', 'N0': 'EN31', 'AA0': 'EN31',
+    // USA - by call district
+    'W1': 'FN41', 'K1': 'FN41', 'N1': 'FN41', 'AA1': 'FN41', // New England
+    'W2': 'FN20', 'K2': 'FN20', 'N2': 'FN20', 'AA2': 'FN20', // NY/NJ
+    'W3': 'FM19', 'K3': 'FM19', 'N3': 'FM19', 'AA3': 'FM19', // PA/MD/DE
+    'W4': 'EM73', 'K4': 'EM73', 'N4': 'EM73', 'AA4': 'EM73', // SE USA
+    'W5': 'EM12', 'K5': 'EM12', 'N5': 'EM12', 'AA5': 'EM12', // TX/OK/LA/AR/MS
+    'W6': 'CM97', 'K6': 'CM97', 'N6': 'CM97', 'AA6': 'CM97', // California
+    'W7': 'DN31', 'K7': 'DN31', 'N7': 'DN31', 'AA7': 'DN31', // Pacific NW/Mountain
+    'W8': 'EN81', 'K8': 'EN81', 'N8': 'EN81', 'AA8': 'EN81', // MI/OH/WV
+    'W9': 'EN52', 'K9': 'EN52', 'N9': 'EN52', 'AA9': 'EN52', // IL/IN/WI
+    'W0': 'EN31', 'K0': 'EN31', 'N0': 'EN31', 'AA0': 'EN31', // Central USA
+    // Generic USA (no district) - AA through AL are all US prefixes
     'W': 'EM79', 'K': 'EM79', 'N': 'EM79', 
     'AA': 'EM79', 'AB': 'EM79', 'AC': 'EM79', 'AD': 'EM79', 'AE': 'EM79', 'AF': 'EM79',
     'AG': 'EM79', 'AH': 'EM79', 'AI': 'EM79', 'AJ': 'EM79', 'AK': 'EM79', 'AL': 'EM79',
@@ -1662,318 +1654,133 @@ function estimateLocationFromPrefix(callsign) {
     'AK0': 'EN31', 'AK1': 'FN41', 'AK2': 'FN20', 'AK3': 'FM19', 'AK4': 'EM73',
     'AK5': 'EM12', 'AK6': 'CM97', 'AK7': 'DN31', 'AK8': 'EN81', 'AK9': 'EN52',
     'AL0': 'EN31', 'AL1': 'FN41', 'AL2': 'FN20', 'AL3': 'FM19', 'AL4': 'EM73',
-    'AL5': 'EM12', 'AL6': 'CM97', 'AL7': 'BP51', 'AL8': 'EN81', 'AL9': 'EN52',
+    'AL5': 'EM12', 'AL6': 'CM97', 'AL7': 'BP51', 'AL8': 'EN81', 'AL9': 'EN52', // AL7 = Alaska
     
-    // === US Territories ===
-    'KH0': 'QK25', 'KH1': 'BL01', 'KH2': 'QK24', 'KH3': 'BJ11', 'KH4': 'BL01',
-    'KH5': 'BL01', 'KH6': 'BL01', 'KH7': 'BL01', 'KH8': 'AH37', 'KH9': 'BK29',
-    'KP1': 'FK68', 'KP2': 'FK77', 'KP3': 'FK68', 'KP4': 'FK68', 'KP5': 'FK85',
-    'KL7': 'BP51', 'NL7': 'BP51', 'WL7': 'BP51', 'KL': 'BP51', // Alaska
-    'NP4': 'FK68', 'WP4': 'FK68', 'NP3': 'FK68', 'WP3': 'FK68', // Puerto Rico
+    // Canada - by province
+    'VE1': 'FN74', 'VA1': 'FN74', // Maritime
+    'VE2': 'FN35', 'VA2': 'FN35', // Quebec
+    'VE3': 'FN03', 'VA3': 'FN03', // Ontario
+    'VE4': 'EN19', 'VA4': 'EN19', // Manitoba
+    'VE5': 'DO51', 'VA5': 'DO51', // Saskatchewan
+    'VE6': 'DO33', 'VA6': 'DO33', // Alberta
+    'VE7': 'CN89', 'VA7': 'CN89', // British Columbia
+    'VE8': 'DP31', 'VA8': 'DP31', // NWT
+    'VE9': 'FN65', 'VA9': 'FN65', // New Brunswick
+    'VY1': 'CP28', // Yukon
+    'VY2': 'FN86', // PEI
+    'VO1': 'GN37', 'VO2': 'GO17', // Newfoundland/Labrador
+    'VE': 'FN03', 'VA': 'FN03', // Generic Canada
     
-    // === Canada - by province ===
-    'VE1': 'FN74', 'VA1': 'FN74',
-    'VE2': 'FN35', 'VA2': 'FN35',
-    'VE3': 'FN03', 'VA3': 'FN03',
-    'VE4': 'EN19', 'VA4': 'EN19',
-    'VE5': 'DO51', 'VA5': 'DO51',
-    'VE6': 'DO33', 'VA6': 'DO33',
-    'VE7': 'CN89', 'VA7': 'CN89',
-    'VE8': 'DP31', 'VA8': 'DP31',
-    'VE9': 'FN65', 'VA9': 'FN65',
-    'VY1': 'CP28', 'VY2': 'FN86',
-    'VO1': 'GN37', 'VO2': 'GO17',
-    'VE': 'FN03', 'VA': 'FN03',
-    'CY0': 'FN93', // Sable Island
-    'CY9': 'GN06', // St. Paul Island
-    
-    // === UK & Ireland ===
-    'G': 'IO91', 'M': 'IO91', '2E': 'IO91', // England
-    'GW': 'IO81', 'MW': 'IO81', '2W': 'IO81', // Wales
+    // UK & Ireland
+    'G': 'IO91', 'M': 'IO91', '2E': 'IO91', 'GW': 'IO81', // England/Wales
     'GM': 'IO85', 'MM': 'IO85', '2M': 'IO85', // Scotland
     'GI': 'IO64', 'MI': 'IO64', '2I': 'IO64', // N. Ireland
-    'GD': 'IO74', 'MD': 'IO74', '2D': 'IO74', // Isle of Man
-    'GJ': 'IN89', 'MJ': 'IN89', '2J': 'IN89', // Jersey
-    'GU': 'IN89', 'MU': 'IN89', '2U': 'IN89', // Guernsey
     'EI': 'IO63', 'EJ': 'IO63', // Ireland
-    'GS': 'IO85', 'MS': 'IO85', // Scotland special
-    'GB': 'IO91', // UK special event
-    'GX': 'IO91', // UK special
     
-    // === Germany ===
-    'DL': 'JO51', 'DJ': 'JO51', 'DK': 'JO51', 'DA': 'JO51', 'DB': 'JO51', 
-    'DC': 'JO51', 'DD': 'JO51', 'DF': 'JO51', 'DG': 'JO51', 'DH': 'JO51', 
-    'DI': 'JO51', 'DM': 'JO51', 'DN': 'JO51', 'DO': 'JO51', 'DP': 'JO51', 'DR': 'JO51',
+    // Germany
+    'DL': 'JO51', 'DJ': 'JO51', 'DK': 'JO51', 'DA': 'JO51', 'DB': 'JO51', 'DC': 'JO51', 'DD': 'JO51', 'DF': 'JO51', 'DG': 'JO51', 'DH': 'JO51', 'DO': 'JO51',
     
-    // === Rest of Europe ===
-    'F': 'JN18', 'TM': 'JN18', // France
-    'I': 'JN61', 'IK': 'JN45', 'IZ': 'JN61', 'IU': 'JN61', 'IW': 'JN61', 'IX': 'JN61', // Italy
-    'IS': 'JM49', 'IM': 'JM49', // Sardinia
-    'IT9': 'JM68', // Sicily
-    'EA': 'IN80', 'EC': 'IN80', 'EB': 'IN80', 'ED': 'IN80', 'EE': 'IN80', 'EF': 'IN80', 'EG': 'IN80', 'EH': 'IN80', // Spain
-    'EA6': 'JM19', // Balearic Islands
-    'EA8': 'IL18', // Canary Islands
-    'EA9': 'IM75', // Ceuta & Melilla
-    'CT': 'IM58', 'CS': 'IM58', 'CQ': 'IM58', // Portugal
-    'CT3': 'IM12', // Madeira
-    'CU': 'HM58', // Azores
-    'PA': 'JO21', 'PD': 'JO21', 'PE': 'JO21', 'PH': 'JO21', 'PI': 'JO21', // Netherlands
-    'ON': 'JO20', 'OO': 'JO20', 'OR': 'JO20', 'OT': 'JO20', 'OP': 'JO20', // Belgium
-    'LX': 'JN39', // Luxembourg
+    // Rest of Europe
+    'F': 'JN18', // France
+    'I': 'JN61', 'IK': 'JN45', 'IZ': 'JN61', // Italy
+    'EA': 'IN80', 'EC': 'IN80', 'EB': 'IN80', // Spain
+    'CT': 'IM58', // Portugal
+    'PA': 'JO21', 'PD': 'JO21', 'PE': 'JO21', 'PH': 'JO21', // Netherlands
+    'ON': 'JO20', 'OO': 'JO20', 'OR': 'JO20', 'OT': 'JO20', // Belgium
     'HB': 'JN47', 'HB9': 'JN47', // Switzerland
-    'HB0': 'JN47', // Liechtenstein
-    'HE': 'JN47', // Switzerland special
     'OE': 'JN78', // Austria
-    'OZ': 'JO55', 'OU': 'JO55', 'OV': 'JO55', 'OW': 'JO55', 'OX': 'JO55', '5P': 'JO55', '5Q': 'JO55', // Denmark
-    'OX': 'GP46', // Greenland (override generic Denmark)
-    'OY': 'IP62', // Faroe Islands
-    'SM': 'JO89', 'SA': 'JO89', 'SB': 'JO89', 'SC': 'JO89', 'SD': 'JO89', 'SE': 'JO89', 'SF': 'JO89', 'SG': 'JO89', 'SH': 'JO89', 'SI': 'JO89', 'SJ': 'JO89', 'SK': 'JO89', 'SL': 'JO89', // Sweden
-    'LA': 'JO59', 'LB': 'JO59', 'LC': 'JO59', 'LD': 'JO59', 'LE': 'JO59', 'LF': 'JO59', 'LG': 'JO59', 'LH': 'JO59', 'LI': 'JO59', 'LJ': 'JO59', 'LK': 'JO59', 'LL': 'JO59', 'LM': 'JO59', 'LN': 'JO59', // Norway
-    'JW': 'JQ78', // Svalbard
-    'JX': 'IQ50', // Jan Mayen
-    'OH': 'KP20', 'OF': 'KP20', 'OG': 'KP20', 'OH0': 'JP90', 'OI': 'KP20', // Finland, Aland
-    'SP': 'JO91', 'SQ': 'JO91', 'SO': 'JO91', 'SN': 'JO91', '3Z': 'JO91', 'HF': 'JO91', // Poland
+    'OZ': 'JO55', 'OU': 'JO55', // Denmark
+    'SM': 'JO89', 'SA': 'JO89', 'SB': 'JO89', 'SE': 'JO89', // Sweden
+    'LA': 'JO59', 'LB': 'JO59', // Norway
+    'OH': 'KP20', 'OF': 'KP20', 'OG': 'KP20', 'OI': 'KP20', // Finland
+    'SP': 'JO91', 'SQ': 'JO91', 'SO': 'JO91', '3Z': 'JO91', // Poland
     'OK': 'JN79', 'OL': 'JN79', // Czech Republic
     'OM': 'JN88', // Slovakia
     'HA': 'JN97', 'HG': 'JN97', // Hungary
-    'YO': 'KN34', 'YP': 'KN34', 'YQ': 'KN34', 'YR': 'KN34', // Romania
+    'YO': 'KN34', // Romania
     'LZ': 'KN22', // Bulgaria
-    'YU': 'KN04', 'YT': 'KN04', // Serbia
-    'Z3': 'KN11', // North Macedonia
+    'YU': 'KN04', // Serbia
     '9A': 'JN75', // Croatia
     'S5': 'JN76', // Slovenia
-    'T9': 'JN83', // Bosnia-Herzegovina
-    '4O': 'JN92', // Montenegro
-    'ZA': 'JN91', // Albania
-    'SV': 'KM17', 'SX': 'KM17', 'SY': 'KM17', 'SZ': 'KM17', 'SW': 'KM17', // Greece
-    'SV5': 'KM46', 'SV9': 'KM25', // Dodecanese, Crete
-    'J4': 'KM17', // Greece special
+    'SV': 'KM17', 'SX': 'KM17', // Greece
     '9H': 'JM75', // Malta
     'LY': 'KO24', // Lithuania
     'ES': 'KO29', // Estonia
     'YL': 'KO26', // Latvia
-    'TF': 'HP94', // Iceland
-    'TK': 'JN42', // Corsica
-    'TA': 'KN30', 'TC': 'KN30', 'TB': 'KN30', 'YM': 'KN30', // Turkey
-    'ER': 'KN46', // Moldova
-    '1A': 'JN61', // Sovereign Military Order of Malta
-    '4U': 'JN36', // United Nations (Geneva)
-    'T7': 'JN63', // San Marino
-    '3A': 'JN33', // Monaco
-    'C3': 'JN12', // Andorra
     
-    // === Russia & CIS ===
-    'UA': 'KO85', 'RA': 'KO85', 'RU': 'KO85', 'RV': 'KO85', 'RW': 'KO85', 'RX': 'KO85', 'RZ': 'KO85', 'R1': 'KO85', 'R2': 'KO85', 'R3': 'KO85', 'R4': 'KO85', 'R5': 'KO85', 'R6': 'KO85',
+    // Russia & Ukraine
+    'UA': 'KO85', 'RA': 'KO85', 'RU': 'KO85', 'RV': 'KO85', 'RW': 'KO85', 'RX': 'KO85', 'RZ': 'KO85',
     'UA0': 'OO33', 'RA0': 'OO33', 'R0': 'OO33', // Asiatic Russia
     'UA9': 'MO06', 'RA9': 'MO06', 'R9': 'MO06', // Ural
-    'UR': 'KO50', 'UT': 'KO50', 'UX': 'KO50', 'US': 'KO50', 'UY': 'KO50', 'UW': 'KO50', // Ukraine
-    'EU': 'KO33', 'EV': 'KO33', 'EW': 'KO33', // Belarus
-    'UN': 'MN83', 'UP': 'MN83', 'UQ': 'MN83', // Kazakhstan
-    'EX': 'MN51', // Kyrgyzstan
-    'EY': 'MM38', // Tajikistan
-    'UK': 'MN41', // Uzbekistan
-    'EZ': 'LN99', // Turkmenistan
-    '4J': 'LN40', '4K': 'LN40', // Azerbaijan
-    '4L': 'LN11', // Georgia
-    'EK': 'LN20', // Armenia
+    'UR': 'KO50', 'UT': 'KO50', 'UX': 'KO50', 'US': 'KO50', // Ukraine
     
-    // === Japan ===
+    // Japan - by call area
     'JA1': 'PM95', 'JH1': 'PM95', 'JR1': 'PM95', 'JE1': 'PM95', 'JF1': 'PM95', 'JG1': 'PM95', 'JI1': 'PM95', 'JJ1': 'PM95', 'JK1': 'PM95', 'JL1': 'PM95', 'JM1': 'PM95', 'JN1': 'PM95', 'JO1': 'PM95', 'JP1': 'PM95', 'JQ1': 'PM95', 'JS1': 'PM95', '7K1': 'PM95', '7L1': 'PM95', '7M1': 'PM95', '7N1': 'PM95',
     'JA2': 'PM84', 'JA3': 'PM74', 'JA4': 'PM64', 'JA5': 'PM63', 'JA6': 'PM53', 'JA7': 'QM07', 'JA8': 'QN02', 'JA9': 'PM86', 'JA0': 'PM97',
-    'JA': 'PM95', 'JH': 'PM95', 'JR': 'PM95', 'JE': 'PM95', 'JF': 'PM95', 'JG': 'PM95', 'JI': 'PM95', 'JJ': 'PM95', 'JK': 'PM95', 'JL': 'PM95', 'JM': 'PM95', 'JN': 'PM95', 'JO': 'PM95', 'JP': 'PM95', 'JQ': 'PM95', 'JS': 'PM95',
-    '7J': 'PM95', '7K': 'PM95', '7L': 'PM95', '7M': 'PM95', '7N': 'PM95',
-    '8J': 'PM95', '8N': 'PM95', // Japan special event
+    'JA': 'PM95', 'JH': 'PM95', 'JR': 'PM95', 'JE': 'PM95', 'JF': 'PM95', 'JG': 'PM95', // Generic Japan
     
-    // === Rest of Asia ===
+    // Rest of Asia
     'HL': 'PM37', 'DS': 'PM37', '6K': 'PM37', '6L': 'PM37', // South Korea
-    'BV': 'PL04', 'BW': 'PL04', 'BX': 'PL04', 'BM': 'PL04', 'BN': 'PL04', 'BO': 'PL04', 'BP': 'PL04', 'BQ': 'PL04', // Taiwan
-    'BY': 'OM92', 'BT': 'OM92', 'BA': 'OM92', 'BD': 'OM92', 'BG': 'OM92', 'BH': 'OM92', 'BI': 'OM92', 'BJ': 'OM92', 'BL': 'OM92', 'BR': 'OM92', 'BS': 'OM92', // China
-    'VR': 'OL72', // Hong Kong
-    'XX9': 'OL62', // Macau
-    'VU': 'MK82', 'VU2': 'MK82', 'VU3': 'MK82', 'AT': 'MK82', // India
-    'AP': 'MM42', // Pakistan
-    '4S': 'NJ06', // Sri Lanka
-    'XW': 'NK96', // Laos
-    'XU': 'OK34', // Cambodia
-    'XV': 'OK30', '3W': 'OK30', // Vietnam
+    'BV': 'PL04', 'BW': 'PL04', 'BX': 'PL04', // Taiwan
+    'BY': 'OM92', 'BT': 'OM92', 'BA': 'OM92', 'BD': 'OM92', 'BG': 'OM92', // China
+    'VU': 'MK82', 'VU2': 'MK82', 'VU3': 'MK82', // India
     'HS': 'OK03', 'E2': 'OK03', // Thailand
     '9V': 'OJ11', // Singapore
     '9M': 'OJ05', '9W': 'OJ05', // Malaysia
-    'V8': 'OJ85', // Brunei
     'DU': 'PK04', 'DV': 'PK04', 'DW': 'PK04', 'DX': 'PK04', 'DY': 'PK04', 'DZ': 'PK04', '4D': 'PK04', '4E': 'PK04', '4F': 'PK04', '4G': 'PK04', '4H': 'PK04', '4I': 'PK04', // Philippines
     'YB': 'OI33', 'YC': 'OI33', 'YD': 'OI33', 'YE': 'OI33', 'YF': 'OI33', 'YG': 'OI33', 'YH': 'OI33', // Indonesia
-    'JT': 'ON09', 'JU': 'ON09', 'JV': 'ON09', // Mongolia
     
-    // === Middle East ===
-    'A4': 'LL93', 'A41': 'LL93', 'A45': 'LL93', // Oman
-    'A6': 'LL65', 'A61': 'LL65', // UAE
-    'A7': 'LL45', 'A71': 'LL45', // Qatar
-    'A9': 'LL46', 'A92': 'LL46', // Bahrain
-    '9K': 'LL47', // Kuwait
-    'HZ': 'LL24', '7Z': 'LL24', '8Z': 'LL24', // Saudi Arabia
-    '4X': 'KM72', '4Z': 'KM72', // Israel
-    'OD': 'KM73', // Lebanon
-    'JY': 'KM72', // Jordan
-    'YK': 'KM74', // Syria
-    'YI': 'LM32', // Iraq
-    'EP': 'LL38', // Iran
-    
-    // === Oceania ===
-    'VK': 'QF56', 'VK1': 'QF44', 'VK2': 'QF56', 'VK3': 'QF22', 'VK4': 'QG62', 'VK5': 'PF95', 'VK6': 'OF86', 'VK7': 'QE38', 'VK8': 'PG36', 'VK9': 'QF56', // Australia
-    'AX': 'QF56', // Australia special
+    // Oceania
+    'VK': 'QF56', 'VK1': 'QF44', 'VK2': 'QF56', 'VK3': 'QF22', 'VK4': 'QG62', 'VK5': 'PF95', 'VK6': 'OF86', 'VK7': 'QE38', // Australia
     'ZL': 'RF70', 'ZL1': 'RF72', 'ZL2': 'RF70', 'ZL3': 'RE66', 'ZL4': 'RE54', // New Zealand
-    'ZM': 'RF70', // New Zealand special
+    'KH6': 'BL01', // Hawaii
+    'KH2': 'QK24', // Guam
     'FK': 'RG37', // New Caledonia
-    'FO': 'BH51', // French Polynesia
-    'FW': 'AH33', // Wallis & Futuna
-    '3D2': 'RH91', // Fiji
-    '5W': 'AH44', // Samoa
-    'KH0': 'QK25', // Mariana Islands
-    'KH8': 'AH37', // American Samoa
-    'T8': 'PJ77', // Palau
-    'V7': 'RJ38', // Marshall Islands
-    'T3': 'RI92', // Kiribati
-    'A3': 'AH22', // Tonga
-    'ZK3': 'AI51', // Tokelau
-    'E5': 'BG08', // Cook Islands
-    'VK9N': 'RH23', // Norfolk Island
-    'VK0M': 'QE37', // Macquarie Island
     
-    // === South America ===
-    'LU': 'GF05', 'LW': 'GF05', 'LO': 'GF05', 'LQ': 'GF05', 'LR': 'GF05', 'LS': 'GF05', 'LT': 'GF05', 'LV': 'GF05',
-    'L2': 'GF05', 'L3': 'GF05', 'L4': 'GF05', 'L5': 'GF05', 'L6': 'GF05', 'L7': 'GF05', 'L8': 'GF05', 'L9': 'GF05', // Argentina
-    'AY': 'GF05', 'AZ': 'GF05', // Argentina special
+    // South America
+    'LU': 'GF05', 'LW': 'GF05', 'LO': 'GF05', 'L2': 'GF05', 'L3': 'GF05', 'L4': 'GF05', 'L5': 'GF05', 'L6': 'GF05', 'L7': 'GF05', 'L8': 'GF05', 'L9': 'GF05', // Argentina
     'PY': 'GG87', 'PP': 'GG87', 'PQ': 'GG87', 'PR': 'GG87', 'PS': 'GG87', 'PT': 'GG87', 'PU': 'GG87', 'PV': 'GG87', 'PW': 'GG87', 'PX': 'GG87', // Brazil
-    'ZV': 'GG87', 'ZW': 'GG87', 'ZX': 'GG87', 'ZY': 'GG87', 'ZZ': 'GG87', // Brazil special
     'CE': 'FF46', 'CA': 'FF46', 'CB': 'FF46', 'CC': 'FF46', 'CD': 'FF46', 'XQ': 'FF46', 'XR': 'FF46', '3G': 'FF46', // Chile
-    'CE0': 'DG52', // Easter Island
-    'CX': 'GF15', 'CV': 'GF15', 'CW': 'GF15', // Uruguay
+    'CX': 'GF15', // Uruguay
     'HC': 'FI09', 'HD': 'FI09', // Ecuador
-    'HC8': 'EI49', // Galapagos
     'OA': 'FH17', 'OB': 'FH17', 'OC': 'FH17', // Peru
     'HK': 'FJ35', 'HJ': 'FJ35', '5J': 'FJ35', '5K': 'FJ35', // Colombia
-    'HK0': 'EJ96', // San Andres & Providencia
     'YV': 'FK60', 'YW': 'FK60', 'YX': 'FK60', 'YY': 'FK60', // Venezuela
-    'CP': 'FH63', // Bolivia
-    'ZP': 'FG99', // Paraguay
-    '8R': 'GJ25', // Guyana
-    'PZ': 'GJ15', // Suriname
-    'FY': 'GJ35', // French Guiana
     
-    // === Central America ===
-    'TI': 'EJ79', // Costa Rica
-    'HP': 'FJ08', // Panama
-    'TG': 'EK44', // Guatemala
-    'YS': 'EK53', // El Salvador
-    'HR': 'EK65', // Honduras
-    'YN': 'EK72', // Nicaragua
-    'V3': 'EK57', // Belize
-    'XE': 'EK09', 'XA': 'EK09', 'XB': 'EK09', 'XC': 'EK09', 'XD': 'EK09', '4A': 'EK09', '4B': 'EK09', '4C': 'EK09', '6D': 'EK09', '6E': 'EK09', '6F': 'EK09', '6G': 'EK09', '6H': 'EK09', '6I': 'EK09', // Mexico
-    
-    // === Caribbean ===
+    // Caribbean
     'KP4': 'FK68', 'NP4': 'FK68', 'WP4': 'FK68', // Puerto Rico
     'VP5': 'FL31', // Turks & Caicos
     'HI': 'FK49', // Dominican Republic
-    'CO': 'FL10', 'CM': 'FL10', 'T4': 'FL10', // Cuba
+    'CO': 'FL10', 'CM': 'FL10', // Cuba
     'FG': 'FK96', // Guadeloupe
     'FM': 'FK94', // Martinique
-    'PJ2': 'FK52', 'PJ4': 'FK52', // Curacao, Bonaire
-    'PJ5': 'FK87', 'PJ6': 'FK87', 'PJ7': 'FK88', // Saba, St Eustatius, St Maarten
-    'HH': 'FK38', // Haiti
-    '6Y': 'FK18', // Jamaica
-    'VP2M': 'FK86', // Montserrat
-    'VP2V': 'FK78', // British Virgin Islands
-    'VP2E': 'FK97', // Anguilla
-    'VP9': 'FM72', // Bermuda
-    'V2': 'FK97', // Antigua & Barbuda
-    'V4': 'FK87', // Saint Kitts & Nevis
-    'J3': 'FK92', // Grenada
-    'J6': 'FK93', // St. Lucia
-    'J7': 'FK95', // Dominica
-    'J8': 'FK93', // St. Vincent
-    '8P': 'GK03', // Barbados
-    '9Y': 'FK90', '9Z': 'FK90', // Trinidad & Tobago
-    'C6': 'FL16', // Bahamas
-    'ZF': 'EK99', // Cayman Islands
-    'FJ': 'FK87', // St. Barthelemy
-    'FS': 'FK88', // St. Martin
+    'PJ': 'FK52', // Netherlands Antilles
     
-    // === Africa ===
+    // Africa
     'ZS': 'KG33', 'ZR': 'KG33', 'ZT': 'KG33', 'ZU': 'KG33', // South Africa
-    '5N': 'JJ55', '5O': 'JJ55', // Nigeria
+    '5N': 'JJ55', // Nigeria
     'CN': 'IM63', // Morocco
     '7X': 'JM16', // Algeria
-    'TS': 'JM44', '3V': 'JM44', // Tunisia
-    '5A': 'JM73', // Libya
     'SU': 'KL30', // Egypt
     '5Z': 'KI88', // Kenya
     'ET': 'KJ49', // Ethiopia
-    '5H': 'KI73', // Tanzania
-    '9J': 'KH44', // Zambia
-    '9X': 'KI49', // Rwanda
-    '9U': 'KI39', // Burundi
-    '5X': 'KI42', // Uganda
-    'EL': 'IJ56', // Liberia
-    '6W': 'IK14', // Senegal
-    'C5': 'IK13', // Gambia
-    '5T': 'IL33', // Mauritania
-    '9G': 'IJ95', // Ghana
-    'TU': 'IJ46', // Ivory Coast
-    'TY': 'JJ17', // Benin
-    '5V': 'JJ17', // Togo
-    'XT': 'IK52', // Burkina Faso
-    'TZ': 'IK52', // Mali
-    'TJ': 'JJ43', // Cameroon
-    'TN': 'JI74', // Congo (Brazzaville)
-    '9Q': 'JI55', // DR Congo
-    'TR': 'JJ10', // Gabon
-    'TL': 'JJ64', // Central African Republic
-    'ST': 'KK25', // Sudan
-    'J5': 'IK21', // Guinea-Bissau
-    '3X': 'IJ56', // Guinea
-    '9L': 'IJ38', // Sierra Leone
-    'A2': 'KG42', // Botswana
-    'V5': 'JG87', // Namibia
-    '7P': 'KG30', // Lesotho
-    '3DA': 'KG53', // Eswatini
-    'Z2': 'KG51', 'Z21': 'KG51', // Zimbabwe
-    '7Q': 'KH74', // Malawi
-    'C9': 'KH53', // Mozambique
-    '8Q': 'MJ56', // Maldives
-    '3B8': 'LG89', // Mauritius
-    'FR': 'LG78', // Reunion
-    'S7': 'LI75', // Seychelles
-    'D6': 'LI24', // Comoros
-    'FT': 'ME27', // Crozet / Kerguelen / Amsterdam
-    '3B9': 'MH43', // Rodrigues
-    '5R': 'LH67', // Madagascar
-    'V4': 'FK87', // St Kitts (Caribbean, already above)
     'EA8': 'IL18', 'EA9': 'IM75', // Canary Islands, Ceuta
-    'D4': 'HK76', // Cape Verde
-    '6V': 'IK14', '6W': 'IK14', // Senegal
-    'J2': 'LK10', // Djibouti
-    'E3': 'KK15', // Eritrea
-    'T5': 'KI62', '6O': 'KI62', // Somalia
-    'S0': 'IL33', // Western Sahara
     
-    // === South Atlantic ===
+    // Middle East
+    'A4': 'LL93', 'A41': 'LL93', 'A45': 'LL93', // Oman
+    'A6': 'LL65', 'A61': 'LL65', // UAE
+    'A7': 'LL45', 'A71': 'LL45', // Qatar
+    'HZ': 'LL24', // Saudi Arabia
+    '4X': 'KM72', '4Z': 'KM72', // Israel
+    'OD': 'KM73', // Lebanon
+    
+    // Other
     'VP8': 'GD18', // Falkland Islands
-    'VP8/G': 'IC86', 'VP8/H': 'IC86', // South Georgia, South Sandwich
-    'ZD7': 'II74', // St. Helena
-    'ZD8': 'II22', // Ascension Island
-    'ZD9': 'IG35', // Tristan da Cunha
-    '3Y': 'JD04', // Bouvet Island
-    
-    // === Antarctica ===
-    'CE9': 'FC56', 'DP0': 'IB59', 'KC4': 'FC56', 'RI1AN': 'MC14',
-    'VP8/': 'GC04', // Various Antarctic bases
-    '8J1RL': 'QC52', // Japan Antarctic
-    
-    // === Other ===
-    'ZB': 'IM76', 'ZG': 'IM76', // Gibraltar
-    'ZC4': 'KM64', // UK Sovereign Bases Cyprus
-    '5B': 'KM64', 'C4': 'KM64', 'H2': 'KM64', 'P3': 'KM64', // Cyprus
+    'CE9': 'FC56', 'DP0': 'IB59', 'KC4': 'FC56', // Antarctica
+    'SV5': 'KM46', 'SV9': 'KM25', // Dodecanese, Crete
   };
+  
+  const upper = callsign.toUpperCase();
   
   // Smart US callsign detection - US prefixes follow specific patterns
   // K, N, W + anything = USA
@@ -1981,12 +1788,21 @@ function estimateLocationFromPrefix(callsign) {
   const usCallPattern = /^([KNW][0-9]?|A[A-L][0-9])/;
   const usMatch = upper.match(usCallPattern);
   if (usMatch) {
+    // Extract call district (the digit) for more precise location
     const districtMatch = upper.match(/^[KNWA][A-L]?([0-9])/);
     const district = districtMatch ? districtMatch[1] : null;
     
     const usDistrictGrids = {
-      '0': 'EN31', '1': 'FN41', '2': 'FN20', '3': 'FM19', '4': 'EM73',
-      '5': 'EM12', '6': 'CM97', '7': 'DN31', '8': 'EN81', '9': 'EN52',
+      '0': 'EN31', // Central (CO, IA, KS, MN, MO, NE, ND, SD)
+      '1': 'FN41', // New England (CT, MA, ME, NH, RI, VT)
+      '2': 'FN20', // NY, NJ
+      '3': 'FM19', // PA, MD, DE
+      '4': 'EM73', // Southeast (AL, FL, GA, KY, NC, SC, TN, VA)
+      '5': 'EM12', // TX, OK, LA, AR, MS, NM
+      '6': 'CM97', // California
+      '7': 'DN31', // Pacific NW/Mountain (AZ, ID, MT, NV, OR, UT, WA, WY)
+      '8': 'EN81', // MI, OH, WV
+      '9': 'EN52', // IL, IN, WI
     };
     
     const grid = district && usDistrictGrids[district] ? usDistrictGrids[district] : 'EM79';
@@ -1994,31 +1810,60 @@ function estimateLocationFromPrefix(callsign) {
     if (gridLoc) {
       return {
         callsign,
-        lat: gridLoc.lat, lon: gridLoc.lon, grid,
-        country: 'USA', estimated: true, source: 'prefix-grid'
+        lat: gridLoc.lat,
+        lon: gridLoc.lon,
+        grid: grid,
+        country: 'USA',
+        estimated: true,
+        source: 'prefix-grid'
       };
     }
   }
   
-  // Try longest prefix match first (up to 5 chars) for non-US calls
-  for (let len = Math.min(upper.length, 5); len >= 1; len--) {
+  // Try longest prefix match first (up to 4 chars) for non-US calls
+  for (let len = 4; len >= 1; len--) {
     const prefix = upper.substring(0, len);
     if (prefixGrids[prefix]) {
       const gridLoc = maidenheadToLatLon(prefixGrids[prefix]);
       if (gridLoc) {
         return { 
           callsign, 
-          lat: gridLoc.lat, lon: gridLoc.lon,
+          lat: gridLoc.lat, 
+          lon: gridLoc.lon, 
           grid: prefixGrids[prefix],
           country: getCountryFromPrefix(prefix),
-          estimated: true, source: 'prefix-grid'
+          estimated: true,
+          source: 'prefix-grid'
         };
       }
     }
   }
   
-  // No match found — return null rather than guess wrong
-  // It's better to not plot a spot than to plot it on the wrong continent
+  // Fallback to first character (most likely country for each letter)
+  const firstCharGrids = {
+    'A': 'EM79', 'B': 'PL02', 'C': 'FN03', 'D': 'JO51', 'E': 'IO63', // A=USA (AA-AL), B=China, C=Canada, D=Germany, E=Spain/Ireland
+    'F': 'JN18', 'G': 'IO91', 'H': 'KM72', 'I': 'JN61', 'J': 'PM95', // F=France, G=UK, H=varies, I=Italy, J=Japan
+    'K': 'EM79', 'L': 'GF05', 'M': 'IO91', 'N': 'EM79', 'O': 'KP20', // K=USA, L=Argentina, M=UK, N=USA, O=Finland
+    'P': 'GG87', 'R': 'KO85', 'S': 'JO89', 'T': 'KI88', 'U': 'KO85', // P=Brazil, R=Russia, S=Sweden, T=varies, U=Russia
+    'V': 'QF56', 'W': 'EM79', 'X': 'EK09', 'Y': 'JO91', 'Z': 'KG33'  // V=Australia, W=USA, X=Mexico, Y=varies, Z=South Africa
+  };
+  
+  const firstChar = upper[0];
+  if (firstCharGrids[firstChar]) {
+    const gridLoc = maidenheadToLatLon(firstCharGrids[firstChar]);
+    if (gridLoc) {
+      return {
+        callsign,
+        lat: gridLoc.lat,
+        lon: gridLoc.lon,
+        grid: firstCharGrids[firstChar],
+        country: 'Unknown',
+        estimated: true,
+        source: 'prefix-grid'
+      };
+    }
+  }
+  
   return null;
 }
 
@@ -2028,34 +1873,15 @@ function getCountryFromPrefix(prefix) {
     'W': 'USA', 'K': 'USA', 'N': 'USA', 'AA': 'USA',
     'VE': 'Canada', 'VA': 'Canada', 'VY': 'Canada', 'VO': 'Canada',
     'G': 'England', 'M': 'England', '2E': 'England', 'GM': 'Scotland', 'GW': 'Wales', 'GI': 'N. Ireland',
-    'GD': 'Isle of Man', 'GJ': 'Jersey', 'GU': 'Guernsey', 'GB': 'UK',
-    'EI': 'Ireland', 'F': 'France', 'TM': 'France', 'TK': 'Corsica',
-    'DL': 'Germany', 'DJ': 'Germany', 'DK': 'Germany', 'DA': 'Germany', 'DB': 'Germany', 'DC': 'Germany', 'DD': 'Germany', 'DF': 'Germany', 'DG': 'Germany', 'DH': 'Germany', 'DO': 'Germany',
-    'I': 'Italy', 'IK': 'Italy', 'IZ': 'Italy',
-    'EA': 'Spain', 'EA6': 'Balearic Is.', 'EA8': 'Canary Is.', 'EA9': 'Ceuta',
-    'CT': 'Portugal', 'CT3': 'Madeira', 'CU': 'Azores',
-    'PA': 'Netherlands', 'ON': 'Belgium', 'LX': 'Luxembourg',
-    'HB': 'Switzerland', 'HB0': 'Liechtenstein', 'OE': 'Austria',
-    'OZ': 'Denmark', 'OX': 'Greenland', 'OY': 'Faroe Islands',
-    'SM': 'Sweden', 'LA': 'Norway', 'JW': 'Svalbard', 'OH': 'Finland',
-    'SP': 'Poland', 'OK': 'Czech Rep.', 'OM': 'Slovakia',
-    'HA': 'Hungary', 'YO': 'Romania', 'LZ': 'Bulgaria',
-    'UA': 'Russia', 'RA': 'Russia', 'R': 'Russia',
-    'UR': 'Ukraine', 'UT': 'Ukraine', 'US': 'Ukraine',
-    'EU': 'Belarus', 'UN': 'Kazakhstan', 'EK': 'Armenia', '4L': 'Georgia', '4J': 'Azerbaijan',
-    'YU': 'Serbia', '9A': 'Croatia', 'S5': 'Slovenia', 'T9': 'Bosnia', '4O': 'Montenegro', 'ZA': 'Albania', 'Z3': 'N. Macedonia',
-    'SV': 'Greece', '9H': 'Malta', 'LY': 'Lithuania', 'ES': 'Estonia', 'YL': 'Latvia',
-    'TF': 'Iceland', 'TA': 'Turkey', 'ER': 'Moldova', 'T7': 'San Marino', '3A': 'Monaco', 'C3': 'Andorra',
+    'EI': 'Ireland', 'F': 'France', 'DL': 'Germany', 'I': 'Italy', 'EA': 'Spain', 'CT': 'Portugal',
+    'PA': 'Netherlands', 'ON': 'Belgium', 'HB': 'Switzerland', 'OE': 'Austria',
+    'OZ': 'Denmark', 'SM': 'Sweden', 'LA': 'Norway', 'OH': 'Finland',
+    'SP': 'Poland', 'OK': 'Czech Rep', 'HA': 'Hungary', 'YO': 'Romania', 'LZ': 'Bulgaria',
+    'UA': 'Russia', 'UR': 'Ukraine',
     'JA': 'Japan', 'HL': 'S. Korea', 'BV': 'Taiwan', 'BY': 'China', 'VU': 'India', 'HS': 'Thailand',
-    'DU': 'Philippines', 'YB': 'Indonesia', '9V': 'Singapore', '9M': 'Malaysia', 'VR': 'Hong Kong',
-    'VK': 'Australia', 'ZL': 'New Zealand', 'KH6': 'Hawaii', 'KL': 'Alaska',
-    'LU': 'Argentina', 'PY': 'Brazil', 'ZV': 'Brazil', 'CE': 'Chile', 'CX': 'Uruguay',
-    'HC': 'Ecuador', 'OA': 'Peru', 'HK': 'Colombia', 'YV': 'Venezuela', 'CP': 'Bolivia', 'ZP': 'Paraguay',
-    'TI': 'Costa Rica', 'HP': 'Panama', 'TG': 'Guatemala', 'YS': 'El Salvador', 'HR': 'Honduras', 'YN': 'Nicaragua', 'V3': 'Belize',
-    'XE': 'Mexico', 'HI': 'Dominican Rep.', 'CO': 'Cuba', '6Y': 'Jamaica', 'C6': 'Bahamas', 'ZF': 'Cayman Is.',
-    'ZS': 'South Africa', 'CN': 'Morocco', 'SU': 'Egypt', '5Z': 'Kenya', 'ET': 'Ethiopia', '5N': 'Nigeria', '5H': 'Tanzania',
-    'HZ': 'Saudi Arabia', 'A6': 'UAE', 'A7': 'Qatar', '4X': 'Israel', 'OD': 'Lebanon',
-    'VP8': 'Falkland Is.', 'VP9': 'Bermuda', 'ZB': 'Gibraltar', '5B': 'Cyprus',
+    'VK': 'Australia', 'ZL': 'New Zealand', 'KH6': 'Hawaii',
+    'LU': 'Argentina', 'PY': 'Brazil', 'CE': 'Chile', 'HK': 'Colombia', 'YV': 'Venezuela',
+    'ZS': 'South Africa', 'CN': 'Morocco', 'SU': 'Egypt'
   };
   
   for (let len = 3; len >= 1; len--) {
@@ -2071,7 +1897,7 @@ function getCountryFromPrefix(prefix) {
 
 app.get('/api/myspots/:callsign', async (req, res) => {
   const callsign = req.params.callsign.toUpperCase();
-  console.log('[My Spots] Searching for callsign:', callsign);
+  logDebug('[My Spots] Searching for callsign:', callsign);
   
   const mySpots = [];
   
@@ -2120,7 +1946,7 @@ app.get('/api/myspots/:callsign', async (req, res) => {
       }
     }
     
-    console.log('[My Spots] Found', mySpots.length, 'spots involving', callsign);
+    logDebug('[My Spots] Found', mySpots.length, 'spots involving', callsign);
     
     // Now try to get locations for each unique callsign
     const uniqueCalls = [...new Set(mySpots.map(s => s.isMySpot ? s.dxCall : s.spotter))];
@@ -2380,7 +2206,7 @@ app.get('/api/pskreporter/http/:callsign', async (req, res) => {
     // Cache it
     pskHttpCache[cacheKey] = { data: result, timestamp: now };
     
-    console.log(`[PSKReporter HTTP] Found ${reports.length} ${direction} reports for ${callsign}`);
+    logDebug(`[PSKReporter HTTP] Found ${reports.length} ${direction} reports for ${callsign}`);
     res.json(result);
     
   } catch (error) {
@@ -2529,7 +2355,7 @@ app.get('/api/satellites/tle', async (req, res) => {
       return res.json(tleCache.data);
     }
     
-    console.log('[Satellites] Fetching fresh TLE data...');
+    logDebug('[Satellites] Fetching fresh TLE data...');
     
     // Fetch fresh TLE data from CelesTrak
     const tleData = {};
@@ -2599,7 +2425,7 @@ app.get('/api/satellites/tle', async (req, res) => {
               tle1: issLines[1].trim(),
               tle2: issLines[2].trim()
             };
-            console.log('[Satellites] Found ISS TLE');
+            logDebug('[Satellites] Found ISS TLE');
           }
         }
       } catch (e) {
@@ -2612,7 +2438,7 @@ app.get('/api/satellites/tle', async (req, res) => {
     // Cache the result
     tleCache = { data: tleData, timestamp: now };
     
-    console.log('[Satellites] Loaded TLE for', Object.keys(tleData).length, 'satellites');
+    logDebug('[Satellites] Loaded TLE for', Object.keys(tleData).length, 'satellites');
     res.json(tleData);
     
   } catch (error) {
@@ -2679,7 +2505,7 @@ async function fetchIonosondeData() {
       timestamp: now
     };
     
-    console.log(`[Ionosonde] Fetched ${validStations.length} valid stations from KC2G`);
+    logDebug(`[Ionosonde] Fetched ${validStations.length} valid stations from KC2G`);
     return validStations;
     
   } catch (error) {
@@ -2735,7 +2561,7 @@ function interpolateFoF2(lat, lon, stations) {
   
   // Check if nearest station is within valid range
   if (stationsWithDist[0].distance > MAX_VALID_DISTANCE) {
-    console.log(`[Ionosonde] Nearest station ${stationsWithDist[0].name} is ${Math.round(stationsWithDist[0].distance)}km away - too far, using estimates`);
+    logDebug(`[Ionosonde] Nearest station ${stationsWithDist[0].name} is ${Math.round(stationsWithDist[0].distance)}km away - too far, using estimates`);
     return {
       foF2: null,
       mufd: null,
@@ -2908,7 +2734,7 @@ function calculateIonoCorrection(expectedFoF2, actualFoF2, kIndex) {
     confidence = 'low';    // Model significantly off - rely more on ionosonde
   }
   
-  console.log(`[Hybrid] Correction factor: ${factor.toFixed(2)} (expected foF2: ${expectedFoF2.toFixed(1)}, actual: ${actualFoF2.toFixed(1)}, K: ${kIndex})`);
+  logDebug(`[Hybrid] Correction factor: ${factor.toFixed(2)} (expected foF2: ${expectedFoF2.toFixed(1)}, actual: ${actualFoF2.toFixed(1)}, K: ${kIndex})`);
   
   return { factor, confidence, ratio, kFactor };
 }
@@ -2993,7 +2819,7 @@ app.get('/api/propagation', async (req, res) => {
   const { deLat, deLon, dxLat, dxLon } = req.query;
   
   const useHybrid = ITURHFPROP_URL !== null;
-  console.log(`[Propagation] ${useHybrid ? 'Hybrid' : 'Standalone'} calculation for DE:`, deLat, deLon, 'to DX:', dxLat, dxLon);
+  logDebug(`[Propagation] ${useHybrid ? 'Hybrid' : 'Standalone'} calculation for DE:`, deLat, deLon, 'to DX:', dxLat, dxLon);
   
   try {
     // Get current space weather data
@@ -3015,7 +2841,7 @@ app.get('/api/propagation', async (req, res) => {
       }
       ssn = Math.max(0, Math.round((sfi - 67) / 0.97));
     } catch (e) {
-      console.log('[Propagation] Using default solar values');
+      logDebug('[Propagation] Using default solar values');
     }
     
     // Get real ionosonde data
@@ -3042,10 +2868,10 @@ app.get('/api/propagation', async (req, res) => {
     const currentHour = new Date().getUTCHours();
     const currentMonth = new Date().getMonth() + 1;
     
-    console.log('[Propagation] Distance:', Math.round(distance), 'km');
-    console.log('[Propagation] Solar: SFI', sfi, 'SSN', ssn, 'K', kIndex);
+    logDebug('[Propagation] Distance:', Math.round(distance), 'km');
+    logDebug('[Propagation] Solar: SFI', sfi, 'SSN', ssn, 'K', kIndex);
     if (hasValidIonoData) {
-      console.log('[Propagation] Real foF2:', ionoData.foF2?.toFixed(2), 'MHz from', ionoData.nearestStation || ionoData.source);
+      logDebug('[Propagation] Real foF2:', ionoData.foF2?.toFixed(2), 'MHz from', ionoData.nearestStation || ionoData.source);
     }
     
     // ===== HYBRID MODE: Try ITURHFProp first =====
@@ -3058,7 +2884,7 @@ app.get('/api/propagation', async (req, res) => {
       if (iturhfpropData && hasValidIonoData) {
         // Full hybrid: ITURHFProp + ionosonde correction
         hybridResult = applyHybridCorrection(iturhfpropData, ionoData, kIndex, sfi);
-        console.log('[Propagation] Using HYBRID mode (ITURHFProp + ionosonde correction)');
+        logDebug('[Propagation] Using HYBRID mode (ITURHFProp + ionosonde correction)');
       } else if (iturhfpropData) {
         // ITURHFProp only (no ionosonde coverage)
         hybridResult = {
@@ -3066,7 +2892,7 @@ app.get('/api/propagation', async (req, res) => {
           muf: iturhfpropData.muf,
           model: 'ITU-R P.533-14 (ITURHFProp)'
         };
-        console.log('[Propagation] Using ITURHFProp only (no ionosonde coverage)');
+        logDebug('[Propagation] Using ITURHFProp only (no ionosonde coverage)');
       }
     }
     
@@ -3150,7 +2976,7 @@ app.get('/api/propagation', async (req, res) => {
       
     } else {
       // Full fallback - use built-in calculations
-      console.log('[Propagation] Using FALLBACK mode (built-in calculations)');
+      logDebug('[Propagation] Using FALLBACK mode (built-in calculations)');
       
       bands.forEach((band, idx) => {
         const freq = bandFreqs[idx];
@@ -3237,7 +3063,7 @@ app.get('/api/propagation', async (req, res) => {
     });
     
   } catch (error) {
-    console.error('[Propagation] Error:', error.message);
+    logErrorOnce('Propagation', error.message);
     res.status(500).json({ error: 'Failed to calculate propagation' });
   }
 });
@@ -3470,23 +3296,23 @@ app.get('/api/contests', async (req, res) => {
       const contests = parseContestRSS(text);
       
       if (contests.length > 0) {
-        console.log('[Contests] WA7BNM RSS:', contests.length, 'contests');
+        logDebug('[Contests] WA7BNM RSS:', contests.length, 'contests');
         return res.json(contests);
       }
     }
   } catch (error) {
     if (error.name !== 'AbortError') {
-      console.error('[Contests] RSS error:', error.message);
+      logErrorOnce('Contests RSS', error.message);
     }
   }
 
   // Fallback: Use calculated contests
   try {
     const contests = calculateUpcomingContests();
-    console.log('[Contests] Using calculated:', contests.length, 'contests');
+    logDebug('[Contests] Using calculated:', contests.length, 'contests');
     return res.json(contests);
   } catch (error) {
-    console.error('[Contests] Calculation error:', error.message);
+    logErrorOnce('Contests', error.message);
   }
 
   res.json([]);
@@ -4712,6 +4538,7 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`  🔗 Network access: http://<your-ip>:${PORT}`);
   }
   console.log('  📡 API proxy enabled for NOAA, POTA, SOTA, DX Cluster');
+  console.log(`  📋 Log level: ${LOG_LEVEL} (set LOG_LEVEL=debug for verbose)`);
   if (WSJTX_ENABLED) {
     console.log(`  🔊 WSJT-X UDP listener on port ${WSJTX_UDP_PORT}`);
   }

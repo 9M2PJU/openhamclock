@@ -425,7 +425,7 @@ export const WorldMap = ({
             iconAnchor: [7, 14]
           });
           const marker = L.marker([spot.lat, spot.lon], { icon: triangleIcon })
-            .bindPopup(`<b style="color:#44cc44">${spot.call}</b><br>${spot.ref}<br>${spot.freq} ${spot.mode}`)
+            .bindPopup(`<b style="color:#44cc44">${spot.call}</b><br><span style="color:#888">${spot.ref}</span> ${spot.locationDesc || ''}<br>${spot.name ? `<i>${spot.name}</i><br>` : ''}${spot.freq} ${spot.mode || ''} <span style="color:#888">${spot.time || ''}</span>`)
             .addTo(map);
           potaMarkersRef.current.push(marker);
 
