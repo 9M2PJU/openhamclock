@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 
 /**
- * WSPR Propagation Heatmap Plugin v1.4.3
+ * WSPR Propagation Heatmap Plugin v1.5.0
  * 
  * Advanced Features:
  * - Great circle curved path lines between transmitters and receivers
@@ -20,6 +20,7 @@ import { useState, useEffect, useRef } from 'react';
  * - Fixed duplicate control creation (v1.4.2)
  * - Performance optimizations (v1.4.2)
  * - Separate opacity controls for paths and heatmap (v1.4.3)
+ * - Minimize/maximize toggle for all panels (v1.5.0)
  * - Statistics display (total stations, spots)
  * - Signal strength legend
  * 
@@ -35,7 +36,7 @@ export const metadata = {
   category: 'propagation',
   defaultEnabled: false,
   defaultOpacity: 0.7,
-  version: '1.4.3'
+  version: '1.5.0'
 };
 
 // Convert grid square to lat/lon
@@ -252,6 +253,95 @@ function makeDraggable(element, storageKey) {
   });
 }
 
+// Add minimize/maximize functionality to control panels
+function addMinimizeToggle(element, storageKey) {
+  if (!element) return;
+  
+  const minimizeKey = storageKey + '-minimized';
+  
+  // Create minimize button
+  const header = element.querySelector('div:first-child');
+  if (!header) return;
+  
+  // Wrap content (everything except header)
+  const content = Array.from(element.children).slice(1);
+  const contentWrapper = document.createElement('div');
+  contentWrapper.className = 'wspr-panel-content';
+  content.forEach(child => contentWrapper.appendChild(child));
+  element.appendChild(contentWrapper);
+  
+  // Add minimize button to header
+  const minimizeBtn = document.createElement('span');
+  minimizeBtn.className = 'wspr-minimize-btn';
+  minimizeBtn.innerHTML = '▼';
+  minimizeBtn.style.cssText = `
+    float: right;
+    cursor: pointer;
+    user-select: none;
+    padding: 0 4px;
+    margin: -2px -4px 0 0;
+    font-size: 10px;
+    opacity: 0.7;
+    transition: opacity 0.2s;
+  `;
+  minimizeBtn.title = 'Minimize/Maximize';
+  
+  minimizeBtn.addEventListener('mouseenter', () => {
+    minimizeBtn.style.opacity = '1';
+  });
+  minimizeBtn.addEventListener('mouseleave', () => {
+    minimizeBtn.style.opacity = '0.7';
+  });
+  
+  header.style.display = 'flex';
+  header.style.justifyContent = 'space-between';
+  header.style.alignItems = 'center';
+  header.appendChild(minimizeBtn);
+  
+  // Load saved state
+  const isMinimized = localStorage.getItem(minimizeKey) === 'true';
+  if (isMinimized) {
+    contentWrapper.style.display = 'none';
+    minimizeBtn.innerHTML = '▶';
+    element.style.cursor = 'pointer';
+  }
+  
+  // Toggle function
+  const toggle = (e) => {
+    // Don't toggle if CTRL is held (for dragging)
+    if (e && e.ctrlKey) return;
+    
+    const isCurrentlyMinimized = contentWrapper.style.display === 'none';
+    
+    if (isCurrentlyMinimized) {
+      // Expand
+      contentWrapper.style.display = 'block';
+      minimizeBtn.innerHTML = '▼';
+      element.style.cursor = 'default';
+      localStorage.setItem(minimizeKey, 'false');
+    } else {
+      // Minimize
+      contentWrapper.style.display = 'none';
+      minimizeBtn.innerHTML = '▶';
+      element.style.cursor = 'pointer';
+      localStorage.setItem(minimizeKey, 'true');
+    }
+  };
+  
+  // Click header to toggle (except on button itself)
+  header.addEventListener('click', (e) => {
+    if (e.target === header || e.target.tagName === 'DIV') {
+      toggle(e);
+    }
+  });
+  
+  // Click button to toggle
+  minimizeBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggle(e);
+  });
+}
+
 export function useLayer({ enabled = false, opacity = 0.7, map = null }) {
   const [pathLayers, setPathLayers] = useState([]);
   const [markerLayers, setMarkerLayers] = useState([]);
@@ -408,6 +498,7 @@ export function useLayer({ enabled = false, opacity = 0.7, map = null }) {
       const container = document.querySelector('.wspr-filter-control');
       if (container) {
         makeDraggable(container, 'wspr-filter-position');
+        addMinimizeToggle(container, 'wspr-filter-position');
       }
     }, 150);
     
@@ -490,7 +581,10 @@ export function useLayer({ enabled = false, opacity = 0.7, map = null }) {
     
     setTimeout(() => {
       const container = document.querySelector('.wspr-stats');
-      if (container) makeDraggable(container, 'wspr-stats-position');
+      if (container) {
+        makeDraggable(container, 'wspr-stats-position');
+        addMinimizeToggle(container, 'wspr-stats-position');
+      }
     }, 150);
     
     // Create legend control
@@ -528,7 +622,10 @@ export function useLayer({ enabled = false, opacity = 0.7, map = null }) {
     
     setTimeout(() => {
       const container = document.querySelector('.wspr-legend');
-      if (container) makeDraggable(container, 'wspr-legend-position');
+      if (container) {
+        makeDraggable(container, 'wspr-legend-position');
+        addMinimizeToggle(container, 'wspr-legend-position');
+      }
     }, 150);
     
     // Create band chart control
@@ -558,7 +655,10 @@ export function useLayer({ enabled = false, opacity = 0.7, map = null }) {
     
     setTimeout(() => {
       const container = document.querySelector('.wspr-chart');
-      if (container) makeDraggable(container, 'wspr-chart-position');
+      if (container) {
+        makeDraggable(container, 'wspr-chart-position');
+        addMinimizeToggle(container, 'wspr-chart-position');
+      }
     }, 150);
     
     console.log('[WSPR] All controls created once');
