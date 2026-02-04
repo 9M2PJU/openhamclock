@@ -53,5 +53,9 @@
   "plugins.layers.earthquakes.description": "USGS 실시간 지진 데이터 (지난 24시간 동안 일어난 규모 M2.5 이상의 지진)",
   "plugins.layers.wxradar.name": "기상 레이더",
   "plugins.layers.wxradar.description": "북아메리카 지역 NEXRAD 기상 레이더 오버레이",
-  "plugins.layers.wxradar.attribution": "기상 데이터 © Iowa State University Mesonet"
+  "plugins.layers.wxradar.attribution": "기상 데이터 © Iowa State University Mesonet",
+  "station.settings.layout.tablet": "Tablet",
+  "station.settings.layout.tablet.describe": "→ Optimized for 7-10\" widescreen displays (16:9)",
+  "station.settings.layout.compact": "Compact",
+  "station.settings.layout.compact.describe": "→ Data-first layout for 4:3 and smaller screens"
 }

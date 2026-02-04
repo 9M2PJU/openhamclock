@@ -53,5 +53,9 @@
   "plugins.layers.earthquakes.description": "Live-USGS-Erdbebendaten (M2,5+ der letzten 24 Stunden)",
   "plugins.layers.wxradar.name": "Wetterradar",
   "plugins.layers.wxradar.description": "NEXRAD-Wetterradar-Überlagerung für Nordamerika",
-  "plugins.layers.wxradar.attribution": "Wetterdaten © Iowa State University Mesonet"
+  "plugins.layers.wxradar.attribution": "Wetterdaten © Iowa State University Mesonet",
+  "station.settings.layout.tablet": "Tablet",
+  "station.settings.layout.tablet.describe": "→ Optimized for 7-10\" widescreen displays (16:9)",
+  "station.settings.layout.compact": "Compact",
+  "station.settings.layout.compact.describe": "→ Data-first layout for 4:3 and smaller screens"
 }

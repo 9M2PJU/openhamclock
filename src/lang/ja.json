@@ -53,5 +53,9 @@
   "plugins.layers.earthquakes.description": "USGSのリアルタイム地震データ（過去24時間のM2.5以上）",
   "plugins.layers.wxradar.name": "気象レーダー",
   "plugins.layers.wxradar.description": "北米向けNEXRAD気象レーダーのオーバーレイ",
-  "plugins.layers.wxradar.attribution": "気象データ © Iowa State University Mesonet"
+  "plugins.layers.wxradar.attribution": "気象データ © Iowa State University Mesonet",
+  "station.settings.layout.tablet": "Tablet",
+  "station.settings.layout.tablet.describe": "→ Optimized for 7-10\" widescreen displays (16:9)",
+  "station.settings.layout.compact": "Compact",
+  "station.settings.layout.compact.describe": "→ Data-first layout for 4:3 and smaller screens"
 }

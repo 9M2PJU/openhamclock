@@ -53,5 +53,9 @@
   "plugins.layers.earthquakes.description": "Dati sismici USGS in tempo reale (M2,5+ delle ultime 24 ore)",
   "plugins.layers.wxradar.name": "Radar meteorologico",
   "plugins.layers.wxradar.description": "Sovrapposizione del radar meteorologico NEXRAD per il Nord America",
-  "plugins.layers.wxradar.attribution": "Dati meteo © Iowa State University Mesonet"
+  "plugins.layers.wxradar.attribution": "Dati meteo © Iowa State University Mesonet",
+  "station.settings.layout.tablet": "Tablet",
+  "station.settings.layout.tablet.describe": "→ Optimized for 7-10\" widescreen displays (16:9)",
+  "station.settings.layout.compact": "Compact",
+  "station.settings.layout.compact.describe": "→ Data-first layout for 4:3 and smaller screens"
 }

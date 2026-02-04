@@ -37,7 +37,8 @@ export const WorldMap = ({
   showPSKReporter,
   showWSJTX,
   onToggleSatellites, 
-  hoveredSpot 
+  hoveredSpot,
+  hideOverlays
 }) => {
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
@@ -836,9 +837,10 @@ export const WorldMap = ({
       )}
       
       {/* DX News Ticker - left side of bottom bar */}
-      <DXNewsTicker />
+      {!hideOverlays && <DXNewsTicker />}
 
       {/* Legend - right side */}
+      {!hideOverlays && (
       <div style={{
         position: 'absolute',
         bottom: '8px',
@@ -885,6 +887,7 @@ export const WorldMap = ({
           <span style={{ color: '#aaaaaa' }}>☽ Moon</span>
         </div>
       </div>
+      )}
     </div>
   );
 };

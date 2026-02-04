@@ -176,7 +176,9 @@ export const SettingsPanel = ({ isOpen, onClose, config, onSave }) => {
 
   const layoutDescriptions = {
     modern: t('station.settings.layout.modern.describe'),
-    classic: t('station.settings.layout.classic.describe')
+    classic: t('station.settings.layout.classic.describe'),
+    tablet: t('station.settings.layout.tablet.describe'),
+    compact: t('station.settings.layout.compact.describe')
   };
 
   return (
@@ -461,7 +463,7 @@ export const SettingsPanel = ({ isOpen, onClose, config, onSave }) => {
                 {t('station.settings.layout')}
               </label>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px' }}>
-                {['modern', 'classic'].map((l) => (
+                {['modern', 'classic', 'tablet', 'compact'].map((l) => (
                   <button
                     key={l}
                     onClick={() => setLayout(l)}
@@ -476,7 +478,7 @@ export const SettingsPanel = ({ isOpen, onClose, config, onSave }) => {
                       fontWeight: layout === l ? '600' : '400'
                     }}
                   >
-                    {l === 'modern' ? '🖥️' : '📺'} {t('station.settings.layout.' + l)}
+                    {l === 'modern' ? '🖥️' : l === 'classic' ? '📺' : l === 'tablet' ? '📱' : '📊'} {t('station.settings.layout.' + l)}
                   </button>
                 ))}
               </div>

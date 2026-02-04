@@ -4,7 +4,7 @@
  */
 import React, { useState, useEffect, useRef } from 'react';
 
-export const DXNewsTicker = () => {
+export const DXNewsTicker = ({ sidebar = false }) => {
   const [news, setNews] = useState([]);
   const [loading, setLoading] = useState(true);
   const tickerRef = useRef(null);
@@ -57,7 +57,14 @@ export const DXNewsTicker = () => {
   return (
     <div
       ref={tickerRef}
-      style={{
+      style={sidebar ? {
+        width: '100%',
+        height: '100%',
+        background: 'transparent',
+        overflow: 'hidden',
+        display: 'flex',
+        alignItems: 'center'
+      } : {
         position: 'absolute',
         bottom: '8px',
         left: '8px',

@@ -905,3 +905,105 @@ body::before {
   position: relative;
   z-index: 10000 !important;
 }
+
+/* ============================================
+   RESPONSIVE: Phone & Small Screen Overrides
+   ============================================ */
+
+/* Tablets and small screens (under 1024px) */
+@media (max-width: 1024px) {
+  .panel {
+    padding: 6px !important;
+    border-radius: 4px !important;
+  }
+
+  .panel-header {
+    font-size: 11px !important;
+    padding: 4px 6px !important;
+  }
+}
+
+/* Phone landscape and small tablets (under 768px) */
+@media (max-width: 768px) {
+  /* Force single-column on modern layout */
+  .ohc-mobile-stack {
+    display: flex !important;
+    flex-direction: column !important;
+    grid-template-columns: unset !important;
+  }
+
+  .panel {
+    padding: 4px !important;
+    margin-bottom: 2px !important;
+    border-radius: 3px !important;
+  }
+
+  .panel-header {
+    font-size: 10px !important;
+    padding: 3px 6px !important;
+  }
+
+  /* Prevent horizontal overflow */
+  body {
+    overflow-x: hidden;
+  }
+}
+
+/* Phone portrait (under 480px) */
+@media (max-width: 480px) {
+  /* Extra compact for phones */
+  .panel {
+    padding: 3px !important;
+    font-size: 11px !important;
+  }
+
+  .panel-header {
+    font-size: 9px !important;
+  }
+
+  /* Reduce font sizes globally for very small screens */
+  body {
+    font-size: 12px;
+  }
+}
+
+/* Short screens (Pi 7" touchscreen at 480px height) */
+@media (max-height: 520px) {
+  .panel {
+    padding: 3px !important;
+  }
+
+  .panel-header {
+    padding: 2px 4px !important;
+    font-size: 10px !important;
+  }
+}
+
+/* Touch device improvements */
+@media (pointer: coarse) {
+  /* Larger tap targets for touchscreens */
+  button {
+    min-height: 36px;
+    min-width: 36px;
+  }
+
+  /* Prevent text selection on tap */
+  .panel-header {
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  /* Scrollbar styling for touch */
+  ::-webkit-scrollbar {
+    width: 4px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.15);
+    border-radius: 2px;
+  }
+}
