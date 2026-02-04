@@ -16,8 +16,10 @@ export const Header = ({
   use12Hour,
   onTimeFormatToggle,
   onSettingsClick,
+  onUpdateClick,
   onFullscreenToggle,
-  isFullscreen
+  isFullscreen,
+  updateInProgress
 }) => {
   return (
     <div style={{
@@ -153,6 +155,23 @@ export const Header = ({
         >
           ☕ Donate
         </a>
+        <button
+          onClick={onUpdateClick}
+          disabled={updateInProgress}
+          style={{
+            background: updateInProgress ? 'rgba(0, 255, 136, 0.15)' : 'var(--bg-tertiary)',
+            border: `1px solid ${updateInProgress ? 'var(--accent-green)' : 'var(--border-color)'}`,
+            padding: '6px 10px',
+            borderRadius: '4px',
+            color: updateInProgress ? 'var(--accent-green)' : 'var(--text-secondary)',
+            fontSize: '12px',
+            cursor: updateInProgress ? 'wait' : 'pointer',
+            whiteSpace: 'nowrap'
+          }}
+          title="Run update now (server will restart)"
+        >
+          {updateInProgress ? 'UPDATING...' : 'UPDATE'}
+        </button>
         <button
           onClick={onSettingsClick}
           style={{

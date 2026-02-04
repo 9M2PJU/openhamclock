@@ -108,6 +108,7 @@ const App = () => {
     try { return localStorage.getItem('openhamclock_tempUnit') || 'F'; } catch { return 'F'; }
   });
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [updateInProgress, setUpdateInProgress] = useState(false);
   
   // Map layer visibility
   const [mapLayers, setMapLayers] = useState(() => {
@@ -156,6 +157,28 @@ const App = () => {
       document.exitFullscreen().then(() => setIsFullscreen(false)).catch(() => {});
     }
   }, []);
+
+  const handleUpdateClick = useCallback(async () => {
+    if (updateInProgress) return;
+    const confirmed = window.confirm('Run update now? The server will restart when finished.');
+    if (!confirmed) return;
+    setUpdateInProgress(true);
+    try {
+      const res = await fetch('/api/update', { method: 'POST' });
+      let payload = {};
+      try { payload = await res.json(); } catch {}
+      if (!res.ok) {
+        throw new Error(payload.error || 'Update failed to start');
+      }
+      alert('Update started. The page will reload after the server restarts.');
+      setTimeout(() => {
+        try { window.location.reload(); } catch {}
+      }, 15000);
+    } catch (err) {
+      setUpdateInProgress(false);
+      alert(`Update failed: ${err.message || 'Unknown error'}`);
+    }
+  }, [updateInProgress]);
 
   useEffect(() => {
     const handler = () => setIsFullscreen(!!document.fullscreenElement);
@@ -1129,8 +1152,10 @@ const App = () => {
           use12Hour={use12Hour}
           onTimeFormatToggle={handleTimeFormatToggle}
           onSettingsClick={() => setShowSettings(true)}
+          onUpdateClick={handleUpdateClick}
           onFullscreenToggle={handleFullscreenToggle}
           isFullscreen={isFullscreen}
+          updateInProgress={updateInProgress}
         />
         
         {/* LEFT SIDEBAR */}

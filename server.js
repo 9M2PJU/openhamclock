@@ -398,8 +398,8 @@ function runUpdateScript() {
   });
 }
 
-async function autoUpdateTick(trigger = 'interval') {
-  if (!AUTO_UPDATE_ENABLED || autoUpdateState.inProgress) return;
+async function autoUpdateTick(trigger = 'interval', force = false) {
+  if ((!AUTO_UPDATE_ENABLED && !force) || autoUpdateState.inProgress) return;
   autoUpdateState.inProgress = true;
   autoUpdateState.lastCheck = Date.now();
 
@@ -4022,6 +4022,43 @@ app.get('/api/config', (req, res) => {
       sota: 60000,
       dxCluster: 30000
     }
+  });
+});
+
+// ============================================
+// MANUAL UPDATE ENDPOINT
+// ============================================
+app.post('/api/update', async (req, res) => {
+  if (autoUpdateState.inProgress) {
+    return res.status(409).json({ error: 'Update already in progress' });
+  }
+
+  try {
+    if (!fs.existsSync(path.join(__dirname, '.git'))) {
+      return res.status(503).json({ error: 'Not a git repository' });
+    }
+    await execFilePromise('git', ['--version']);
+    if (await hasDirtyWorkingTree()) {
+      return res.status(409).json({ error: 'Local changes detected' });
+    }
+  } catch (err) {
+    return res.status(500).json({ error: 'Update preflight failed' });
+  }
+
+  // Respond immediately; update runs asynchronously
+  res.json({ ok: true, started: true, timestamp: Date.now() });
+
+  setTimeout(() => {
+    autoUpdateTick('manual', true);
+  }, 100);
+});
+
+app.get('/api/update/status', (req, res) => {
+  res.json({
+    enabled: AUTO_UPDATE_ENABLED,
+    inProgress: autoUpdateState.inProgress,
+    lastCheck: autoUpdateState.lastCheck,
+    lastResult: autoUpdateState.lastResult
   });
 });
 
