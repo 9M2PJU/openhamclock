@@ -4774,9 +4774,31 @@ function normalizeCallsign(value) {
 function n1mmFreqToMHz(value, bandMHz) {
   const v = parseFloat(value);
   if (!v || Number.isNaN(v)) return bandMHz || null;
+
+  // N1MM often reports freq in 10 Hz units (e.g., 1420000 => 14.2 MHz).
+  // Use band as a hint to pick the most plausible scaling.
+  const candidates = [
+    v / 1000000, // Hz -> MHz
+    v / 100000,  // 10 Hz -> MHz
+    v / 1000     // kHz -> MHz
+  ];
+
+  if (bandMHz && !Number.isNaN(bandMHz)) {
+    let best = candidates[0];
+    let bestDiff = Math.abs(best - bandMHz);
+    for (let i = 1; i < candidates.length; i++) {
+      const diff = Math.abs(candidates[i] - bandMHz);
+      if (diff < bestDiff) {
+        bestDiff = diff;
+        best = candidates[i];
+      }
+    }
+    return best;
+  }
+
   if (v >= 1000000) return v / 1000000;
-  if (bandMHz && v >= 10000) return v / 100000;
-  if (bandMHz && v >= 1000) return v / 1000;
+  if (v >= 100000) return v / 100000;
+  if (v >= 1000) return v / 1000;
   return bandMHz || null;
 }
 
