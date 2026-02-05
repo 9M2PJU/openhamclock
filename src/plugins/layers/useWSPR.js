@@ -857,21 +857,43 @@ export function useLayer({ enabled = false, opacity = 0.7, map = null, callsign,
     
     // Filter by SNR threshold
     // Filter by SNR threshold and grid square
-    const filteredData = wsprData.filter(spot => {
+    let filteredData = wsprData.filter(spot => {
       // SNR filter
       if ((spot.snr || -30) < snrThreshold) return false;
       
       // Grid square filter (if enabled)
       if (filterByGrid && gridFilter && gridFilter.length === 4) {
         const grid4 = gridFilter.toUpperCase();
-        const senderMatch = spot.senderGrid && spot.senderGrid.toUpperCase().startsWith(grid4);
-        const receiverMatch = spot.receiverGrid && spot.receiverGrid.toUpperCase().startsWith(grid4);
+        const senderGrid4 = spot.senderGrid ? spot.senderGrid.toUpperCase().substring(0, 4) : '';
+        const receiverGrid4 = spot.receiverGrid ? spot.receiverGrid.toUpperCase().substring(0, 4) : '';
+        
+        const senderMatch = senderGrid4 === grid4;
+        const receiverMatch = receiverGrid4 === grid4;
+        
         // Show if either TX or RX is in the grid square
         return senderMatch || receiverMatch;
       }
       
       return true;
     });
+    
+    // Debug: Log grid squares when filter is enabled
+    if (filterByGrid && gridFilter && filteredData.length > 0) {
+      const grids = new Set();
+      filteredData.slice(0, 5).forEach(spot => {
+        if (spot.senderGrid) grids.add(spot.senderGrid.substring(0, 4));
+        if (spot.receiverGrid) grids.add(spot.receiverGrid.substring(0, 4));
+      });
+      console.log(`[WSPR Grid] Filtering for ${gridFilter}, found ${filteredData.length} spots with grids:`, Array.from(grids).join(', '));
+    } else if (filterByGrid && gridFilter && filteredData.length === 0) {
+      // Log what grids ARE available
+      const availableGrids = new Set();
+      wsprData.slice(0, 10).forEach(spot => {
+        if (spot.senderGrid) availableGrids.add(spot.senderGrid.substring(0, 4));
+        if (spot.receiverGrid) availableGrids.add(spot.receiverGrid.substring(0, 4));
+      });
+      console.log(`[WSPR Grid] No matches for ${gridFilter}. Available grids in data:`, Array.from(availableGrids).join(', '));
+    }
     const limitedData = filteredData.slice(0, 500);
     
     // Find best DX paths (longest distance, good SNR)
@@ -1096,21 +1118,43 @@ export function useLayer({ enabled = false, opacity = 0.7, map = null, callsign,
     
     // Filter by SNR threshold
     // Filter by SNR threshold and grid square
-    const filteredData = wsprData.filter(spot => {
+    let filteredData = wsprData.filter(spot => {
       // SNR filter
       if ((spot.snr || -30) < snrThreshold) return false;
       
       // Grid square filter (if enabled)
       if (filterByGrid && gridFilter && gridFilter.length === 4) {
         const grid4 = gridFilter.toUpperCase();
-        const senderMatch = spot.senderGrid && spot.senderGrid.toUpperCase().startsWith(grid4);
-        const receiverMatch = spot.receiverGrid && spot.receiverGrid.toUpperCase().startsWith(grid4);
+        const senderGrid4 = spot.senderGrid ? spot.senderGrid.toUpperCase().substring(0, 4) : '';
+        const receiverGrid4 = spot.receiverGrid ? spot.receiverGrid.toUpperCase().substring(0, 4) : '';
+        
+        const senderMatch = senderGrid4 === grid4;
+        const receiverMatch = receiverGrid4 === grid4;
+        
         // Show if either TX or RX is in the grid square
         return senderMatch || receiverMatch;
       }
       
       return true;
     });
+    
+    // Debug: Log grid squares when filter is enabled
+    if (filterByGrid && gridFilter && filteredData.length > 0) {
+      const grids = new Set();
+      filteredData.slice(0, 5).forEach(spot => {
+        if (spot.senderGrid) grids.add(spot.senderGrid.substring(0, 4));
+        if (spot.receiverGrid) grids.add(spot.receiverGrid.substring(0, 4));
+      });
+      console.log(`[WSPR Grid] Filtering for ${gridFilter}, found ${filteredData.length} spots with grids:`, Array.from(grids).join(', '));
+    } else if (filterByGrid && gridFilter && filteredData.length === 0) {
+      // Log what grids ARE available
+      const availableGrids = new Set();
+      wsprData.slice(0, 10).forEach(spot => {
+        if (spot.senderGrid) availableGrids.add(spot.senderGrid.substring(0, 4));
+        if (spot.receiverGrid) availableGrids.add(spot.receiverGrid.substring(0, 4));
+      });
+      console.log(`[WSPR Grid] No matches for ${gridFilter}. Available grids in data:`, Array.from(availableGrids).join(', '));
+    }
     
     filteredData.forEach(spot => {
       if (!spot.senderLat || !spot.senderLon || !spot.receiverLat || !spot.receiverLon) return;
