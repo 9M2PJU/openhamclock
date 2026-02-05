@@ -19,3 +19,4 @@ export { PropagationPanel } from './PropagationPanel.jsx';
 export { DXpeditionPanel } from './DXpeditionPanel.jsx';
 export { PSKReporterPanel } from './PSKReporterPanel.jsx';
 export { DXNewsTicker } from './DXNewsTicker.jsx';
+export { WeatherPanel } from './WeatherPanel.jsx';
