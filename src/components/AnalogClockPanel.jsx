@@ -142,8 +142,8 @@ export const AnalogClockPanel = ({ currentTime, sunTimes }) => {
           fontSize: size > 150 ? '12px' : '10px',
         }}
       >
-        <span style={{ color: 'var(--accent-cyan)', fontWeight: '600' }}>{dayOfWeek}</span>
-        <span style={{ color: 'var(--accent-amber)', fontWeight: '600' }}>{monthDate}</span>
+        <span style={{ color: 'var(--text-primary)', fontWeight: '600' }}>{dayOfWeek}</span>
+        <span style={{ color: 'var(--text-primary)', fontWeight: '600' }}>{monthDate}</span>
       </div>
 
       {/* Clock face */}
@@ -170,7 +170,7 @@ export const AnalogClockPanel = ({ currentTime, sunTimes }) => {
           y={center + clockRadius * 0.32}
           textAnchor="middle"
           dominantBaseline="central"
-          fill="var(--accent-cyan)"
+          fill="var(--accent-amber)"
           fontSize={size > 150 ? 10 : 8}
           fontFamily="JetBrains Mono, monospace"
           fontWeight="600"
@@ -203,7 +203,7 @@ export const AnalogClockPanel = ({ currentTime, sunTimes }) => {
         />
 
         {/* Center dot */}
-        <circle cx={center} cy={center} r={4} fill="var(--accent-cyan)" />
+        <circle cx={center} cy={center} r={4} fill="var(--accent-red, #ef4444)" />
       </svg>
 
       {/* Bottom row: Sunrise (left) and Sunset (right) - in local time */}
