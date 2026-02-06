@@ -3344,7 +3344,7 @@ app.get('/api/wspr/heatmap', async (req, res) => {
     const flowStartSeconds = -Math.abs(minutes * 60);
     // Query PSK Reporter for WSPR mode spots (no specific callsign filter)
     // Get data from multiple popular WSPR frequencies to build heatmap
-    const url = `https://retrieve.pskreporter.info/query?mode=WSPR&flowStartSeconds=${flowStartSeconds}&rronly=1&nolocator=0&appcontact=openhamclock&rptlimit=2000`;
+    const url = `https://retrieve.pskreporter.info/query?mode=WSPR&flowStartSeconds=${flowStartSeconds}&rronly=1&nolocator=0&appcontact=openhamclock&rptlimit=10000`;
     
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 20000);
@@ -3383,6 +3383,11 @@ app.get('/api/wspr/heatmap', async (req, res) => {
       const mode = getAttr('mode');
       const flowStartSecs = getAttr('flowStartSeconds');
       const sNR = getAttr('sNR');
+      const power = getAttr('senderPower');
+      const distance = getAttr('senderDistance');
+      const senderAz = getAttr('senderAzimuth');
+      const receiverAz = getAttr('receiverAzimuth');
+      const drift = getAttr('drift');
       
       if (receiverCallsign && senderCallsign && senderLocator && receiverLocator) {
         const freq = frequency ? parseInt(frequency) : null;
@@ -3395,6 +3400,11 @@ app.get('/api/wspr/heatmap', async (req, res) => {
         const receiverLoc = gridToLatLonSimple(receiverLocator);
         
         if (senderLoc && receiverLoc) {
+          const powerWatts = power ? parseFloat(power) : null;
+          const powerDbm = powerWatts ? (10 * Math.log10(powerWatts * 1000)).toFixed(0) : null;
+          const dist = distance ? parseInt(distance) : null;
+          const kPerW = (dist && powerWatts && powerWatts > 0) ? Math.round(dist / powerWatts) : null;
+          
           spots.push({
             sender: senderCallsign,
             senderGrid: senderLocator,
@@ -3405,9 +3415,16 @@ app.get('/api/wspr/heatmap', async (req, res) => {
             receiverLat: receiverLoc.lat,
             receiverLon: receiverLoc.lon,
             freq: freq,
-            freqMHz: freq ? (freq / 1000000).toFixed(3) : null,
+            freqMHz: freq ? (freq / 1000000).toFixed(6) : null,
             band: spotBand,
             snr: sNR ? parseInt(sNR) : null,
+            power: powerWatts,
+            powerDbm: powerDbm,
+            distance: dist,
+            senderAz: senderAz ? parseInt(senderAz) : null,
+            receiverAz: receiverAz ? parseInt(receiverAz) : null,
+            drift: drift ? parseInt(drift) : null,
+            kPerW: kPerW,
             timestamp: flowStartSecs ? parseInt(flowStartSecs) * 1000 : Date.now(),
             age: flowStartSecs ? Math.floor((Date.now() / 1000 - parseInt(flowStartSecs)) / 60) : 0
           });

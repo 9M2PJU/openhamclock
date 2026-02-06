@@ -243,6 +243,8 @@ export function useLayer({ enabled = false, opacity = 0.9, map = null }) {
   const reconnectTimerRef = useRef(null);
   const strikesBufferRef = useRef([]);
   const previousStrikeIds = useRef(new Set());
+  const currentServerIndexRef = useRef(0); // Track which server we're using
+  const connectionAttemptsRef = useRef(0); // Track connection attempts
 
   // Fetch WebSocket key from Blitzortung (fallback to 111)
   useEffect(() => {
@@ -252,19 +254,31 @@ export function useLayer({ enabled = false, opacity = 0.9, map = null }) {
     }
   }, [enabled, wsKey]);
 
-  // Connect to Blitzortung WebSocket
+  // Connect to Blitzortung WebSocket with fallback servers
   useEffect(() => {
     if (!enabled || !wsKey) return;
 
+    // Available Blitzortung WebSocket servers (tested and verified online)
+    // ws3, ws4, ws5, ws6, ws9, ws10 have certificate issues as of 2026-02
+    const servers = [
+      'wss://ws8.blitzortung.org',  // Primary (most reliable)
+      'wss://ws7.blitzortung.org',  // Backup 1
+      'wss://ws2.blitzortung.org',  // Backup 2
+      'wss://ws1.blitzortung.org'   // Backup 3
+    ];
+
     const connectWebSocket = () => {
       try {
-        console.log('[Lightning] Connecting to Blitzortung WebSocket...');
-        const ws = new WebSocket('wss://ws8.blitzortung.org');
+        const serverUrl = servers[currentServerIndexRef.current];
+        console.log(`[Lightning] Connecting to ${serverUrl} (attempt ${connectionAttemptsRef.current + 1})...`);
+        
+        const ws = new WebSocket(serverUrl);
         wsRef.current = ws;
 
         ws.onopen = () => {
-          console.log('[Lightning] WebSocket connected, sending key:', wsKey);
+          console.log(`[Lightning] Connected to ${serverUrl}, sending key:`, wsKey);
           ws.send(JSON.stringify({ a: wsKey }));
+          connectionAttemptsRef.current = 0; // Reset attempts on success
         };
 
         ws.onmessage = (event) => {
@@ -311,20 +325,49 @@ export function useLayer({ enabled = false, opacity = 0.9, map = null }) {
         };
 
         ws.onerror = (error) => {
-          console.error('[Lightning] WebSocket error:', error);
+          console.error(`[Lightning] WebSocket error on ${servers[currentServerIndexRef.current]}:`, error);
+          connectionAttemptsRef.current++;
+          
+          // Try next server if this one fails
+          if (connectionAttemptsRef.current >= 3) {
+            console.log(`[Lightning] Failed to connect after 3 attempts, trying next server...`);
+            currentServerIndexRef.current = (currentServerIndexRef.current + 1) % servers.length;
+            connectionAttemptsRef.current = 0;
+          }
         };
 
         ws.onclose = () => {
-          console.log('[Lightning] WebSocket closed, reconnecting in 5s...');
+          const serverUrl = servers[currentServerIndexRef.current];
+          console.log(`[Lightning] WebSocket closed for ${serverUrl}`);
           wsRef.current = null;
           
-          // Reconnect after 5 seconds
+          // Increment connection attempts
+          connectionAttemptsRef.current++;
+          
+          // Try next server if too many failed attempts on current server
+          if (connectionAttemptsRef.current >= 3) {
+            console.log(`[Lightning] Too many failures on ${serverUrl}, rotating to next server...`);
+            currentServerIndexRef.current = (currentServerIndexRef.current + 1) % servers.length;
+            connectionAttemptsRef.current = 0;
+          }
+          
+          // Reconnect after 5 seconds if still enabled
           if (enabled) {
+            console.log(`[Lightning] Reconnecting to ${servers[currentServerIndexRef.current]} in 5s...`);
             setTimeout(connectWebSocket, 5000);
           }
         };
       } catch (err) {
-        console.error('[Lightning] Error connecting to WebSocket:', err);
+        console.error(`[Lightning] Error connecting to ${servers[currentServerIndexRef.current]}:`, err);
+        connectionAttemptsRef.current++;
+        
+        // Try next server on connection error
+        if (connectionAttemptsRef.current >= 3) {
+          console.log(`[Lightning] Too many connection errors, trying next server...`);
+          currentServerIndexRef.current = (currentServerIndexRef.current + 1) % servers.length;
+          connectionAttemptsRef.current = 0;
+        }
+        
         // Retry after 10 seconds
         if (enabled) {
           setTimeout(connectWebSocket, 10000);

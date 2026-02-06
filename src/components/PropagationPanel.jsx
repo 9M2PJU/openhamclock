@@ -143,7 +143,7 @@ export const PropagationPanel = ({ propagation, loading, bandConditions }) => {
             </div>
             <span style={{ color: hasRealData ? '#00ff88' : 'var(--text-muted)', fontSize: '10px' }}>
               {hasRealData 
-                ? `⌇ ${ionospheric?.source || 'ionosonde'}${ionospheric?.distance ? ` (${ionospheric.distance}km)` : ''}`
+                ? `⌇ Iono: ${ionospheric?.source || 'ionosonde'}${ionospheric?.distance ? ` (${ionospheric.distance}km from path)` : ''}`
                 : '⚡ estimated'
               }
             </span>

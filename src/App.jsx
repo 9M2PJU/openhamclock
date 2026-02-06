@@ -155,6 +155,21 @@ const App = () => {
   const toggleDXLabels = useCallback(() => setMapLayers(prev => ({ ...prev, showDXLabels: !prev.showDXLabels })), []);
   const togglePOTA = useCallback(() => setMapLayers(prev => ({ ...prev, showPOTA: !prev.showPOTA })), []);
   const toggleSatellites = useCallback(() => setMapLayers(prev => ({ ...prev, showSatellites: !prev.showSatellites })), []);
+  
+  // Satellite filters
+  const [satelliteFilters, setSatelliteFilters] = useState(() => {
+    try {
+      const saved = localStorage.getItem('openhamclock_satelliteFilters');
+      return saved ? JSON.parse(saved) : [];
+    } catch (e) { return []; }
+  });
+  
+  useEffect(() => {
+    try {
+      localStorage.setItem('openhamclock_satelliteFilters', JSON.stringify(satelliteFilters));
+    } catch (e) {}
+  }, [satelliteFilters]);
+  
   const togglePSKReporter = useCallback(() => setMapLayers(prev => ({ ...prev, showPSKReporter: !prev.showPSKReporter })), []);
   const toggleWSJTX = useCallback(() => setMapLayers(prev => ({ ...prev, showWSJTX: !prev.showWSJTX })), []);
   
@@ -268,6 +283,12 @@ const App = () => {
   const propagation = usePropagation(config.location, dxLocation);
   const mySpots = useMySpots(config.callsign);
   const satellites = useSatellites(config.location);
+  
+  // Filter satellites based on selection
+  const filteredSatellites = satelliteFilters.length > 0 
+    ? (satellites.data || []).filter(sat => satelliteFilters.includes(sat.name))
+    : satellites.data;
+  
   const localWeather = useWeather(config.location, tempUnit);
   const pskReporter = usePSKReporter(config.callsign, { minutes: 15, enabled: config.callsign !== 'N0CALL' });
   const wsjtx = useWSJTX();
@@ -1339,14 +1360,68 @@ const App = () => {
           {config.panels?.dxLocation?.visible !== false && (
             <div className="panel" style={{ padding: '14px', flex: '0 0 auto' }}>
               <div style={{ fontSize: '14px', color: 'var(--accent-green)', fontWeight: '700', marginBottom: '10px' }}>🎯 DX - TARGET</div>
-              <div style={{ fontFamily: 'JetBrains Mono', fontSize: '14px' }}>
-                <div style={{ color: 'var(--accent-amber)', fontSize: '22px', fontWeight: '700', letterSpacing: '1px' }}>{dxGrid}</div>
-                <div style={{ color: 'var(--text-secondary)', fontSize: '13px', marginTop: '4px' }}>{dxLocation.lat.toFixed(4)}°, {dxLocation.lon.toFixed(4)}°</div>
-                <div style={{ marginTop: '8px', fontSize: '13px' }}>
-                  <span style={{ color: 'var(--text-secondary)' }}>☀ </span>
-                  <span style={{ color: 'var(--accent-amber)', fontWeight: '600' }}>{dxSunTimes.sunrise}</span>
-                  <span style={{ color: 'var(--text-secondary)' }}> → </span>
-                  <span style={{ color: 'var(--accent-purple)', fontWeight: '600' }}>{dxSunTimes.sunset}</span>
+              <div style={{ fontFamily: 'JetBrains Mono', fontSize: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ color: 'var(--accent-amber)', fontSize: '22px', fontWeight: '700', letterSpacing: '1px' }}>{dxGrid}</div>
+                  <div style={{ color: 'var(--text-secondary)', fontSize: '13px', marginTop: '4px' }}>{dxLocation.lat.toFixed(4)}°, {dxLocation.lon.toFixed(4)}°</div>
+                  <div style={{ marginTop: '8px', fontSize: '13px' }}>
+                    <span style={{ color: 'var(--text-secondary)' }}>☀ </span>
+                    <span style={{ color: 'var(--accent-amber)', fontWeight: '600' }}>{dxSunTimes.sunrise}</span>
+                    <span style={{ color: 'var(--text-secondary)' }}> → </span>
+                    <span style={{ color: 'var(--accent-purple)', fontWeight: '600' }}>{dxSunTimes.sunset}</span>
+                  </div>
+                </div>
+                <div style={{ borderLeft: '1px solid var(--border-color)', paddingLeft: '12px', marginLeft: '12px', minWidth: '90px' }}>
+                  <div style={{ color: 'var(--text-secondary)', fontSize: '11px', marginBottom: '4px' }}>Beam Dir:</div>
+                  <div style={{ fontSize: '13px', marginBottom: '3px' }}>
+                    <span style={{ color: 'var(--text-secondary)' }}>SP: </span>
+                    <span style={{ color: 'var(--accent-cyan)', fontWeight: '700' }}>{(() => {
+                      const deLat = config.location.lat * Math.PI / 180;
+                      const deLon = config.location.lon * Math.PI / 180;
+                      const dxLat = dxLocation.lat * Math.PI / 180;
+                      const dxLon = dxLocation.lon * Math.PI / 180;
+                      const dLon = dxLon - deLon;
+                      const y = Math.sin(dLon) * Math.cos(dxLat);
+                      const x = Math.cos(deLat) * Math.sin(dxLat) - Math.sin(deLat) * Math.cos(dxLat) * Math.cos(dLon);
+                      let sp = Math.atan2(y, x) * 180 / Math.PI;
+                      sp = (sp + 360) % 360;
+                      return Math.round(sp);
+                    })()}°</span>
+                  </div>
+                  <div style={{ fontSize: '13px', marginBottom: '6px' }}>
+                    <span style={{ color: 'var(--text-secondary)' }}>LP: </span>
+                    <span style={{ color: 'var(--accent-purple)', fontWeight: '700' }}>{(() => {
+                      const deLat = config.location.lat * Math.PI / 180;
+                      const deLon = config.location.lon * Math.PI / 180;
+                      const dxLat = dxLocation.lat * Math.PI / 180;
+                      const dxLon = dxLocation.lon * Math.PI / 180;
+                      const dLon = dxLon - deLon;
+                      const y = Math.sin(dLon) * Math.cos(dxLat);
+                      const x = Math.cos(deLat) * Math.sin(dxLat) - Math.sin(deLat) * Math.cos(dxLat) * Math.cos(dLon);
+                      let sp = Math.atan2(y, x) * 180 / Math.PI;
+                      sp = (sp + 360) % 360;
+                      let lp = (sp + 180) % 360;
+                      return Math.round(lp);
+                    })()}°</span>
+                  </div>
+                  <div style={{ fontSize: '13px', paddingTop: '6px', borderTop: '1px solid var(--border-color)' }}>
+                    <span style={{ color: 'var(--accent-cyan)', fontWeight: '700' }}>{(() => {
+                      // Haversine distance formula
+                      const R = 6371; // Earth radius in km
+                      const deLat = config.location.lat * Math.PI / 180;
+                      const deLon = config.location.lon * Math.PI / 180;
+                      const dxLat = dxLocation.lat * Math.PI / 180;
+                      const dxLon = dxLocation.lon * Math.PI / 180;
+                      const dLat = dxLat - deLat;
+                      const dLon = dxLon - deLon;
+                      const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                                Math.cos(deLat) * Math.cos(dxLat) *
+                                Math.sin(dLon/2) * Math.sin(dLon/2);
+                      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+                      const km = R * c;
+                      return `📏 ${Math.round(km).toLocaleString()} km`;
+                    })()}</span>
+                  </div>
                 </div>
               </div>
               {showDxWeather && (
@@ -1392,7 +1467,7 @@ const App = () => {
             mySpots={mySpots.data}
             dxPaths={dxClusterData.paths}
             dxFilters={dxFilters}
-            satellites={satellites.data}
+            satellites={filteredSatellites}
             pskReporterSpots={filteredPskSpots}
             showDXPaths={mapLayers.showDXPaths}
             showDXLabels={mapLayers.showDXLabels}
@@ -1509,6 +1584,9 @@ const App = () => {
         config={config}
         onSave={handleSaveConfig}
         onResetLayout={handleResetLayout}
+        satellites={satellites.data}
+        satelliteFilters={satelliteFilters}
+        onSatelliteFiltersChange={setSatelliteFilters}
       />
       <DXFilterManager
         filters={dxFilters}
