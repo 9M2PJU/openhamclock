@@ -3878,7 +3878,7 @@ app.get('/api/wspr/heatmap', async (req, res) => {
 // ============================================
 
 // Comprehensive ham radio satellites - NORAD IDs
-// Updated list of active amateur radio satellites
+// Updated list of active amateur radio satellites and selected weather satellites
 const HAM_SATELLITES = {
   // High Priority - Popular FM satellites
   'ISS': { norad: 25544, name: 'ISS (ZARYA)', color: '#00ffff', priority: 1, mode: 'FM/APRS/SSTV' },
@@ -3886,6 +3886,15 @@ const HAM_SATELLITES = {
   'AO-91': { norad: 43017, name: 'AO-91 (Fox-1B)', color: '#ff6600', priority: 1, mode: 'FM' },
   'AO-92': { norad: 43137, name: 'AO-92 (Fox-1D)', color: '#ff9900', priority: 1, mode: 'FM/L-band' },
   'PO-101': { norad: 43678, name: 'PO-101 (Diwata-2)', color: '#ff3399', priority: 1, mode: 'FM' },
+  
+  // Weather Satellites - GOES & METEOR
+  //'GOES-18': { norad: 51850, name: 'GOES-18', color: '#66ff66', priority: 1, mode: 'GRB/HRIT/LRIT' },
+  //'GOES-19': { norad: 60133, name: 'GOES-19', color: '#33cc33', priority: 1, mode: 'GRB/HRIT/LRIT' },
+  'METEOR-M2-3': { norad: 57166, name: 'METEOR M2-3', color: '#FF0000', priority: 1, mode: 'HRPT/LRPT' },
+  'METEOR-M2-4': { norad: 59051, name: 'METEOR M2-4', color: '#FF0000', priority: 1, mode: 'HRPT/LRPT' },
+  'SUOMI-NPP': { norad: 37849, name: 'SUOMI NPP', color: '#0000FF', priority: 2, mode: 'HRD/SMD' },
+  'NOAA-20': { norad: 43013, name: 'NOAA-20 (JPSS-1)', color: '#0000FF', priority: 2, mode: 'HRD/SMD' },
+  'NOAA-21': { norad: 54234, name: 'NOAA-21 (JPSS-2)', color: '#0000FF', priority: 2, mode: 'HRD/SMD' },
   
   // Linear Transponder Satellites
   'RS-44': { norad: 44909, name: 'RS-44 (DOSAAF)', color: '#ff0066', priority: 1, mode: 'Linear' },

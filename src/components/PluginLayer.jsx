@@ -1,15 +1,27 @@
 /**
  * PluginLayer Component
- * Renders a single plugin layer using its hook
+ * Renders a single plugin layer using its hook.
+ * Support for both legacy object-based hooks and new direct-argument hooks.
+ * Added for Cloud layer weather and satellite integration.
  */
 import React from 'react';
 
 export const PluginLayer = ({ plugin, enabled, opacity, map, callsign, locator, lowMemoryMode }) => {
-  // Call the plugin's hook (this is allowed because it's in a component)
-  const result = plugin.hook({ enabled, opacity, map, callsign, locator, lowMemoryMode });
   
-  // Plugin hook handles its own rendering to the map
-  // This component doesn't render anything to the DOM
+  // 1. Identify which function name the plugin is using
+  const layerFunc = plugin.useLayer || plugin.hook;
+
+  if (typeof layerFunc === 'function') {
+    // 2. Try the OWM style (individual arguments)
+    // Most newer hooks expect: (map, enabled, opacity, options)
+    layerFunc(map, enabled, opacity, { callsign, locator, lowMemoryMode });
+
+    // 3. Try the Legacy style (single object)
+    // Older plugins like Earthquakes/WSPR expect: ({ map, enabled, opacity... })
+    // We call it again with the object format to ensure they receive their props
+    layerFunc({ map, enabled, opacity, callsign, locator, lowMemoryMode });
+  }
+
   return null;
 };
 

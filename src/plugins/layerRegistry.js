@@ -4,6 +4,7 @@
 
 import * as N3FJPLoggedQSOsPlugin from './layers/useN3FJPLoggedQSOs.js';
 import * as WXRadarPlugin from './layers/useWXRadar.js';
+import * as OWMCloudsPlugin from './layers/useOWMClouds.js';
 import * as EarthquakesPlugin from './layers/useEarthquakes.js';
 import * as AuroraPlugin from './layers/useAurora.js';
 import * as WSPRPlugin from './layers/useWSPR.js';
@@ -13,6 +14,7 @@ import * as RBNPlugin from './layers/useRBN.js';
 import * as ContestQsosPlugin from './layers/useContestQsos.js';
 
 const layerPlugins = [
+  OWMCloudsPlugin,
   WXRadarPlugin,
   EarthquakesPlugin,
   AuroraPlugin,
