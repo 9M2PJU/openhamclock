@@ -12,7 +12,8 @@ export const metadata = {
   icon: '☁️',
   category: 'weather',
   defaultEnabled: false,
-  defaultOpacity: 0.5
+  defaultOpacity: 0.5,
+  localOnly: true
 };
 
 // The registry looks for this EXACT name: useLayer

@@ -2,10 +2,21 @@
  * SettingsPanel Component
  * Full settings modal with map layer controls
  */
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { calculateGridSquare } from '../utils/geo.js';
 import { useTranslation, Trans } from 'react-i18next';
 import { LANGUAGES } from '../lang/i18n.js';
+import {
+  getProfiles,
+  getActiveProfile,
+  saveProfile,
+  loadProfile,
+  deleteProfile,
+  renameProfile,
+  exportProfile,
+  exportCurrentState,
+  importProfile
+} from '../utils/profiles.js';
 
 export const SettingsPanel = ({ isOpen, onClose, config, onSave, onResetLayout, satellites, satelliteFilters, onSatelliteFiltersChange }) => {
   const [callsign, setCallsign] = useState(config?.callsign || '');
@@ -24,6 +35,20 @@ export const SettingsPanel = ({ isOpen, onClose, config, onSave, onResetLayout, 
   // Layer controls
   const [layers, setLayers] = useState([]);
   const [activeTab, setActiveTab] = useState('station');
+
+  // Profile management state
+  const [profiles, setProfilesList] = useState({});
+  const [activeProfileName, setActiveProfileName] = useState(null);
+  const [newProfileName, setNewProfileName] = useState('');
+  const [renamingProfile, setRenamingProfile] = useState(null);
+  const [renameValue, setRenameValue] = useState('');
+  const [profileMessage, setProfileMessage] = useState(null);
+  const fileInputRef = useRef(null);
+
+  const refreshProfiles = () => {
+    setProfilesList(getProfiles());
+    setActiveProfileName(getActiveProfile());
+  };
 
   useEffect(() => {
     if (config) {
@@ -47,6 +72,9 @@ export const SettingsPanel = ({ isOpen, onClose, config, onSave, onResetLayout, 
   useEffect(() => {
     if (isOpen && window.hamclockLayerControls) {
       setLayers(window.hamclockLayerControls.layers || []);
+    }
+    if (isOpen) {
+      refreshProfiles();
     }
   }, [isOpen]);
 
@@ -279,6 +307,23 @@ export const SettingsPanel = ({ isOpen, onClose, config, onSave, onResetLayout, 
             }}
           >
             {t('station.settings.tab3.title')}
+          </button>
+          <button
+            onClick={() => { setActiveTab('profiles'); refreshProfiles(); }}
+            style={{
+              flex: 1,
+              padding: '10px',
+              background: activeTab === 'profiles' ? 'var(--accent-amber)' : 'transparent',
+              border: 'none',
+              borderRadius: '6px 6px 0 0',
+              color: activeTab === 'profiles' ? '#000' : 'var(--text-secondary)',
+              fontSize: '13px',
+              cursor: 'pointer',
+              fontWeight: activeTab === 'profiles' ? '700' : '400',
+              fontFamily: 'JetBrains Mono, monospace'
+            }}
+          >
+            Profiles
           </button>
         </div>
 
@@ -1049,6 +1094,433 @@ export const SettingsPanel = ({ isOpen, onClose, config, onSave, onResetLayout, 
                   </button>
                 );
               })}
+            </div>
+          </div>
+        )}
+
+        {/* Profiles Tab */}
+        {activeTab === 'profiles' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            {/* Description */}
+            <div style={{ fontSize: '12px', color: 'var(--text-muted)', lineHeight: '1.5' }}>
+              Save your current layout, theme, map layers, filters, and all preferences as a named profile. 
+              Switch between profiles when sharing a HamClock between operators, or to toggle between your own saved views.
+            </div>
+
+            {/* Active profile indicator */}
+            {activeProfileName && (
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '8px 12px',
+                background: 'rgba(0, 255, 136, 0.1)',
+                border: '1px solid rgba(0, 255, 136, 0.3)',
+                borderRadius: '6px',
+                fontSize: '12px'
+              }}>
+                <span style={{ color: '#00ff88' }}>●</span>
+                <span style={{ color: 'var(--text-primary)' }}>Active: <strong>{activeProfileName}</strong></span>
+              </div>
+            )}
+
+            {/* Status message */}
+            {profileMessage && (
+              <div style={{
+                padding: '8px 12px',
+                background: profileMessage.type === 'error' ? 'rgba(255, 68, 102, 0.1)' : 'rgba(0, 255, 136, 0.1)',
+                border: `1px solid ${profileMessage.type === 'error' ? 'rgba(255, 68, 102, 0.3)' : 'rgba(0, 255, 136, 0.3)'}`,
+                borderRadius: '6px',
+                fontSize: '11px',
+                color: profileMessage.type === 'error' ? '#ff4466' : '#00ff88'
+              }}>
+                {profileMessage.text}
+              </div>
+            )}
+
+            {/* Save new profile */}
+            <div style={{
+              padding: '12px',
+              background: 'var(--bg-tertiary)',
+              borderRadius: '8px',
+              border: '1px solid var(--border-color)'
+            }}>
+              <div style={{ fontSize: '12px', fontWeight: '600', color: 'var(--accent-amber)', marginBottom: '8px' }}>
+                💾 Save Current State as Profile
+              </div>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <input
+                  type="text"
+                  value={newProfileName}
+                  onChange={(e) => setNewProfileName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && newProfileName.trim()) {
+                      const exists = profiles[newProfileName.trim()];
+                      if (exists && !window.confirm(`Profile "${newProfileName.trim()}" already exists. Overwrite?`)) return;
+                      saveProfile(newProfileName.trim());
+                      setNewProfileName('');
+                      refreshProfiles();
+                      setProfileMessage({ type: 'success', text: `Profile "${newProfileName.trim()}" saved` });
+                      setTimeout(() => setProfileMessage(null), 3000);
+                    }
+                  }}
+                  placeholder="Profile name (e.g. K0CJH, Contest, Field Day)"
+                  style={{
+                    flex: 1,
+                    padding: '8px 10px',
+                    background: 'var(--bg-primary)',
+                    border: '1px solid var(--border-color)',
+                    borderRadius: '4px',
+                    color: 'var(--text-primary)',
+                    fontSize: '12px',
+                    fontFamily: 'JetBrains Mono, monospace'
+                  }}
+                />
+                <button
+                  onClick={() => {
+                    if (!newProfileName.trim()) return;
+                    const exists = profiles[newProfileName.trim()];
+                    if (exists && !window.confirm(`Profile "${newProfileName.trim()}" already exists. Overwrite?`)) return;
+                    saveProfile(newProfileName.trim());
+                    setNewProfileName('');
+                    refreshProfiles();
+                    setProfileMessage({ type: 'success', text: `Profile "${newProfileName.trim()}" saved` });
+                    setTimeout(() => setProfileMessage(null), 3000);
+                  }}
+                  disabled={!newProfileName.trim()}
+                  style={{
+                    padding: '8px 16px',
+                    background: newProfileName.trim() ? 'linear-gradient(135deg, #00ff88 0%, #00ddff 100%)' : 'var(--bg-tertiary)',
+                    border: 'none',
+                    borderRadius: '4px',
+                    color: newProfileName.trim() ? '#000' : 'var(--text-muted)',
+                    fontSize: '12px',
+                    fontWeight: '700',
+                    cursor: newProfileName.trim() ? 'pointer' : 'default',
+                    whiteSpace: 'nowrap'
+                  }}
+                >
+                  Save
+                </button>
+              </div>
+            </div>
+
+            {/* Saved profiles list */}
+            <div>
+              <div style={{ fontSize: '12px', fontWeight: '600', color: 'var(--accent-amber)', marginBottom: '8px' }}>
+                📋 Saved Profiles ({Object.keys(profiles).length})
+              </div>
+              {Object.keys(profiles).length === 0 ? (
+                <div style={{
+                  padding: '20px',
+                  textAlign: 'center',
+                  color: 'var(--text-muted)',
+                  fontSize: '12px',
+                  background: 'var(--bg-tertiary)',
+                  borderRadius: '8px',
+                  border: '1px dashed var(--border-color)'
+                }}>
+                  No saved profiles yet. Save your current configuration above.
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  {Object.entries(profiles)
+                    .sort((a, b) => (b[1].updatedAt || '').localeCompare(a[1].updatedAt || ''))
+                    .map(([name, profile]) => {
+                    const isActive = name === activeProfileName;
+                    const isRenaming = renamingProfile === name;
+                    
+                    // Parse callsign from snapshot if available
+                    let snapshotCallsign = '';
+                    try {
+                      const cfg = profile.snapshot?.openhamclock_config;
+                      if (cfg) snapshotCallsign = JSON.parse(cfg).callsign || '';
+                    } catch {}
+                    
+                    // Parse layout type
+                    let snapshotLayout = '';
+                    try {
+                      const cfg = profile.snapshot?.openhamclock_config;
+                      if (cfg) snapshotLayout = JSON.parse(cfg).layout || '';
+                    } catch {}
+                    
+                    return (
+                      <div key={name} style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        padding: '10px 12px',
+                        background: isActive ? 'rgba(0, 255, 136, 0.08)' : 'var(--bg-tertiary)',
+                        border: `1px solid ${isActive ? 'rgba(0, 255, 136, 0.3)' : 'var(--border-color)'}`,
+                        borderRadius: '6px',
+                      }}>
+                        {/* Profile info */}
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          {isRenaming ? (
+                            <div style={{ display: 'flex', gap: '4px' }}>
+                              <input
+                                type="text"
+                                value={renameValue}
+                                onChange={(e) => setRenameValue(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    if (renameProfile(name, renameValue)) {
+                                      refreshProfiles();
+                                      setProfileMessage({ type: 'success', text: `Renamed to "${renameValue.trim()}"` });
+                                    } else {
+                                      setProfileMessage({ type: 'error', text: 'Rename failed — name may be taken' });
+                                    }
+                                    setRenamingProfile(null);
+                                    setTimeout(() => setProfileMessage(null), 3000);
+                                  }
+                                  if (e.key === 'Escape') setRenamingProfile(null);
+                                }}
+                                autoFocus
+                                style={{
+                                  flex: 1,
+                                  padding: '4px 6px',
+                                  background: 'var(--bg-primary)',
+                                  border: '1px solid var(--accent-amber)',
+                                  borderRadius: '3px',
+                                  color: 'var(--text-primary)',
+                                  fontSize: '12px',
+                                  fontFamily: 'JetBrains Mono, monospace'
+                                }}
+                              />
+                              <button onClick={() => {
+                                if (renameProfile(name, renameValue)) {
+                                  refreshProfiles();
+                                  setProfileMessage({ type: 'success', text: `Renamed to "${renameValue.trim()}"` });
+                                } else {
+                                  setProfileMessage({ type: 'error', text: 'Rename failed — name may already exist' });
+                                }
+                                setRenamingProfile(null);
+                                setTimeout(() => setProfileMessage(null), 3000);
+                              }} style={{
+                                padding: '4px 8px', background: 'var(--accent-green)', border: 'none',
+                                borderRadius: '3px', color: '#000', fontSize: '10px', cursor: 'pointer', fontWeight: '700'
+                              }}>✓</button>
+                              <button onClick={() => setRenamingProfile(null)} style={{
+                                padding: '4px 8px', background: 'var(--bg-primary)', border: '1px solid var(--border-color)',
+                                borderRadius: '3px', color: 'var(--text-muted)', fontSize: '10px', cursor: 'pointer'
+                              }}>✕</button>
+                            </div>
+                          ) : (
+                            <>
+                              <div style={{
+                                fontSize: '13px',
+                                fontWeight: '600',
+                                color: isActive ? '#00ff88' : 'var(--text-primary)',
+                                whiteSpace: 'nowrap',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis'
+                              }}>
+                                {isActive && <span style={{ marginRight: '4px' }}>●</span>}
+                                {name}
+                              </div>
+                              <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginTop: '2px' }}>
+                                {snapshotCallsign && <span>{snapshotCallsign}</span>}
+                                {snapshotLayout && <span> • {snapshotLayout}</span>}
+                                {profile.updatedAt && <span> • {new Date(profile.updatedAt).toLocaleDateString()}</span>}
+                              </div>
+                            </>
+                          )}
+                        </div>
+
+                        {/* Action buttons */}
+                        {!isRenaming && (
+                          <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
+                            {/* Load */}
+                            <button
+                              onClick={() => {
+                                if (window.confirm(`Load profile "${name}"? This will replace your current settings and reload.`)) {
+                                  loadProfile(name);
+                                  window.location.reload();
+                                }
+                              }}
+                              title="Load this profile"
+                              style={{
+                                padding: '5px 10px',
+                                background: isActive ? 'rgba(0,255,136,0.15)' : 'var(--bg-primary)',
+                                border: `1px solid ${isActive ? 'rgba(0,255,136,0.3)' : 'var(--border-color)'}`,
+                                borderRadius: '4px',
+                                color: isActive ? '#00ff88' : 'var(--text-secondary)',
+                                fontSize: '11px',
+                                cursor: 'pointer',
+                                fontWeight: '600'
+                              }}
+                            >
+                              {isActive ? '✓ Active' : '▶ Load'}
+                            </button>
+                            {/* Update (overwrite with current state) */}
+                            <button
+                              onClick={() => {
+                                saveProfile(name);
+                                refreshProfiles();
+                                setProfileMessage({ type: 'success', text: `"${name}" updated with current state` });
+                                setTimeout(() => setProfileMessage(null), 3000);
+                              }}
+                              title="Update with current settings"
+                              style={{
+                                padding: '5px 8px',
+                                background: 'var(--bg-primary)',
+                                border: '1px solid var(--border-color)',
+                                borderRadius: '4px',
+                                color: 'var(--text-muted)',
+                                fontSize: '11px',
+                                cursor: 'pointer'
+                              }}
+                            >↻</button>
+                            {/* Rename */}
+                            <button
+                              onClick={() => { setRenamingProfile(name); setRenameValue(name); }}
+                              title="Rename"
+                              style={{
+                                padding: '5px 8px',
+                                background: 'var(--bg-primary)',
+                                border: '1px solid var(--border-color)',
+                                borderRadius: '4px',
+                                color: 'var(--text-muted)',
+                                fontSize: '11px',
+                                cursor: 'pointer'
+                              }}
+                            >✎</button>
+                            {/* Export */}
+                            <button
+                              onClick={() => {
+                                const json = exportProfile(name);
+                                if (json) {
+                                  const blob = new Blob([json], { type: 'application/json' });
+                                  const url = URL.createObjectURL(blob);
+                                  const a = document.createElement('a');
+                                  a.href = url;
+                                  a.download = `hamclock-profile-${name.replace(/\s+/g, '-').toLowerCase()}.json`;
+                                  a.click();
+                                  URL.revokeObjectURL(url);
+                                  setProfileMessage({ type: 'success', text: `Exported "${name}"` });
+                                  setTimeout(() => setProfileMessage(null), 3000);
+                                }
+                              }}
+                              title="Export to file"
+                              style={{
+                                padding: '5px 8px',
+                                background: 'var(--bg-primary)',
+                                border: '1px solid var(--border-color)',
+                                borderRadius: '4px',
+                                color: 'var(--text-muted)',
+                                fontSize: '11px',
+                                cursor: 'pointer'
+                              }}
+                            >⤓</button>
+                            {/* Delete */}
+                            <button
+                              onClick={() => {
+                                if (window.confirm(`Delete profile "${name}"? This cannot be undone.`)) {
+                                  deleteProfile(name);
+                                  refreshProfiles();
+                                  setProfileMessage({ type: 'success', text: `Deleted "${name}"` });
+                                  setTimeout(() => setProfileMessage(null), 3000);
+                                }
+                              }}
+                              title="Delete"
+                              style={{
+                                padding: '5px 8px',
+                                background: 'var(--bg-primary)',
+                                border: '1px solid rgba(255,68,102,0.3)',
+                                borderRadius: '4px',
+                                color: '#ff4466',
+                                fontSize: '11px',
+                                cursor: 'pointer'
+                              }}
+                            >✕</button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Import / Export section */}
+            <div style={{
+              padding: '12px',
+              background: 'var(--bg-tertiary)',
+              borderRadius: '8px',
+              border: '1px solid var(--border-color)'
+            }}>
+              <div style={{ fontSize: '12px', fontWeight: '600', color: 'var(--accent-amber)', marginBottom: '8px' }}>
+                📦 Import / Export
+              </div>
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".json"
+                  style={{ display: 'none' }}
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    const reader = new FileReader();
+                    reader.onload = (ev) => {
+                      const imported = importProfile(ev.target.result);
+                      if (imported) {
+                        refreshProfiles();
+                        setProfileMessage({ type: 'success', text: `Imported profile "${imported}"` });
+                      } else {
+                        setProfileMessage({ type: 'error', text: 'Import failed — invalid profile file' });
+                      }
+                      setTimeout(() => setProfileMessage(null), 3000);
+                    };
+                    reader.readAsText(file);
+                    e.target.value = '';
+                  }}
+                />
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  style={{
+                    padding: '8px 14px',
+                    background: 'var(--bg-primary)',
+                    border: '1px solid var(--border-color)',
+                    borderRadius: '4px',
+                    color: 'var(--text-secondary)',
+                    fontSize: '11px',
+                    cursor: 'pointer',
+                    fontWeight: '600'
+                  }}
+                >
+                  ⤒ Import Profile from File
+                </button>
+                <button
+                  onClick={() => {
+                    const json = exportCurrentState('Current');
+                    const blob = new Blob([json], { type: 'application/json' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `hamclock-current-${new Date().toISOString().split('T')[0]}.json`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                    setProfileMessage({ type: 'success', text: 'Exported current state' });
+                    setTimeout(() => setProfileMessage(null), 3000);
+                  }}
+                  style={{
+                    padding: '8px 14px',
+                    background: 'var(--bg-primary)',
+                    border: '1px solid var(--border-color)',
+                    borderRadius: '4px',
+                    color: 'var(--text-secondary)',
+                    fontSize: '11px',
+                    cursor: 'pointer',
+                    fontWeight: '600'
+                  }}
+                >
+                  ⤓ Export Current State
+                </button>
+              </div>
+              <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginTop: '8px' }}>
+                Share profile files between devices or operators. Exported files contain all settings, layout preferences, map layers, and filter configurations.
+              </div>
             </div>
           </div>
         )}

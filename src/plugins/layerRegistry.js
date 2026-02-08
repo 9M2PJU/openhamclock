@@ -42,6 +42,7 @@ export function getAllLayers() {
       defaultEnabled: plugin.metadata.defaultEnabled || false,
       defaultOpacity: plugin.metadata.defaultOpacity || 0.6,
       category: plugin.metadata.category || 'overlay',
+      localOnly: plugin.metadata.localOnly || false,
       hook: plugin.useLayer
     }));
   
