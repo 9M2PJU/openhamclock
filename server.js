@@ -623,9 +623,183 @@ function rolloverVisitorStats() {
   }
 }
 
+// ============================================
+// CONCURRENT USER & SESSION TRACKING
+// ============================================
+// Track active sessions by IP for concurrent user count and session duration trends
+const SESSION_TIMEOUT = 5 * 60 * 1000; // 5 minutes of inactivity = session ended
+const SESSION_CLEANUP_INTERVAL = 60 * 1000; // Check for stale sessions every minute
+
+const sessionTracker = {
+  activeSessions: new Map(), // ip -> { firstSeen, lastSeen, requests, userAgent }
+  completedSessions: [],     // [{ duration, endedAt, requests }] — last 1000
+  peakConcurrent: 0,
+  peakConcurrentTime: null,
+  
+  // Record activity for an IP
+  touch(ip, userAgent) {
+    const now = Date.now();
+    if (this.activeSessions.has(ip)) {
+      const session = this.activeSessions.get(ip);
+      session.lastSeen = now;
+      session.requests++;
+    } else {
+      this.activeSessions.set(ip, {
+        firstSeen: now,
+        lastSeen: now,
+        requests: 1,
+        userAgent: (userAgent || '').slice(0, 100)
+      });
+    }
+    // Update peak
+    const current = this.activeSessions.size;
+    if (current > this.peakConcurrent) {
+      this.peakConcurrent = current;
+      this.peakConcurrentTime = new Date().toISOString();
+    }
+  },
+  
+  // Expire stale sessions and record their durations
+  cleanup() {
+    const now = Date.now();
+    const expired = [];
+    for (const [ip, session] of this.activeSessions) {
+      if (now - session.lastSeen > SESSION_TIMEOUT) {
+        expired.push(ip);
+        const duration = session.lastSeen - session.firstSeen;
+        // Only record sessions that lasted at least 10 seconds (filter out bots/crawlers)
+        if (duration > 10000) {
+          this.completedSessions.push({
+            duration,
+            endedAt: new Date(session.lastSeen).toISOString(),
+            requests: session.requests
+          });
+        }
+      }
+    }
+    expired.forEach(ip => this.activeSessions.delete(ip));
+    // Keep only last 1000 completed sessions
+    if (this.completedSessions.length > 1000) {
+      this.completedSessions = this.completedSessions.slice(-1000);
+    }
+  },
+  
+  // Get current concurrent count
+  getConcurrent() {
+    this.cleanup();
+    return this.activeSessions.size;
+  },
+  
+  // Get session duration stats
+  getStats() {
+    this.cleanup();
+    const sessions = this.completedSessions;
+    if (sessions.length === 0) {
+      return {
+        concurrent: this.activeSessions.size,
+        peakConcurrent: this.peakConcurrent,
+        peakConcurrentTime: this.peakConcurrentTime,
+        completedSessions: 0,
+        avgDuration: 0,
+        medianDuration: 0,
+        p90Duration: 0,
+        maxDuration: 0,
+        durationBuckets: { under1m: 0, '1to5m': 0, '5to15m': 0, '15to30m': 0, '30to60m': 0, over1h: 0 },
+        recentTrend: [],
+        activeSessions: []
+      };
+    }
+    
+    const durations = sessions.map(s => s.duration).sort((a, b) => a - b);
+    const avg = Math.round(durations.reduce((s, d) => s + d, 0) / durations.length);
+    const median = durations[Math.floor(durations.length / 2)];
+    const p90 = durations[Math.floor(durations.length * 0.9)];
+    const max = durations[durations.length - 1];
+    
+    // Duration distribution buckets
+    const buckets = { under1m: 0, '1to5m': 0, '5to15m': 0, '15to30m': 0, '30to60m': 0, over1h: 0 };
+    for (const d of durations) {
+      if (d < 60000) buckets.under1m++;
+      else if (d < 300000) buckets['1to5m']++;
+      else if (d < 900000) buckets['5to15m']++;
+      else if (d < 1800000) buckets['15to30m']++;
+      else if (d < 3600000) buckets['30to60m']++;
+      else buckets.over1h++;
+    }
+    
+    // Hourly trend (last 24 hours) — avg session duration and concurrent users per hour
+    const recentTrend = [];
+    const now = Date.now();
+    for (let h = 23; h >= 0; h--) {
+      const hourStart = now - (h + 1) * 3600000;
+      const hourEnd = now - h * 3600000;
+      const hourSessions = sessions.filter(s => {
+        const t = new Date(s.endedAt).getTime();
+        return t >= hourStart && t < hourEnd;
+      });
+      const hourLabel = new Date(hourStart).toISOString().slice(11, 16);
+      recentTrend.push({
+        hour: hourLabel,
+        sessions: hourSessions.length,
+        avgDuration: hourSessions.length > 0 
+          ? Math.round(hourSessions.reduce((s, x) => s + x.duration, 0) / hourSessions.length)
+          : 0,
+        avgDurationFormatted: hourSessions.length > 0
+          ? formatDuration(Math.round(hourSessions.reduce((s, x) => s + x.duration, 0) / hourSessions.length))
+          : '--'
+      });
+    }
+    
+    // Active session durations (current users)
+    const activeList = [];
+    for (const [ip, session] of this.activeSessions) {
+      activeList.push({
+        duration: now - session.firstSeen,
+        durationFormatted: formatDuration(now - session.firstSeen),
+        requests: session.requests,
+        ip: ip.replace(/\d+$/, 'x') // Anonymize last octet
+      });
+    }
+    activeList.sort((a, b) => b.duration - a.duration);
+    
+    return {
+      concurrent: this.activeSessions.size,
+      peakConcurrent: this.peakConcurrent,
+      peakConcurrentTime: this.peakConcurrentTime,
+      completedSessions: sessions.length,
+      avgDuration: avg,
+      avgDurationFormatted: formatDuration(avg),
+      medianDuration: median,
+      medianDurationFormatted: formatDuration(median),
+      p90Duration: p90,
+      p90DurationFormatted: formatDuration(p90),
+      maxDuration: max,
+      maxDurationFormatted: formatDuration(max),
+      durationBuckets: buckets,
+      recentTrend,
+      activeSessions: activeList.slice(0, 20) // Top 20 longest active
+    };
+  }
+};
+
+function formatDuration(ms) {
+  if (ms < 60000) return `${Math.round(ms / 1000)}s`;
+  if (ms < 3600000) return `${Math.floor(ms / 60000)}m ${Math.round((ms % 60000) / 1000)}s`;
+  return `${Math.floor(ms / 3600000)}h ${Math.floor((ms % 3600000) / 60000)}m`;
+}
+
+// Periodic cleanup of stale sessions
+setInterval(() => sessionTracker.cleanup(), SESSION_CLEANUP_INTERVAL);
+
 // Visitor tracking middleware
 app.use((req, res, next) => {
   rolloverVisitorStats();
+  
+  // Track concurrent sessions for ALL requests (not just countable routes)
+  const sessionIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip || req.connection?.remoteAddress || 'unknown';
+  if (req.path !== '/api/health' && !req.path.startsWith('/assets/')) {
+    sessionTracker.touch(sessionIp, req.headers['user-agent']);
+  }
   
   // Only count meaningful "visits" — initial page load or config fetch
   const countableRoutes = ['/', '/index.html', '/api/config'];
@@ -5299,6 +5473,9 @@ function generateStatusDashboard() {
     ? ((apiStats.totalBytes / parseFloat(apiStats.uptimeHours)) * 24 * 30 / (1024 * 1024 * 1024)).toFixed(2)
     : '0.00';
   
+  // Get session stats
+  const sessionStats = sessionTracker.getStats();
+  
   // Generate API traffic table rows (top 15 by bandwidth)
   const apiTableRows = apiStats.endpoints.slice(0, 15).map((ep, i) => {
     const bytesFormatted = formatBytes(ep.totalBytes);
@@ -5327,6 +5504,7 @@ function generateStatusDashboard() {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="refresh" content="30">
   <title>OpenHamClock Status</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Orbitron:wght@700;900&display=swap" rel="stylesheet">
@@ -5620,6 +5798,11 @@ function generateStatusDashboard() {
     
     <div class="stats-grid">
       <div class="stat-card">
+        <div class="stat-icon">🟢</div>
+        <div class="stat-value green">${sessionStats.concurrent}</div>
+        <div class="stat-label">Online Now</div>
+      </div>
+      <div class="stat-card">
         <div class="stat-icon">👥</div>
         <div class="stat-value">${visitorStats.uniqueIPsToday.length}</div>
         <div class="stat-label">Visitors Today</div>
@@ -5635,11 +5818,103 @@ function generateStatusDashboard() {
         <div class="stat-label">Daily Average</div>
       </div>
       <div class="stat-card">
+        <div class="stat-icon">🏔️</div>
+        <div class="stat-value purple">${sessionStats.peakConcurrent}</div>
+        <div class="stat-label">Peak Concurrent</div>
+      </div>
+      <div class="stat-card">
         <div class="stat-icon">⏱️</div>
         <div class="stat-value purple">${uptimeStr}</div>
         <div class="stat-label">Uptime</div>
       </div>
     </div>
+    
+    <!-- Session Duration Analytics -->
+    <div class="chart-section">
+      <div class="chart-title">
+        <span>⏱️ Session Duration Analytics</span>
+        <span style="color: #888; font-size: 0.75rem">${sessionStats.completedSessions} completed sessions</span>
+      </div>
+      
+      <div class="api-summary" style="margin-bottom: 20px">
+        <div class="api-stat">
+          <div class="api-stat-value" style="color: #00ccff">${sessionStats.avgDurationFormatted || '--'}</div>
+          <div class="api-stat-label">Avg Duration</div>
+        </div>
+        <div class="api-stat">
+          <div class="api-stat-value" style="color: #a78bfa">${sessionStats.medianDurationFormatted || '--'}</div>
+          <div class="api-stat-label">Median</div>
+        </div>
+        <div class="api-stat">
+          <div class="api-stat-value" style="color: #ffb347">${sessionStats.p90DurationFormatted || '--'}</div>
+          <div class="api-stat-label">90th Percentile</div>
+        </div>
+        <div class="api-stat">
+          <div class="api-stat-value" style="color: #00ff88">${sessionStats.maxDurationFormatted || '--'}</div>
+          <div class="api-stat-label">Longest</div>
+        </div>
+      </div>
+      
+      <!-- Duration Distribution Bars -->
+      ${sessionStats.completedSessions > 0 ? (() => {
+        const b = sessionStats.durationBuckets;
+        const total = Object.values(b).reduce((s, v) => s + v, 0) || 1;
+        const bucketLabels = [
+          { key: 'under1m', label: '<1m', color: '#ff4466' },
+          { key: '1to5m', label: '1-5m', color: '#ffb347' },
+          { key: '5to15m', label: '5-15m', color: '#ffdd00' },
+          { key: '15to30m', label: '15-30m', color: '#88cc00' },
+          { key: '30to60m', label: '30m-1h', color: '#00ff88' },
+          { key: 'over1h', label: '1h+', color: '#00ccff' }
+        ];
+        return `
+          <div style="margin-bottom: 8px; font-size: 0.75rem; color: #888">Session Length Distribution</div>
+          <div style="display: flex; gap: 6px; align-items: flex-end; height: 80px; margin-bottom: 4px">
+            ${bucketLabels.map(({ key, label, color }) => {
+              const count = b[key] || 0;
+              const pct = Math.max((count / total) * 100, 2);
+              return `
+                <div style="flex: 1; display: flex; flex-direction: column; align-items: center; height: 100%" title="${label}: ${count} sessions (${Math.round(count/total*100)}%)">
+                  <div style="font-size: 0.65rem; color: #888; margin-bottom: 4px">${count}</div>
+                  <div style="width: 100%; max-width: 50px; background: ${color}; border-radius: 4px 4px 0 0; height: ${pct}%; min-height: 3px; opacity: 0.85"></div>
+                  <div style="font-size: 0.6rem; color: #666; margin-top: 4px">${label}</div>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        `;
+      })() : '<div style="color: #666; text-align: center; padding: 16px">No completed sessions yet — data will appear as users visit and leave</div>'}
+    </div>
+    
+    <!-- Active Users Table -->
+    ${sessionStats.activeSessions.length > 0 ? `
+    <div class="api-section">
+      <div class="api-title">
+        <span>🟢 Active Users (${sessionStats.concurrent})</span>
+        <span style="color: #888; font-size: 0.75rem">${sessionStats.peakConcurrentTime ? 'Peak: ' + sessionStats.peakConcurrent + ' at ' + new Date(sessionStats.peakConcurrentTime).toLocaleString('en-US', { hour: '2-digit', minute: '2-digit' }) : ''}</span>
+      </div>
+      <table class="api-table">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>IP</th>
+            <th style="text-align: right">Session Duration</th>
+            <th style="text-align: right">Requests</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${sessionStats.activeSessions.map((s, i) => `
+            <tr>
+              <td style="color: #888">${i + 1}</td>
+              <td><code style="color: #00ccff">${s.ip}</code></td>
+              <td style="text-align: right; color: #00ff88; font-weight: 600">${s.durationFormatted}</td>
+              <td style="text-align: right">${s.requests}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+    ` : ''}
     
     <div class="chart-section">
       <div class="chart-title">
@@ -5773,6 +6048,7 @@ app.get('/api/health', (req, res) => {
         file: STATS_FILE || null,
         lastSaved: visitorStats.lastSaved
       },
+      sessions: sessionTracker.getStats(),
       visitors: {
         today: {
           date: visitorStats.today,
