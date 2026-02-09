@@ -4264,15 +4264,36 @@ app.get('/api/satellites/tle', async (req, res) => {
           const lines = text.trim().split('\n');
           // Parse 3 lines per satellite: Name, Line 1, Line 2
           for (let i = 0; i < lines.length - 2; i += 3) {
+            const name = lines[i]?.trim();
             const line1 = lines[i + 1]?.trim();
             const line2 = lines[i + 2]?.trim();
-            if (line1 && line1.startsWith('1 ')) {
+            if (name && line1 && line1.startsWith('1 ')) {
               const noradId = parseInt(line1.substring(2, 7));
-              // Check if the NORAD ID matches your definitions in HAM_SATELLITES
-              for (const [key, sat] of Object.entries(HAM_SATELLITES)) {
-                if (sat.norad === noradId) {
-                  tleData[key] = { ...sat, tle1: line1, tle2: line2 };
-                }
+              
+              // Skip if this NORAD ID already exists (prevent duplicates)
+              const alreadyExists = Object.values(tleData).some(sat => sat.norad === noradId);
+              if (alreadyExists) continue;
+              
+              // Create a sanitized key from the satellite name
+              const key = name.replace(/[^A-Z0-9\-]/g, '_').toUpperCase();
+              
+              // Check if we have metadata in HAM_SATELLITES
+              const hamSat = Object.values(HAM_SATELLITES).find(s => s.norad === noradId);
+              
+              if (hamSat) {
+                // Use defined metadata from HAM_SATELLITES
+                tleData[key] = { ...hamSat, tle1: line1, tle2: line2 };
+              } else {
+                // Include all satellites with default metadata
+                tleData[key] = {
+                  norad: noradId,
+                  name: name,
+                  color: '#cccccc',
+                  priority: group === 'amateur' ? 3 : 4,
+                  mode: 'Unknown',
+                  tle1: line1,
+                  tle2: line2
+                };
               }
             }
           }
@@ -4283,8 +4304,11 @@ app.get('/api/satellites/tle', async (req, res) => {
     }
     clearTimeout(timeout);
 
+    // Check if ISS (NORAD 25544) was already added with any key
+    const issExists = Object.values(tleData).some(sat => sat.norad === 25544);
+    
     // Fallback for ISS if it wasn't found in the groups above
-    if (!tleData['ISS']) {
+    if (!issExists) {
       try {
         const issRes = await fetch('https://celestrak.org/NORAD/elements/gp.php?CATNR=25544&FORMAT=tle');
         if (issRes.ok) {
