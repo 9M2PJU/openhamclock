@@ -14,6 +14,7 @@ import {
   ContestPanel,
   SolarPanel,
   PropagationPanel,
+  BandHealthPanel,
   DXpeditionPanel,
   PSKReporterPanel,
   WeatherPanel,
@@ -168,6 +169,7 @@ export const DockableApp = ({
     'analog-clock': { name: 'Analog Clock', icon: '🕐' },
     'solar': { name: 'Solar', icon: '☀️' },
     'propagation': { name: 'Propagation', icon: '📡' },
+    'band-health': { name: 'Band Health', icon: '📶' },
     'dx-cluster': { name: 'DX Cluster', icon: '📻' },
     'psk-reporter': { name: 'PSK Reporter', icon: '📡' },
     'dxpeditions': { name: 'DXpeditions', icon: '🏝️' },
@@ -320,6 +322,14 @@ export const DockableApp = ({
       case 'propagation':
         content = <PropagationPanel propagation={propagation.data} loading={propagation.loading} bandConditions={bandConditions} />;
         break;
+
+      case 'band-health':
+        return (
+          <BandHealthPanel
+            dxSpots={dxClusterData.spots}
+            clusterFilters={dxFilters}
+          />
+        );
 
       case 'dx-cluster':
         content = (

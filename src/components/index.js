@@ -22,3 +22,4 @@ export { DXNewsTicker } from './DXNewsTicker.jsx';
 export { WeatherPanel } from './WeatherPanel.jsx';
 export { AnalogClockPanel } from './AnalogClockPanel.jsx';
 export { default as AmbientPanel } from './AmbientPanel.jsx';
+export { default as BandHealthPanel } from './BandHealthPanel.jsx';

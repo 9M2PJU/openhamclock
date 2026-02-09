@@ -30,6 +30,7 @@ export const SettingsPanel = ({ isOpen, onClose, config, onSave, onResetLayout, 
   const [dxClusterSource, setDxClusterSource] = useState(config?.dxClusterSource || 'dxspider-proxy');
   const [customDxCluster, setCustomDxCluster] = useState(config?.customDxCluster || { enabled: false, host: '', port: 7300 });
   const [lowMemoryMode, setLowMemoryMode] = useState(config?.lowMemoryMode || false);
+  const [satelliteSearch, setSatelliteSearch] = useState('');
   const { t, i18n } = useTranslation();
 
   // Layer controls
@@ -1124,6 +1125,17 @@ export const SettingsPanel = ({ isOpen, onClose, config, onSave, onResetLayout, 
                   !satelliteSearch || 
                   sat.name.toLowerCase().includes(satelliteSearch.toLowerCase())
                 )
+                .sort((a, b) => {
+                  const aSelected = satelliteFilters.includes(a.name);
+                  const bSelected = satelliteFilters.includes(b.name);
+                  
+                  // Selected satellites come first
+                  if (aSelected && !bSelected) return -1;
+                  if (!aSelected && bSelected) return 1;
+                  
+                  // Then alphabetically by name
+                  return a.name.localeCompare(b.name);
+                })
                 .map(sat => {
                 const isSelected = satelliteFilters.includes(sat.name);
                 return (
@@ -1173,15 +1185,6 @@ export const SettingsPanel = ({ isOpen, onClose, config, onSave, onResetLayout, 
                         overflow: 'hidden',
                         textOverflow: 'ellipsis'
                       }}>{sat.name}</div>
-                      {sat.visible !== undefined && (
-                        <div style={{
-                          fontSize: '9px',
-                          color: sat.visible ? '#00ff88' : 'var(--text-muted)',
-                          marginTop: '2px'
-                        }}>
-                          {sat.visible ? t('station.settings.satellites.visible') : t('station.settings.satellites.belowHorizon')}
-                        </div>
-                      )}
                     </div>
                   </button>
                 );

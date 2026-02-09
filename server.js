@@ -4264,15 +4264,36 @@ app.get('/api/satellites/tle', async (req, res) => {
           const lines = text.trim().split('\n');
           // Parse 3 lines per satellite: Name, Line 1, Line 2
           for (let i = 0; i < lines.length - 2; i += 3) {
+            const name = lines[i]?.trim();
             const line1 = lines[i + 1]?.trim();
             const line2 = lines[i + 2]?.trim();
-            if (line1 && line1.startsWith('1 ')) {
+            if (name && line1 && line1.startsWith('1 ')) {
               const noradId = parseInt(line1.substring(2, 7));
-              // Check if the NORAD ID matches your definitions in HAM_SATELLITES
-              for (const [key, sat] of Object.entries(HAM_SATELLITES)) {
-                if (sat.norad === noradId) {
-                  tleData[key] = { ...sat, tle1: line1, tle2: line2 };
-                }
+              
+              // Skip if this NORAD ID already exists (prevent duplicates)
+              const alreadyExists = Object.values(tleData).some(sat => sat.norad === noradId);
+              if (alreadyExists) continue;
+              
+              // Create a sanitized key from the satellite name
+              const key = name.replace(/[^A-Z0-9\-]/g, '_').toUpperCase();
+              
+              // Check if we have metadata in HAM_SATELLITES
+              const hamSat = Object.values(HAM_SATELLITES).find(s => s.norad === noradId);
+              
+              if (hamSat) {
+                // Use defined metadata from HAM_SATELLITES
+                tleData[key] = { ...hamSat, tle1: line1, tle2: line2 };
+              } else {
+                // Include all satellites with default metadata
+                tleData[key] = {
+                  norad: noradId,
+                  name: name,
+                  color: '#cccccc',
+                  priority: group === 'amateur' ? 3 : 4,
+                  mode: 'Unknown',
+                  tle1: line1,
+                  tle2: line2
+                };
               }
             }
           }
@@ -4283,8 +4304,11 @@ app.get('/api/satellites/tle', async (req, res) => {
     }
     clearTimeout(timeout);
 
+    // Check if ISS (NORAD 25544) was already added with any key
+    const issExists = Object.values(tleData).some(sat => sat.norad === 25544);
+    
     // Fallback for ISS if it wasn't found in the groups above
-    if (!tleData['ISS']) {
+    if (!issExists) {
       try {
         const issRes = await fetch('https://celestrak.org/NORAD/elements/gp.php?CATNR=25544&FORMAT=tle');
         if (issRes.ok) {
@@ -4923,6 +4947,99 @@ app.get('/api/propagation', async (req, res) => {
 });
 
 // Legacy endpoint removed - merged into /api/propagation above
+
+// ===== PROPAGATION HEATMAP =====
+// Computes reliability grid from DE location to world grid for a selected band
+// Used by VOACAP Heatmap map layer plugin
+const PROP_HEATMAP_CACHE = {};
+const PROP_HEATMAP_TTL = 5 * 60 * 1000; // 5 minutes
+
+app.get('/api/propagation/heatmap', async (req, res) => {
+  const deLat = parseFloat(req.query.deLat) || 0;
+  const deLon = parseFloat(req.query.deLon) || 0;
+  const freq = parseFloat(req.query.freq) || 14; // MHz, default 20m
+  const gridSize = Math.max(5, Math.min(20, parseInt(req.query.grid) || 10)); // 5-20° grid
+  
+  const cacheKey = `${deLat.toFixed(0)}:${deLon.toFixed(0)}:${freq}:${gridSize}`;
+  const now = Date.now();
+  
+  if (PROP_HEATMAP_CACHE[cacheKey] && (now - PROP_HEATMAP_CACHE[cacheKey].ts) < PROP_HEATMAP_TTL) {
+    return res.json(PROP_HEATMAP_CACHE[cacheKey].data);
+  }
+  
+  try {
+    // Fetch current solar conditions (same as main propagation endpoint)
+    let sfi = 150, ssn = 100, kIndex = 2;
+    try {
+      const [fluxRes, kRes] = await Promise.allSettled([
+        fetch('https://services.swpc.noaa.gov/json/f107_cm_flux.json'),
+        fetch('https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json')
+      ]);
+      if (fluxRes.status === 'fulfilled' && fluxRes.value.ok) {
+        const data = await fluxRes.value.json();
+        if (data?.length) sfi = Math.round(data[data.length - 1].flux || 150);
+      }
+      if (kRes.status === 'fulfilled' && kRes.value.ok) {
+        const data = await kRes.value.json();
+        if (data?.length > 1) kIndex = parseInt(data[data.length - 1][1]) || 2;
+      }
+      ssn = Math.max(0, Math.round((sfi - 67) / 0.97));
+    } catch (e) {
+      logDebug('[PropHeatmap] Using default solar values');
+    }
+    
+    const currentHour = new Date().getUTCHours();
+    const de = { lat: deLat, lon: deLon };
+    const halfGrid = gridSize / 2;
+    const cells = [];
+    
+    // Compute reliability grid
+    for (let lat = -85 + halfGrid; lat <= 85 - halfGrid; lat += gridSize) {
+      for (let lon = -180 + halfGrid; lon <= 180 - halfGrid; lon += gridSize) {
+        const dx = { lat, lon };
+        const distance = haversineDistance(de.lat, de.lon, lat, lon);
+        
+        // Skip very short distances (< 200km) - not meaningful for HF skip
+        if (distance < 200) continue;
+        
+        const midLat = (de.lat + lat) / 2;
+        let midLon = (de.lon + lon) / 2;
+        if (Math.abs(de.lon - lon) > 180) {
+          midLon = (de.lon + lon + 360) / 2;
+          if (midLon > 180) midLon -= 360;
+        }
+        
+        const reliability = calculateEnhancedReliability(
+          freq, distance, midLat, midLon, currentHour,
+          sfi, ssn, kIndex, de, dx, null, currentHour
+        );
+        
+        cells.push({
+          lat,
+          lon,
+          r: Math.round(reliability) // reliability 0-99
+        });
+      }
+    }
+    
+    const result = {
+      deLat, deLon, freq, gridSize,
+      solarData: { sfi, ssn, kIndex },
+      hour: currentHour,
+      cells,
+      timestamp: new Date().toISOString()
+    };
+    
+    PROP_HEATMAP_CACHE[cacheKey] = { data: result, ts: now };
+    
+    logDebug(`[PropHeatmap] Computed ${cells.length} cells for ${freq} MHz from ${deLat.toFixed(1)},${deLon.toFixed(1)}`);
+    res.json(result);
+    
+  } catch (error) {
+    logErrorOnce('PropHeatmap', error.message);
+    res.status(500).json({ error: 'Failed to compute propagation heatmap' });
+  }
+});
 
 // Calculate MUF using real ionosonde data or model
 function calculateMUF(distance, midLat, midLon, hour, sfi, ssn, ionoData) {

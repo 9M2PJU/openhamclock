@@ -11,6 +11,7 @@ import {
   getGreatCirclePoints 
 } from '../utils/geo.js';
 import { getBandColor } from '../utils/callsign.js';
+import { createTerminator } from '../utils/terminator.js';
 
 import { getAllLayers } from '../plugins/layerRegistry.js';
 import useLocalInstall from '../hooks/app/useLocalInstall.js';
@@ -153,8 +154,8 @@ export const WorldMap = ({
       crossOrigin: 'anonymous'
     }).addTo(map);
 
-    // Day/night terminator
-    terminatorRef.current = L.terminator({
+    // Day/night terminator (custom implementation spans multiple world copies)
+    terminatorRef.current = createTerminator({
       resolution: 2,
       fillOpacity: 0.35,
       fillColor: '#000020',

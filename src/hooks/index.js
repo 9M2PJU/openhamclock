@@ -19,3 +19,4 @@ export { useSolarIndices } from './useSolarIndices.js';
 export { usePSKReporter } from './usePSKReporter.js';
 export { useWSJTX } from './useWSJTX.js';
 export { useAmbientWeather } from './useAmbientWeather.js';
+export { useBandHealth } from './useBandHealth.js';
