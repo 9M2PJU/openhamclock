@@ -6,10 +6,10 @@ export default function useMapLayers() {
   const [mapLayers, setMapLayers] = useState(() => {
     try {
       const stored = localStorage.getItem('openhamclock_mapLayers');
-      const defaults = { showDXPaths: true, showDXLabels: true, showPOTA: true, showSatellites: false, showPSKReporter: true, showWSJTX: true };
+      const defaults = { showDXPaths: true, showDXLabels: true, showPOTA: true, showSatellites: false, showPSKReporter: true, showWSJTX: true, showDXNews: true };
       return stored ? { ...defaults, ...JSON.parse(stored) } : defaults;
     } catch (e) {
-      return { showDXPaths: true, showDXLabels: true, showPOTA: true, showSatellites: false, showPSKReporter: true, showWSJTX: true };
+      return { showDXPaths: true, showDXLabels: true, showPOTA: true, showSatellites: false, showPSKReporter: true, showWSJTX: true, showDXNews: true };
     }
   });
 
@@ -25,6 +25,7 @@ export default function useMapLayers() {
   const toggleSatellites = useCallback(() => setMapLayers(prev => ({ ...prev, showSatellites: !prev.showSatellites })), []);
   const togglePSKReporter = useCallback(() => setMapLayers(prev => ({ ...prev, showPSKReporter: !prev.showPSKReporter })), []);
   const toggleWSJTX = useCallback(() => setMapLayers(prev => ({ ...prev, showWSJTX: !prev.showWSJTX })), []);
+  const toggleDXNews = useCallback(() => setMapLayers(prev => ({ ...prev, showDXNews: !prev.showDXNews })), []);
 
   return {
     mapLayers,
@@ -34,6 +35,7 @@ export default function useMapLayers() {
     togglePOTA,
     toggleSatellites,
     togglePSKReporter,
-    toggleWSJTX
+    toggleWSJTX,
+    toggleDXNews
   };
 }

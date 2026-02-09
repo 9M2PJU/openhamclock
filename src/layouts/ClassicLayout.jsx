@@ -243,6 +243,12 @@ export default function ClassicLayout(props) {
                 }}
                 onMouseEnter={() => setHoveredSpot(spot)}
                 onMouseLeave={() => setHoveredSpot(null)}
+                onClick={() => {
+                  const path = (dxClusterData.paths || []).find(p => p.dxCall === spot.call);
+                  if (path && path.dxLat != null && path.dxLon != null) {
+                    handleDXChange({ lat: path.dxLat, lon: path.dxLon });
+                  }
+                }}
               >
                 <span style={{ color: '#ffff00' }}>{parseFloat(spot.freq).toFixed(1)}</span>
                 <span style={{ color: '#00ffff' }}>{spot.call}</span>
@@ -273,7 +279,7 @@ export default function ClassicLayout(props) {
             showPSKReporter={mapLayers.showPSKReporter}
             wsjtxSpots={wsjtxMapSpots}
             showWSJTX={mapLayers.showWSJTX}
-            showDxNews={config.showDxNews}
+            showDXNews={mapLayers.showDXNews}
             onToggleSatellites={toggleSatellites}
             hoveredSpot={hoveredSpot}
             callsign={config.callsign}
@@ -509,10 +515,11 @@ export default function ClassicLayout(props) {
             showPSKReporter={mapLayers.showPSKReporter}
             wsjtxSpots={wsjtxMapSpots}
             showWSJTX={mapLayers.showWSJTX}
-            showDxNews={config.showDxNews}
+            showDXNews={mapLayers.showDXNews}
             onToggleSatellites={toggleSatellites}
             hoveredSpot={hoveredSpot}
             hideOverlays={true}
+            callsign={config.callsign}
             lowMemoryMode={config.lowMemoryMode}
           />
           {/* DX Lock button overlay */}
@@ -641,6 +648,12 @@ export default function ClassicLayout(props) {
                   }}
                   onMouseEnter={() => setHoveredSpot(spot)}
                   onMouseLeave={() => setHoveredSpot(null)}
+                  onClick={() => {
+                    const path = (dxClusterData.paths || []).find(p => p.dxCall === spot.call);
+                    if (path && path.dxLat != null && path.dxLon != null) {
+                      handleDXChange({ lat: path.dxLat, lon: path.dxLon });
+                    }
+                  }}
                 >
                   <span style={{ color: getBandColor(spot.freq), fontWeight: '700' }}>{parseFloat(spot.freq).toFixed(1)}</span>
                   <span style={{ color: 'var(--accent-cyan)', fontWeight: '600', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{spot.call}</span>
@@ -651,17 +664,17 @@ export default function ClassicLayout(props) {
           </div>
 
           {/* DX News - sidebar footer */}
-          {config.showDxNews && (
-            <div style={{
-              flexShrink: 0,
-              borderTop: '1px solid var(--border-color)',
-              background: 'var(--bg-panel)',
-              height: '28px',
-              position: 'relative',
-              overflow: 'hidden'
-            }}>
-              <DXNewsTicker sidebar={true} />
-            </div>
+          {mapLayers.showDXNews && (
+          <div style={{
+            flexShrink: 0,
+            borderTop: '1px solid var(--border-color)',
+            background: 'var(--bg-panel)',
+            height: '28px',
+            position: 'relative',
+            overflow: 'hidden'
+          }}>
+            <DXNewsTicker sidebar={true} />
+          </div>
           )}
         </div>
       </div>
@@ -875,10 +888,11 @@ export default function ClassicLayout(props) {
             showPSKReporter={mapLayers.showPSKReporter}
             wsjtxSpots={wsjtxMapSpots}
             showWSJTX={mapLayers.showWSJTX}
-            showDxNews={config.showDxNews}
+            showDXNews={mapLayers.showDXNews}
             onToggleSatellites={toggleSatellites}
             hoveredSpot={hoveredSpot}
             hideOverlays={true}
+            callsign={config.callsign}
             lowMemoryMode={config.lowMemoryMode}
           />
           <div style={{
@@ -978,6 +992,12 @@ export default function ClassicLayout(props) {
                 }}
                 onMouseEnter={() => setHoveredSpot(spot)}
                 onMouseLeave={() => setHoveredSpot(null)}
+                onClick={() => {
+                  const path = (dxClusterData.paths || []).find(p => p.dxCall === spot.call);
+                  if (path && path.dxLat != null && path.dxLon != null) {
+                    handleDXChange({ lat: path.dxLat, lon: path.dxLon });
+                  }
+                }}
               >
                 <span style={{ color: getBandColor(spot.freq), fontWeight: '700' }}>{parseFloat(spot.freq).toFixed(1)}</span>
                 <span style={{ color: 'var(--accent-cyan)', fontWeight: '600', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{spot.call}</span>
@@ -987,17 +1007,17 @@ export default function ClassicLayout(props) {
           </div>
 
           {/* DX News - sidebar footer */}
-          {config.showDxNews && (
-            <div style={{
-              flexShrink: 0,
-              borderTop: '1px solid var(--border-color)',
-              background: 'var(--bg-panel)',
-              height: '28px',
-              position: 'relative',
-              overflow: 'hidden'
-            }}>
-              <DXNewsTicker sidebar={true} />
-            </div>
+          {mapLayers.showDXNews && (
+          <div style={{
+            flexShrink: 0,
+            borderTop: '1px solid var(--border-color)',
+            background: 'var(--bg-panel)',
+            height: '28px',
+            position: 'relative',
+            overflow: 'hidden'
+          }}>
+            <DXNewsTicker sidebar={true} />
+          </div>
           )}
         </div>
       </div>

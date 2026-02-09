@@ -18,7 +18,7 @@ import {
   importProfile
 } from '../utils/profiles.js';
 
-export const SettingsPanel = ({ isOpen, onClose, config, onSave, onResetLayout, satellites, satelliteFilters, onSatelliteFiltersChange }) => {
+export const SettingsPanel = ({ isOpen, onClose, config, onSave, onResetLayout, satellites, satelliteFilters, onSatelliteFiltersChange, mapLayers, onToggleDXNews }) => {
   const [callsign, setCallsign] = useState(config?.callsign || '');
   const [headerSize, setheaderSize] = useState(config?.headerSize || 1.0);
   const [gridSquare, setGridSquare] = useState('');
@@ -31,6 +31,7 @@ export const SettingsPanel = ({ isOpen, onClose, config, onSave, onResetLayout, 
   const [customDxCluster, setCustomDxCluster] = useState(config?.customDxCluster || { enabled: false, host: '', port: 7300 });
   const [lowMemoryMode, setLowMemoryMode] = useState(config?.lowMemoryMode || false);
   const [showDxNews, setShowDxNews] = useState(config?.showDxNews ?? true);
+  const [satelliteSearch, setSatelliteSearch] = useState('');
   const { t, i18n } = useTranslation();
 
   // Layer controls
@@ -922,6 +923,52 @@ export const SettingsPanel = ({ isOpen, onClose, config, onSave, onResetLayout, 
         {/* Map Layers Tab */}
         {activeTab === 'layers' && (
           <div>
+            {/* Map Overlays section */}
+            <div style={{
+              background: 'var(--bg-tertiary)',
+              border: '1px solid var(--border-color)',
+              borderRadius: '8px',
+              padding: '14px',
+              marginBottom: '16px'
+            }}>
+              <div style={{
+                fontSize: '11px',
+                textTransform: 'uppercase',
+                letterSpacing: '0.5px',
+                color: 'var(--text-muted)',
+                marginBottom: '10px'
+              }}>
+                Map Overlays
+              </div>
+              <label style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px',
+                cursor: 'pointer'
+              }}>
+                <input
+                  type="checkbox"
+                  checked={mapLayers?.showDXNews !== false}
+                  onChange={() => onToggleDXNews?.()}
+                  style={{ width: '18px', height: '18px', cursor: 'pointer' }}
+                />
+                <span style={{ fontSize: '18px' }}>📰</span>
+                <div>
+                  <div style={{
+                    color: mapLayers?.showDXNews !== false ? 'var(--accent-amber)' : 'var(--text-primary)',
+                    fontSize: '14px',
+                    fontWeight: '600',
+                    fontFamily: 'JetBrains Mono, monospace'
+                  }}>
+                    DX News Ticker
+                  </div>
+                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>
+                    Scrolling DX news headlines on the map
+                  </div>
+                </div>
+              </label>
+            </div>
+
             {layers.length > 0 ? (
               layers.map(layer => (
                 <div key={layer.id} style={{
@@ -1073,6 +1120,47 @@ export const SettingsPanel = ({ isOpen, onClose, config, onSave, onResetLayout, 
                 : t('station.settings.satellites.selectedCount', { count: satelliteFilters.length })}
             </div>
             
+            {/* Search Box */}
+            <div style={{
+              position: 'relative',
+              marginBottom: '12px'
+            }}>
+              <input
+                type="text"
+                value={satelliteSearch}
+                onChange={(e) => setSatelliteSearch(e.target.value)}
+                placeholder="🔍 Search satellites..."
+                style={{
+                  width: '100%',
+                  padding: '8px 32px 8px 12px',
+                  background: 'var(--bg-tertiary)',
+                  border: '1px solid var(--border-color)',
+                  borderRadius: '6px',
+                  color: 'var(--text-primary)',
+                  fontFamily: 'JetBrains Mono',
+                  fontSize: '12px',
+                  outline: 'none'
+                }}
+              />
+              {satelliteSearch && (
+                <button
+                  onClick={() => setSatelliteSearch('')}
+                  style={{
+                    position: 'absolute',
+                    right: '8px',
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    background: 'transparent',
+                    border: 'none',
+                    color: '#ff6666',
+                    cursor: 'pointer',
+                    fontSize: '16px',
+                    padding: '4px 8px'
+                  }}
+                >×</button>
+              )}
+            </div>
+            
             <div style={{
               display: 'grid',
               gridTemplateColumns: 'repeat(2, 1fr)',
@@ -1080,7 +1168,12 @@ export const SettingsPanel = ({ isOpen, onClose, config, onSave, onResetLayout, 
               maxHeight: '400px',
               overflowY: 'auto'
             }}>
-              {(satellites || []).map(sat => {
+              {(satellites || [])
+                .filter(sat => 
+                  !satelliteSearch || 
+                  sat.name.toLowerCase().includes(satelliteSearch.toLowerCase())
+                )
+                .map(sat => {
                 const isSelected = satelliteFilters.includes(sat.name);
                 return (
                   <button

@@ -82,13 +82,13 @@ const App = () => {
     try {
       const res = await fetch('/api/update', { method: 'POST' });
       let payload = {};
-      try { payload = await res.json(); } catch { }
+      try { payload = await res.json(); } catch { /* ignore */ }
       if (!res.ok) {
         throw new Error(payload.error || t('app.update.failedToStart'));
       }
       alert(t('app.update.started'));
       setTimeout(() => {
-        try { window.location.reload(); } catch { }
+        try { window.location.reload(); } catch { /* ignore */ }
       }, 15000);
     } catch (err) {
       setUpdateInProgress(false);
@@ -111,7 +111,8 @@ const App = () => {
     togglePOTA,
     toggleSatellites,
     togglePSKReporter,
-    toggleWSJTX
+    toggleWSJTX,
+    toggleDXNews
   } = useMapLayers();
 
   const {
@@ -191,7 +192,7 @@ const App = () => {
   // Map hover
   const [hoveredSpot, setHoveredSpot] = useState(null);
 
-  // Sidebar visibility & layout
+  // Sidebar visibility & layout (used by some layouts)
   const leftSidebarVisible = config.panels?.deLocation?.visible !== false ||
     config.panels?.dxLocation?.visible !== false ||
     config.panels?.solar?.visible !== false ||
@@ -268,6 +269,7 @@ const App = () => {
     toggleSatellites,
     togglePSKReporter,
     toggleWSJTX,
+    toggleDXNews,
     hoveredSpot,
     setHoveredSpot,
     filteredSatellites,
@@ -310,6 +312,8 @@ const App = () => {
         satellites={satellites.data}
         satelliteFilters={satelliteFilters}
         onSatelliteFiltersChange={setSatelliteFilters}
+        mapLayers={mapLayers}
+        onToggleDXNews={toggleDXNews}
       />
       <DXFilterManager
         filters={dxFilters}

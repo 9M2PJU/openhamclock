@@ -7,7 +7,7 @@
  * the API in the new unit, Math.round'd, then back-converted in the header,
  * causing ±1° drift each toggle).
  */
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 
 // Weather code to description and icon mapping
 const WEATHER_CODES = {
@@ -71,6 +71,7 @@ const kmToMi = (km) => km * 0.621371;
 export const useWeather = (location, tempUnit = 'F') => {
   const [rawData, setRawData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const debounceRef = useRef(null);
 
   // Fetch always in metric — only depends on location, NOT tempUnit
   useEffect(() => {
@@ -82,22 +83,13 @@ export const useWeather = (location, tempUnit = 'F') => {
         const lat = normalizeLat(location.lat);
         const lon = normalizeLon(location.lon);
         
-        const params = [
-          `latitude=${lat}`,
-          `longitude=${lon}`,
-          'current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,cloud_cover,pressure_msl,wind_speed_10m,wind_direction_10m,wind_gusts_10m,precipitation,uv_index,visibility,dew_point_2m,is_day',
-          'daily=temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max,weather_code,sunrise,sunset,uv_index_max,wind_speed_10m_max',
-          'hourly=temperature_2m,precipitation_probability,weather_code',
-          'temperature_unit=celsius',
-          'wind_speed_unit=kmh',
-          'precipitation_unit=mm',
-          'timezone=auto',
-          'forecast_days=3',
-          'forecast_hours=24',
-        ].join('&');
-        
-        const url = `https://api.open-meteo.com/v1/forecast?${params}`;
+        // Use server proxy to avoid client-side rate limiting
+        const url = `/api/weather?lat=${lat}&lon=${lon}`;
         const response = await fetch(url);
+        if (response.status === 429) {
+          console.warn('Weather: rate limited, will retry later');
+          return; // Keep existing data, don't clear
+        }
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const result = await response.json();
         
@@ -110,9 +102,18 @@ export const useWeather = (location, tempUnit = 'F') => {
       }
     };
 
-    fetchWeather();
+    // Debounce: wait 2 seconds after last location change before fetching
+    // Prevents rapid-fire API calls when clicking through DX spots
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      fetchWeather();
+    }, 2000);
+
     const interval = setInterval(fetchWeather, 15 * 60 * 1000); // 15 minutes
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
   }, [location?.lat, location?.lon]); // Note: no tempUnit dependency
 
   // Convert raw API data to display data based on current tempUnit

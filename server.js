@@ -215,18 +215,20 @@ if (configMissing) {
   console.log('[Config] Settings popup will appear in browser');
 }
 
-// ITURHFProp service URL (optional - enables hybrid mode)
-// Must be a full URL like https://iturhfprop.example.com
+// ITURHFProp service URL (enables ITU-R P.533-14 propagation predictions)
+// Defaults to the public OpenHamClock prediction service; override in .env if self-hosting
+const ITURHFPROP_DEFAULT = 'https://proppy-production.up.railway.app';
 const ITURHFPROP_URL = process.env.ITURHFPROP_URL && process.env.ITURHFPROP_URL.trim().startsWith('http') 
   ? process.env.ITURHFPROP_URL.trim() 
-  : null;
+  : ITURHFPROP_DEFAULT;
 
 // Log configuration
 console.log(`[Config] Station: ${CONFIG.callsign} @ ${CONFIG.gridSquare || 'No grid'}`);
 console.log(`[Config] Location: ${CONFIG.latitude.toFixed(4)}, ${CONFIG.longitude.toFixed(4)}`);
 console.log(`[Config] Units: ${CONFIG.units}, Time: ${CONFIG.timeFormat}h`);
 if (ITURHFPROP_URL) {
-  console.log(`[Propagation] Hybrid mode enabled - ITURHFProp service: ${ITURHFPROP_URL}`);
+  const isDefault = ITURHFPROP_URL === ITURHFPROP_DEFAULT;
+  console.log(`[Propagation] ITU-R P.533-14 enabled via ${isDefault ? 'public service' : 'custom service'}: ${ITURHFPROP_URL}`);
 } else {
   console.log('[Propagation] Standalone mode - using built-in calculations');
 }
@@ -878,6 +880,13 @@ async function hasGitUpdates() {
   return { updateAvailable: local !== remote, local, remote };
 }
 
+// Prevent chmod changes from showing as dirty (common on Pi, Mac, Windows/WSL)
+if (fs.existsSync(path.join(__dirname, '.git'))) {
+  try {
+    execFile('git', ['config', 'core.fileMode', 'false'], { cwd: __dirname }, () => {});
+  } catch {}
+}
+
 async function hasDirtyWorkingTree() {
   const status = await execFilePromise('git', ['status', '--porcelain'], { cwd: __dirname });
   return status.stdout.trim().length > 0;
@@ -917,10 +926,16 @@ async function autoUpdateTick(trigger = 'interval', force = false) {
       return;
     }
 
+    // Stash any local changes (permission changes, config edits, etc.) before pulling
     if (await hasDirtyWorkingTree()) {
-      autoUpdateState.lastResult = 'dirty';
-      logWarn('[Auto Update] Skipped - local changes detected');
-      return;
+      logInfo('[Auto Update] Stashing local changes before update');
+      try {
+        await execFilePromise('git', ['stash', '--include-untracked'], { cwd: __dirname });
+      } catch (stashErr) {
+        // If stash fails, try a hard reset of tracked files only
+        logWarn('[Auto Update] Stash failed, resetting tracked files');
+        await execFilePromise('git', ['checkout', '.'], { cwd: __dirname });
+      }
     }
 
     const { updateAvailable } = await hasGitUpdates();
@@ -6154,6 +6169,102 @@ app.get('/api/config', (req, res) => {
 });
 
 // ============================================
+// WEATHER PROXY (Open-Meteo)
+// ============================================
+// Proxies weather requests through the server to prevent client-side rate limiting.
+// Coordinates are rounded to 1 decimal place (~11km grid) to maximize cache hits.
+const weatherCache = new Map(); // key: "lat,lon" → { data, timestamp }
+const WEATHER_CACHE_TTL = 15 * 60 * 1000; // 15 minutes
+const WEATHER_STALE_TTL = 60 * 60 * 1000; // Serve stale data up to 1 hour if upstream is down
+let weatherRateLimited = false;
+let weatherRateLimitedUntil = 0;
+
+app.get('/api/weather', async (req, res) => {
+  const lat = parseFloat(req.query.lat);
+  const lon = parseFloat(req.query.lon);
+  
+  if (isNaN(lat) || isNaN(lon)) {
+    return res.status(400).json({ error: 'lat and lon required' });
+  }
+  
+  // Round to 1 decimal place to bucket nearby locations
+  const roundedLat = Math.round(lat * 10) / 10;
+  const roundedLon = Math.round(lon * 10) / 10;
+  const cacheKey = `${roundedLat},${roundedLon}`;
+  
+  // Check cache
+  const cached = weatherCache.get(cacheKey);
+  const now = Date.now();
+  
+  if (cached && (now - cached.timestamp) < WEATHER_CACHE_TTL) {
+    return res.json(cached.data);
+  }
+  
+  // If we're rate-limited, serve stale cache or return error
+  if (weatherRateLimited && now < weatherRateLimitedUntil) {
+    if (cached && (now - cached.timestamp) < WEATHER_STALE_TTL) {
+      return res.json(cached.data);
+    }
+    return res.status(429).json({ error: 'Weather API rate limited, try again later' });
+  }
+  
+  try {
+    const params = [
+      `latitude=${roundedLat}`,
+      `longitude=${roundedLon}`,
+      'current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,cloud_cover,pressure_msl,wind_speed_10m,wind_direction_10m,wind_gusts_10m,precipitation,uv_index,visibility,dew_point_2m,is_day',
+      'daily=temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max,weather_code,sunrise,sunset,uv_index_max,wind_speed_10m_max',
+      'hourly=temperature_2m,precipitation_probability,weather_code',
+      'temperature_unit=celsius',
+      'wind_speed_unit=kmh',
+      'precipitation_unit=mm',
+      'timezone=auto',
+      'forecast_days=3',
+      'forecast_hours=24',
+    ].join('&');
+    
+    const url = `https://api.open-meteo.com/v1/forecast?${params}`;
+    const response = await fetch(url, { timeout: 10000 });
+    
+    if (response.status === 429) {
+      weatherRateLimited = true;
+      weatherRateLimitedUntil = now + 60 * 60 * 1000; // Back off for 1 hour
+      logErrorOnce('Weather', 'Open-Meteo rate limited (429) — backing off for 1 hour');
+      
+      if (cached && (now - cached.timestamp) < WEATHER_STALE_TTL) {
+        return res.json(cached.data);
+      }
+      return res.status(429).json({ error: 'Weather API daily limit exceeded' });
+    }
+    
+    if (!response.ok) {
+      throw new Error(`Open-Meteo returned ${response.status}`);
+    }
+    
+    const data = await response.json();
+    weatherCache.set(cacheKey, { data, timestamp: now });
+    weatherRateLimited = false;
+    
+    // Prune old cache entries periodically (keep cache under 500 entries)
+    if (weatherCache.size > 500) {
+      const cutoff = now - WEATHER_STALE_TTL;
+      for (const [key, entry] of weatherCache) {
+        if (entry.timestamp < cutoff) weatherCache.delete(key);
+      }
+    }
+    
+    res.json(data);
+  } catch (err) {
+    logErrorOnce('Weather', `Proxy error: ${err.message}`);
+    // Serve stale cache on error
+    if (cached && (now - cached.timestamp) < WEATHER_STALE_TTL) {
+      return res.json(cached.data);
+    }
+    res.status(502).json({ error: 'Weather service unavailable' });
+  }
+});
+
+// ============================================
 // MANUAL UPDATE ENDPOINT
 // ============================================
 app.post('/api/update', async (req, res) => {
@@ -6166,9 +6277,6 @@ app.post('/api/update', async (req, res) => {
       return res.status(503).json({ error: 'Not a git repository' });
     }
     await execFilePromise('git', ['--version']);
-    if (await hasDirtyWorkingTree()) {
-      return res.status(409).json({ error: 'Local changes detected' });
-    }
   } catch (err) {
     return res.status(500).json({ error: 'Update preflight failed' });
   }

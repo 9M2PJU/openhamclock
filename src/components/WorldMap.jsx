@@ -43,6 +43,7 @@ export const WorldMap = ({
   onToggleSatellites, 
   hoveredSpot,
   callsign = 'N0CALL',
+  showDXNews = true,
   hideOverlays,
   lowMemoryMode = false
 }) => {
@@ -822,6 +823,9 @@ export const WorldMap = ({
 		    enabled={pluginLayerStates[layerDef.id]?.enabled ?? layerDef.defaultEnabled}
 		    opacity={pluginLayerStates[layerDef.id]?.opacity ?? layerDef.defaultOpacity}
 		    map={mapInstanceRef.current}
+		    callsign={callsign}
+		    locator={deLocator}
+		    lowMemoryMode={lowMemoryMode}
 		  />
 		))}
       //  MODIS SLIDER CODE HERE 
@@ -928,7 +932,7 @@ export const WorldMap = ({
       )}
       
       {/* DX News Ticker - left side of bottom bar */}
-      {!hideOverlays && showDxNews && <DXNewsTicker />}
+      {!hideOverlays && showDXNews && <DXNewsTicker />}
 
       {/* Legend - centered above news ticker */}
       {!hideOverlays && (
