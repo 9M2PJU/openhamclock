@@ -25,6 +25,7 @@ const net = require('net');
 const dgram = require('dgram');
 const fs = require('fs');
 const { execFile, spawn } = require('child_process');
+const mqttLib = require('mqtt');
 
 // Read version from package.json as single source of truth
 const APP_VERSION = (() => {
@@ -3551,21 +3552,22 @@ function getBandFromHz(freqHz) {
   return 'Unknown';
 }
 
-// PSKReporter endpoint - returns MQTT connection info for frontend
-// The frontend connects directly to MQTT via WebSocket for real-time updates
+// PSKReporter endpoint - returns connection info for frontend
+// The server now proxies MQTT and exposes it via SSE
 app.get('/api/pskreporter/config', (req, res) => {
   res.json({
-    mqtt: {
-      host: 'mqtt.pskreporter.info',
-      wsPort: 1885,      // WebSocket
-      wssPort: 1886,     // WebSocket + TLS (recommended)
-      topicPrefix: 'pskr/filter/v2'
+    stream: {
+      endpoint: '/api/pskreporter/stream/{callsign}',
+      type: 'text/event-stream',
+      batchInterval: '10s',
+      note: 'Server maintains single MQTT connection to PSKReporter, relays via SSE'
     },
-    // Topic format: pskr/filter/v2/{band}/{mode}/{sendercall}/{receivercall}/{senderlocator}/{receiverlocator}/{sendercountry}/{receivercountry}
-    // Use + for single-level wildcard, # for multi-level
-    // Example for TX (being heard): pskr/filter/v2/+/+/{CALLSIGN}/#
-    // Example for RX (hearing): Subscribe and filter client-side
-    info: 'Connect via WebSocket to mqtt.pskreporter.info:1886 (wss) for real-time spots'
+    mqtt: {
+      status: pskMqtt.connected ? 'connected' : 'disconnected',
+      activeCallsigns: pskMqtt.subscribedCalls.size,
+      sseClients: [...pskMqtt.subscribers.values()].reduce((n, s) => n + s.size, 0)
+    },
+    info: 'Connect to /api/pskreporter/stream/:callsign for real-time spots via Server-Sent Events'
   });
 });
 
@@ -3610,7 +3612,7 @@ app.get('/api/pskreporter/http/:callsign', async (req, res) => {
     
     const response = await fetch(url, {
       headers: { 
-        'User-Agent': 'OpenHamClock/15.1.2 (Amateur Radio Dashboard)',
+        'User-Agent': 'OpenHamClock/15.1.3 (Amateur Radio Dashboard)',
         'Accept': '*/*'
       },
       signal: controller.signal
@@ -3704,13 +3706,13 @@ app.get('/api/pskreporter/http/:callsign', async (req, res) => {
   }
 });
 
-// Combined endpoint that tries MQTT cache first, falls back to HTTP
+// Combined endpoint that returns HTTP-fetched data + stream info
 app.get('/api/pskreporter/:callsign', async (req, res) => {
   const callsign = req.params.callsign.toUpperCase();
   const minutes = parseInt(req.query.minutes) || 30;
   
-  // For now, redirect to HTTP endpoint since MQTT requires client-side connection
-  // The frontend should connect directly to MQTT for real-time updates
+  // For now, redirect to HTTP endpoint for historical data
+  // Live spots come via /api/pskreporter/stream/:callsign (SSE)
   try {
     const [txRes, rxRes] = await Promise.allSettled([
       fetch(`http://localhost:${PORT}/api/pskreporter/http/${callsign}?minutes=${minutes}&direction=tx`),
@@ -3732,10 +3734,10 @@ app.get('/api/pskreporter/:callsign', async (req, res) => {
       tx: txData,
       rx: rxData,
       timestamp: new Date().toISOString(),
-      mqtt: {
-        available: true,
-        host: 'wss://mqtt.pskreporter.info:1886',
-        hint: 'Connect via WebSocket for real-time updates'
+      stream: {
+        endpoint: `/api/pskreporter/stream/${callsign}`,
+        type: 'text/event-stream',
+        hint: 'Connect to SSE stream for real-time spots'
       }
     });
     
@@ -3748,6 +3750,308 @@ app.get('/api/pskreporter/:callsign', async (req, res) => {
       error: error.message 
     });
   }
+});
+
+// ============================================
+// PSKREPORTER SERVER-SIDE MQTT PROXY
+// ============================================
+// Single MQTT connection to mqtt.pskreporter.info, shared across all users.
+// Dynamically subscribes per-callsign topics based on active SSE clients.
+// Buffers incoming spots and pushes to clients every 10 seconds.
+
+const pskMqtt = {
+  client: null,
+  connected: false,
+  // Map<callsign, Set<response>> — active SSE clients per callsign
+  subscribers: new Map(),
+  // Map<callsign, Array<spot>> — buffered spots waiting for next flush
+  spotBuffer: new Map(),
+  // Map<callsign, Array<spot>> — recent spots (last 60 min) for late-joiners
+  recentSpots: new Map(),
+  // Track subscribed topics to avoid double-subscribe
+  subscribedCalls: new Set(),
+  reconnectAttempts: 0,
+  maxReconnectDelay: 120000, // 2 min max
+  flushInterval: null,
+  cleanupInterval: null,
+  stats: { spotsReceived: 0, spotsRelayed: 0, messagesDropped: 0, lastSpotTime: null }
+};
+
+function pskMqttConnect() {
+  if (pskMqtt.client) {
+    try { pskMqtt.client.end(true); } catch {}
+  }
+
+  const clientId = `ohc_svr_${Math.random().toString(16).substr(2, 8)}`;
+  console.log(`[PSK-MQTT] Connecting to mqtt.pskreporter.info as ${clientId}...`);
+
+  const client = mqttLib.connect('wss://mqtt.pskreporter.info:1886/mqtt', {
+    clientId,
+    clean: true,
+    connectTimeout: 30000,
+    reconnectPeriod: 0,  // We handle reconnect ourselves with backoff
+    keepalive: 60,
+    protocolVersion: 4
+  });
+
+  pskMqtt.client = client;
+
+  client.on('connect', () => {
+    console.log(`[PSK-MQTT] Connected! Re-subscribing ${pskMqtt.subscribedCalls.size} callsigns...`);
+    pskMqtt.connected = true;
+    pskMqtt.reconnectAttempts = 0;
+
+    // Re-subscribe all active callsigns after reconnect
+    for (const call of pskMqtt.subscribedCalls) {
+      subscribeCallsign(call);
+    }
+  });
+
+  client.on('message', (topic, message) => {
+    try {
+      const data = JSON.parse(message.toString());
+      const { sc, rc, sl, rl, f, md, rp, t, b } = data;
+      if (!sc || !rc) return;
+
+      const freq = parseInt(f) || 0;
+      const now = Date.now();
+      const spot = {
+        sender: sc,
+        senderGrid: sl,
+        receiver: rc,
+        receiverGrid: rl,
+        freq,
+        freqMHz: freq ? (freq / 1000000).toFixed(3) : '?',
+        band: b || getBandFromHz(freq),
+        mode: md || 'Unknown',
+        snr: rp !== undefined ? parseInt(rp) : null,
+        timestamp: t ? t * 1000 : now,
+        age: 0
+      };
+
+      // Add lat/lon based on grid for both directions
+      const senderLoc = gridToLatLonSimple(sl);
+      const receiverLoc = gridToLatLonSimple(rl);
+
+      pskMqtt.stats.spotsReceived++;
+      pskMqtt.stats.lastSpotTime = now;
+
+      // Buffer for TX subscribers (sc is the callsign being tracked)
+      const scUpper = sc.toUpperCase();
+      if (pskMqtt.subscribers.has(scUpper)) {
+        const txSpot = { ...spot, lat: receiverLoc?.lat, lon: receiverLoc?.lon, direction: 'tx' };
+        if (!pskMqtt.spotBuffer.has(scUpper)) pskMqtt.spotBuffer.set(scUpper, []);
+        pskMqtt.spotBuffer.get(scUpper).push(txSpot);
+        // Also add to recent spots
+        if (!pskMqtt.recentSpots.has(scUpper)) pskMqtt.recentSpots.set(scUpper, []);
+        pskMqtt.recentSpots.get(scUpper).push(txSpot);
+      }
+
+      // Buffer for RX subscribers (rc is the callsign being tracked)
+      const rcUpper = rc.toUpperCase();
+      if (pskMqtt.subscribers.has(rcUpper)) {
+        const rxSpot = { ...spot, lat: senderLoc?.lat, lon: senderLoc?.lon, direction: 'rx' };
+        if (!pskMqtt.spotBuffer.has(rcUpper)) pskMqtt.spotBuffer.set(rcUpper, []);
+        pskMqtt.spotBuffer.get(rcUpper).push(rxSpot);
+        if (!pskMqtt.recentSpots.has(rcUpper)) pskMqtt.recentSpots.set(rcUpper, []);
+        pskMqtt.recentSpots.get(rcUpper).push(rxSpot);
+      }
+    } catch {
+      pskMqtt.stats.messagesDropped++;
+    }
+  });
+
+  client.on('error', (err) => {
+    console.error(`[PSK-MQTT] Error: ${err.message}`);
+  });
+
+  client.on('close', () => {
+    pskMqtt.connected = false;
+    console.log('[PSK-MQTT] Disconnected');
+    scheduleMqttReconnect();
+  });
+
+  client.on('offline', () => {
+    pskMqtt.connected = false;
+  });
+}
+
+function scheduleMqttReconnect() {
+  pskMqtt.reconnectAttempts++;
+  const delay = Math.min(
+    (Math.pow(2, pskMqtt.reconnectAttempts) * 1000) + (Math.random() * 5000),
+    pskMqtt.maxReconnectDelay
+  );
+  console.log(`[PSK-MQTT] Reconnecting in ${(delay / 1000).toFixed(1)}s (attempt ${pskMqtt.reconnectAttempts})...`);
+  setTimeout(() => {
+    if (pskMqtt.subscribers.size > 0) {
+      pskMqttConnect();
+    } else {
+      console.log('[PSK-MQTT] No active subscribers, skipping reconnect');
+    }
+  }, delay);
+}
+
+function subscribeCallsign(call) {
+  if (!pskMqtt.client || !pskMqtt.connected) return;
+  const txTopic = `pskr/filter/v2/+/+/${call}/#`;
+  const rxTopic = `pskr/filter/v2/+/+/+/${call}/#`;
+  pskMqtt.client.subscribe([txTopic, rxTopic], { qos: 0 }, (err) => {
+    if (err) {
+      console.error(`[PSK-MQTT] Subscribe error for ${call}:`, err.message);
+    } else {
+      console.log(`[PSK-MQTT] Subscribed: ${call} (TX + RX)`);
+    }
+  });
+}
+
+function unsubscribeCallsign(call) {
+  if (!pskMqtt.client || !pskMqtt.connected) return;
+  const txTopic = `pskr/filter/v2/+/+/${call}/#`;
+  const rxTopic = `pskr/filter/v2/+/+/+/${call}/#`;
+  pskMqtt.client.unsubscribe([txTopic, rxTopic], (err) => {
+    if (err) {
+      console.error(`[PSK-MQTT] Unsubscribe error for ${call}:`, err.message);
+    } else {
+      console.log(`[PSK-MQTT] Unsubscribed: ${call}`);
+    }
+  });
+}
+
+// Flush buffered spots to SSE clients every 10 seconds
+pskMqtt.flushInterval = setInterval(() => {
+  for (const [call, clients] of pskMqtt.subscribers) {
+    const buffer = pskMqtt.spotBuffer.get(call);
+    if (!buffer || buffer.length === 0) continue;
+
+    // Send buffered spots as SSE event
+    const payload = JSON.stringify(buffer);
+    const message = `data: ${payload}\n\n`;
+
+    for (const res of clients) {
+      try {
+        res.write(message);
+        pskMqtt.stats.spotsRelayed += buffer.length;
+      } catch {
+        // Client disconnected — will be cleaned up
+        clients.delete(res);
+      }
+    }
+
+    // Clear the buffer after flushing
+    pskMqtt.spotBuffer.set(call, []);
+  }
+}, 10000); // 10-second batch interval
+
+// Clean old recent spots every 5 minutes
+pskMqtt.cleanupInterval = setInterval(() => {
+  const cutoff = Date.now() - 60 * 60 * 1000; // 1 hour
+  for (const [call, spots] of pskMqtt.recentSpots) {
+    const filtered = spots.filter(s => s.timestamp > cutoff);
+    if (filtered.length === 0) {
+      pskMqtt.recentSpots.delete(call);
+    } else {
+      // Keep max 500 per callsign
+      pskMqtt.recentSpots.set(call, filtered.slice(-500));
+    }
+  }
+
+  // Also clean subscriber entries with no clients
+  for (const [call, clients] of pskMqtt.subscribers) {
+    if (clients.size === 0) {
+      pskMqtt.subscribers.delete(call);
+      pskMqtt.subscribedCalls.delete(call);
+      unsubscribeCallsign(call);
+      console.log(`[PSK-MQTT] Cleaned up empty subscriber set for ${call}`);
+    }
+  }
+}, 5 * 60 * 1000);
+
+// SSE endpoint — clients connect here for real-time spots
+app.get('/api/pskreporter/stream/:callsign', (req, res) => {
+  const callsign = req.params.callsign.toUpperCase();
+  if (!callsign || callsign === 'N0CALL') {
+    return res.status(400).json({ error: 'Valid callsign required' });
+  }
+
+  // Set up SSE
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no'
+  });
+  res.flushHeaders();
+
+  // Send initial connection event with any recent spots we already have
+  const recentSpots = pskMqtt.recentSpots.get(callsign) || [];
+  res.write(`event: connected\ndata: ${JSON.stringify({
+    callsign,
+    mqttConnected: pskMqtt.connected,
+    recentSpots: recentSpots.slice(-200),
+    subscriberCount: (pskMqtt.subscribers.get(callsign)?.size || 0) + 1
+  })}\n\n`);
+
+  // Register this client
+  if (!pskMqtt.subscribers.has(callsign)) {
+    pskMqtt.subscribers.set(callsign, new Set());
+  }
+  pskMqtt.subscribers.get(callsign).add(res);
+
+  // Subscribe on MQTT if this is a new callsign
+  if (!pskMqtt.subscribedCalls.has(callsign)) {
+    pskMqtt.subscribedCalls.add(callsign);
+    if (pskMqtt.connected) {
+      subscribeCallsign(callsign);
+    }
+    // Start MQTT connection if not already connected
+    if (!pskMqtt.client || (!pskMqtt.connected && pskMqtt.reconnectAttempts === 0)) {
+      pskMqttConnect();
+    }
+  }
+
+  console.log(`[PSK-MQTT] SSE client connected for ${callsign} (${pskMqtt.subscribers.get(callsign).size} clients, ${pskMqtt.subscribedCalls.size} callsigns total)`);
+
+  // Keepalive ping every 30 seconds
+  const keepalive = setInterval(() => {
+    try {
+      res.write(`: keepalive ${Date.now()}\n\n`);
+    } catch {
+      clearInterval(keepalive);
+    }
+  }, 30000);
+
+  // Cleanup on disconnect
+  req.on('close', () => {
+    clearInterval(keepalive);
+    const clients = pskMqtt.subscribers.get(callsign);
+    if (clients) {
+      clients.delete(res);
+      console.log(`[PSK-MQTT] SSE client disconnected for ${callsign} (${clients.size} remaining)`);
+
+      // If no more clients for this callsign, unsubscribe after a grace period
+      if (clients.size === 0) {
+        setTimeout(() => {
+          const stillEmpty = pskMqtt.subscribers.get(callsign);
+          if (stillEmpty && stillEmpty.size === 0) {
+            pskMqtt.subscribers.delete(callsign);
+            pskMqtt.subscribedCalls.delete(callsign);
+            unsubscribeCallsign(callsign);
+            console.log(`[PSK-MQTT] Unsubscribed ${callsign} (no more clients after grace period)`);
+
+            // If no subscribers at all, disconnect MQTT entirely
+            if (pskMqtt.subscribedCalls.size === 0 && pskMqtt.client) {
+              console.log('[PSK-MQTT] No more subscribers, disconnecting from broker');
+              pskMqtt.client.end(true);
+              pskMqtt.client = null;
+              pskMqtt.connected = false;
+              pskMqtt.reconnectAttempts = 0;
+            }
+          }
+        }, 30000); // 30s grace period before unsubscribing
+      }
+    }
+  });
 });
 
 // ============================================
@@ -4237,7 +4541,7 @@ app.get('/api/wspr/heatmap', async (req, res) => {
     
     const response = await fetch(url, {
       headers: { 
-        'User-Agent': 'OpenHamClock/15.1.2 (Amateur Radio Dashboard)',
+        'User-Agent': 'OpenHamClock/15.1.3 (Amateur Radio Dashboard)',
         'Accept': '*/*'
       },
       signal: controller.signal
@@ -6501,6 +6805,23 @@ function generateStatusDashboard() {
         Weather cache: ${weatherCache.size} entries (2h TTL) · NWS grid cache: ${nwsPointsCache.size} grids (permanent) ·
         Total in-flight deduped: ${upstream.inFlight.size}
       </p>
+
+      <h2>📡 PSKReporter MQTT Proxy</h2>
+      <table>
+        <thead><tr><th>Metric</th><th>Value</th></tr></thead>
+        <tbody>
+          <tr><td>Broker Connection</td><td style="color: ${pskMqtt.connected ? '#00ff88' : '#ff4444'}">${pskMqtt.connected ? '✅ Connected' : '⛔ Disconnected'}</td></tr>
+          <tr><td>Active Callsigns</td><td>${pskMqtt.subscribedCalls.size}</td></tr>
+          <tr><td>SSE Clients</td><td>${[...pskMqtt.subscribers.values()].reduce((n, s) => n + s.size, 0)}</td></tr>
+          <tr><td>Spots Received</td><td>${pskMqtt.stats.spotsReceived.toLocaleString()}</td></tr>
+          <tr><td>Spots Relayed</td><td>${pskMqtt.stats.spotsRelayed.toLocaleString()}</td></tr>
+          <tr><td>Messages Dropped</td><td>${pskMqtt.stats.messagesDropped}</td></tr>
+          <tr><td>Buffered Spots</td><td>${[...pskMqtt.spotBuffer.values()].reduce((n, b) => n + b.length, 0)}</td></tr>
+          <tr><td>Recent Spots Cache</td><td>${[...pskMqtt.recentSpots.values()].reduce((n, s) => n + s.length, 0)}</td></tr>
+          <tr><td>Last Spot</td><td>${pskMqtt.stats.lastSpotTime ? new Date(pskMqtt.stats.lastSpotTime).toISOString().replace('T', ' ').slice(0, 19) + ' UTC' : '—'}</td></tr>
+        </tbody>
+      </table>
+      ${pskMqtt.subscribedCalls.size > 0 ? `<p style="font-size: 11px; color: #888; margin-top: 8px">Subscribed: ${[...pskMqtt.subscribedCalls].join(', ')}</p>` : ''}
     </div>
     
     <div class="footer">
@@ -6605,7 +6926,18 @@ app.get('/api/health', (req, res) => {
           ttlMinutes: Math.round(WEATHER_CACHE_TTL / 60000),
           staleTtlHours: Math.round(WEATHER_STALE_TTL / 3600000)
         },
-        totalInFlight: upstream.inFlight.size
+        totalInFlight: upstream.inFlight.size,
+        pskMqttProxy: {
+          connected: pskMqtt.connected,
+          activeCallsigns: [...pskMqtt.subscribedCalls],
+          sseClients: [...pskMqtt.subscribers.values()].reduce((n, s) => n + s.size, 0),
+          spotsReceived: pskMqtt.stats.spotsReceived,
+          spotsRelayed: pskMqtt.stats.spotsRelayed,
+          messagesDropped: pskMqtt.stats.messagesDropped,
+          bufferedSpots: [...pskMqtt.spotBuffer.values()].reduce((n, b) => n + b.length, 0),
+          recentSpotsCache: [...pskMqtt.recentSpots.values()].reduce((n, s) => n + s.length, 0),
+          lastSpotTime: pskMqtt.stats.lastSpotTime ? new Date(pskMqtt.stats.lastSpotTime).toISOString() : null
+        }
       }
     });
   } else {
@@ -6698,7 +7030,7 @@ const weatherCache = new Map();          // key: "weather:lat,lon" → { data, t
 const nwsPointsCache = new Map();        // key: "lat,lon" → { gridId, gridX, gridY, stationUrl } (never expires)
 const WEATHER_CACHE_TTL = 2 * 60 * 60 * 1000;  // 2 hours
 const WEATHER_STALE_TTL = 6 * 60 * 60 * 1000;  // Serve stale data up to 6 hours if upstream is down
-const NWS_USER_AGENT = 'OpenHamClock/15.1.2 (https://openhamclock.com, Amateur Radio Dashboard)';
+const NWS_USER_AGENT = 'OpenHamClock/15.1.3 (https://openhamclock.com, Amateur Radio Dashboard)';
 
 // Rough bounding box for US coverage (CONUS + Alaska + Hawaii + territories)
 function isUSCoordinates(lat, lon) {

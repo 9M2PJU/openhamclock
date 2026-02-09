@@ -2,10 +2,11 @@
 
 All notable changes to OpenHamClock will be documented in this file.
 
-## [15.1.2] - 2026-02-09
+## [15.1.3] - 2026-02-09
 
 ### Added
 - **Upstream Request Manager** — New `UpstreamManager` class prevents request stampedes on external APIs. Three-layer protection: (1) in-flight request deduplication — 50 concurrent users trigger 1 upstream fetch, not 50; (2) stale-while-revalidate — serve cached data instantly while refreshing in background; (3) exponential backoff with jitter per service. Applied to PSKReporter HTTP, WSPR Heatmap, and weather endpoints
+- **PSKReporter Server-Side MQTT Proxy** — Server now maintains a single MQTT connection to `mqtt.pskreporter.info` instead of each browser opening its own. Spots are buffered per callsign and pushed to clients via Server-Sent Events (SSE) every 10 seconds. Dynamic subscription management: subscribes when first SSE client connects for a callsign, unsubscribes 30s after last client disconnects, disconnects from broker entirely when no clients are active. Exponential backoff on broker disconnects. Health dashboard shows MQTT proxy stats (connected/callsigns/spots/clients). Client `usePSKReporter` hook rewritten to use `EventSource` instead of `mqtt` library — no more direct browser-to-broker connections
 - **NWS Weather API (US)** — US coordinates now use the National Weather Service api.weather.gov instead of Open-Meteo. Free government API with no key, no daily limit, and generous rate limits. Server resolves NWS forecast office grid via `/points` endpoint (cached permanently), then fetches current observations from nearest station + daily/hourly forecast in parallel. Response normalized to Open-Meteo format — client code unchanged. Falls back to Open-Meteo on NWS failure. International coordinates continue using Open-Meteo
 - **GeoIP Country Statistics** — Visitor IPs resolved to country codes via ip-api.com batch endpoint (free, no API key). Results cached persistently across restarts. `/api/health` JSON includes `visitors.today.countries` and `visitors.allTime.countries` (sorted by count). HTML dashboard shows "🌍 Visitor Countries" section with flag emoji badges for today and horizontal bar chart with percentages for all-time data
 - **Weather error/retry UI** — WeatherPanel now shows loading skeleton, error messages with retry countdown, and stale-data badges instead of silently disappearing when weather API is rate-limited
