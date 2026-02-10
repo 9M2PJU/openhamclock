@@ -172,28 +172,43 @@ function calculatePropagationScore(spots) {
 }
 
 // Make control panel draggable with CTRL+drag and save position
-function makeDraggable(element, storageKey) {
+function makeDraggable(element, storageKey, skipPositionLoad = false) {
   if (!element) return;
   
-  // Load saved position
-  const saved = localStorage.getItem(storageKey);
-  if (saved) {
-    try {
-      const { top, left } = JSON.parse(saved);
+  // Load saved position only if not already loaded
+  if (!skipPositionLoad) {
+    const saved = localStorage.getItem(storageKey);
+    if (saved) {
+      try {
+        const data = JSON.parse(saved);
+        element.style.position = 'fixed';
+        
+        // Check if saved as percentage (new format) or pixels (old format)
+        if (data.topPercent !== undefined && data.leftPercent !== undefined) {
+          // Use percentage-based positioning (scales with zoom)
+          element.style.top = data.topPercent + '%';
+          element.style.left = data.leftPercent + '%';
+        } else {
+          // Legacy pixel format - convert to percentage
+          const topPercent = (data.top / window.innerHeight) * 100;
+          const leftPercent = (data.left / window.innerWidth) * 100;
+          element.style.top = topPercent + '%';
+          element.style.left = leftPercent + '%';
+        }
+        
+        element.style.right = 'auto';
+        element.style.bottom = 'auto';
+        element.style.transform = 'none';
+      } catch (e) {}
+    } else {
+      // Convert from Leaflet control position to fixed
+      const rect = element.getBoundingClientRect();
       element.style.position = 'fixed';
-      element.style.top = top + 'px';
-      element.style.left = left + 'px';
+      element.style.top = rect.top + 'px';
+      element.style.left = rect.left + 'px';
       element.style.right = 'auto';
       element.style.bottom = 'auto';
-    } catch (e) {}
-  } else {
-    // Convert from Leaflet control position to fixed
-    const rect = element.getBoundingClientRect();
-    element.style.position = 'fixed';
-    element.style.top = rect.top + 'px';
-    element.style.left = rect.left + 'px';
-    element.style.right = 'auto';
-    element.style.bottom = 'auto';
+    }
   }
   
   // Add drag hint
@@ -256,8 +271,14 @@ function makeDraggable(element, storageKey) {
       element.style.opacity = '1';
       updateCursor(e);
       
-      // Save position
+      // Save position as percentage of viewport for zoom compatibility
+      const topPercent = (element.offsetTop / window.innerHeight) * 100;
+      const leftPercent = (element.offsetLeft / window.innerWidth) * 100;
+      
       const position = {
+        topPercent,
+        leftPercent,
+        // Keep pixel values for backward compatibility
         top: element.offsetTop,
         left: element.offsetLeft
       };

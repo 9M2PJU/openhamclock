@@ -269,7 +269,7 @@ export default function ClassicLayout(props) {
             mySpots={mySpots.data}
             dxPaths={dxClusterData.paths}
             dxFilters={dxFilters}
-            satellites={satellites.data}
+            satellites={filteredSatellites}
             pskReporterSpots={filteredPskSpots}
             showDXPaths={mapLayers.showDXPaths}
             showDXLabels={mapLayers.showDXLabels}
@@ -506,7 +506,7 @@ export default function ClassicLayout(props) {
             mySpots={mySpots.data}
             dxPaths={dxClusterData.paths}
             dxFilters={dxFilters}
-            satellites={satellites.data}
+            satellites={filteredSatellites}
             pskReporterSpots={filteredPskSpots}
             showDXPaths={mapLayers.showDXPaths}
             showDXLabels={mapLayers.showDXLabels}
@@ -880,7 +880,7 @@ export default function ClassicLayout(props) {
             mySpots={mySpots.data}
             dxPaths={dxClusterData.paths}
             dxFilters={dxFilters}
-            satellites={satellites.data}
+            satellites={filteredSatellites}
             pskReporterSpots={filteredPskSpots}
             showDXPaths={mapLayers.showDXPaths}
             showDXLabels={mapLayers.showDXLabels}

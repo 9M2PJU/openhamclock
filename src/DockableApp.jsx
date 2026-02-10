@@ -68,6 +68,7 @@ export const DockableApp = ({
   dxpeditions,
   contests,
   satellites,
+  filteredSatellites,
   pskReporter,
   wsjtx,
   filteredPskSpots,
@@ -280,7 +281,7 @@ export const DockableApp = ({
         mySpots={mySpots.data}
         dxPaths={dxClusterData.paths}
         dxFilters={dxFilters}
-        satellites={satellites.data}
+        satellites={filteredSatellites}
         pskReporterSpots={filteredPskSpots}
         showDXPaths={mapLayers.showDXPaths}
         showDXLabels={mapLayers.showDXLabels}

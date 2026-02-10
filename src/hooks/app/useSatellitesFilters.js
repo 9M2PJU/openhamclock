@@ -17,9 +17,11 @@ export default function useSatellitesFilters(satellitesData) {
   }, [satelliteFilters]);
 
   const filteredSatellites = useMemo(() => {
+    // If no satellites are selected in the filter, show NONE (empty array)
+    // Only show satellites that are explicitly selected
     return satelliteFilters.length > 0
       ? (satellitesData || []).filter(sat => satelliteFilters.includes(sat.name))
-      : satellitesData;
+      : [];
   }, [satelliteFilters, satellitesData]);
 
   return {

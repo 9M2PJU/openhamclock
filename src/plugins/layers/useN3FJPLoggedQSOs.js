@@ -17,6 +17,193 @@ const POLL_MS = 2000;
 const STORAGE_MINUTES_KEY = 'n3fjp_display_minutes';
 const STORAGE_COLOR_KEY = 'n3fjp_line_color';
 
+// Make control draggable with CTRL+drag
+function makeDraggable(element, storageKey, skipPositionLoad = false) {
+  if (!element) return;
+  
+  // Load saved position only if not already loaded
+  if (!skipPositionLoad) {
+    const saved = localStorage.getItem(storageKey);
+    if (saved) {
+      try {
+        const data = JSON.parse(saved);
+        element.style.position = 'fixed';
+        
+        // Check if saved as percentage (new format) or pixels (old format)
+        if (data.topPercent !== undefined && data.leftPercent !== undefined) {
+          // Use percentage-based positioning (scales with zoom)
+          element.style.top = data.topPercent + '%';
+          element.style.left = data.leftPercent + '%';
+        } else {
+          // Legacy pixel format - convert to percentage
+          const topPercent = (data.top / window.innerHeight) * 100;
+          const leftPercent = (data.left / window.innerWidth) * 100;
+          element.style.top = topPercent + '%';
+          element.style.left = leftPercent + '%';
+        }
+        
+        element.style.right = 'auto';
+        element.style.bottom = 'auto';
+        element.style.transform = 'none';
+      } catch (e) {}
+    } else {
+      // Convert from Leaflet control position to fixed
+      const rect = element.getBoundingClientRect();
+      element.style.position = 'fixed';
+      element.style.top = rect.top + 'px';
+      element.style.left = rect.left + 'px';
+      element.style.right = 'auto';
+      element.style.bottom = 'auto';
+    }
+  }
+  
+  element.title = 'Hold CTRL and drag to reposition';
+  
+  let isDragging = false;
+  let startX, startY, startLeft, startTop;
+  
+  const updateCursor = (e) => {
+    if (e.ctrlKey) {
+      element.style.cursor = 'grab';
+    } else {
+      element.style.cursor = 'default';
+    }
+  };
+  
+  element.addEventListener('mouseenter', updateCursor);
+  element.addEventListener('mousemove', updateCursor);
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Control') updateCursor(e);
+  });
+  document.addEventListener('keyup', (e) => {
+    if (e.key === 'Control') updateCursor(e);
+  });
+  
+  element.addEventListener('mousedown', function(e) {
+    if (!e.ctrlKey) return;
+    if (e.target.tagName === 'SELECT' || e.target.tagName === 'INPUT' || e.target.tagName === 'LABEL') {
+      return;
+    }
+    
+    isDragging = true;
+    startX = e.clientX;
+    startY = e.clientY;
+    startLeft = element.offsetLeft;
+    startTop = element.offsetTop;
+    
+    element.style.cursor = 'grabbing';
+    element.style.opacity = '0.8';
+    e.preventDefault();
+  });
+  
+  document.addEventListener('mousemove', function(e) {
+    if (!isDragging) return;
+    
+    const dx = e.clientX - startX;
+    const dy = e.clientY - startY;
+    
+    element.style.left = (startLeft + dx) + 'px';
+    element.style.top = (startTop + dy) + 'px';
+  });
+  
+  document.addEventListener('mouseup', function(e) {
+    if (isDragging) {
+      isDragging = false;
+      element.style.opacity = '1';
+      updateCursor(e);
+      
+      // Save position as percentage of viewport for zoom compatibility
+      const topPercent = (element.offsetTop / window.innerHeight) * 100;
+      const leftPercent = (element.offsetLeft / window.innerWidth) * 100;
+      
+      const position = {
+        topPercent,
+        leftPercent,
+        // Keep pixel values for backward compatibility
+        top: element.offsetTop,
+        left: element.offsetLeft
+      };
+      localStorage.setItem(storageKey, JSON.stringify(position));
+    }
+  });
+}
+
+// Add minimize/maximize toggle
+function addMinimizeToggle(element, storageKey) {
+  if (!element) return;
+  
+  const minimizeKey = storageKey + '-minimized';
+  const header = element.firstElementChild;
+  if (!header) return;
+  
+  // Wrap content
+  const content = Array.from(element.children).slice(1);
+  const contentWrapper = document.createElement('div');
+  contentWrapper.className = 'n3fjp-panel-content';
+  content.forEach(child => contentWrapper.appendChild(child));
+  element.appendChild(contentWrapper);
+  
+  // Add minimize button
+  const minimizeBtn = document.createElement('span');
+  minimizeBtn.className = 'n3fjp-minimize-btn';
+  minimizeBtn.innerHTML = '▼';
+  minimizeBtn.style.cssText = `
+    float: right;
+    cursor: pointer;
+    user-select: none;
+    padding: 0 4px;
+    margin: -2px -4px 0 0;
+    font-size: 10px;
+    opacity: 0.7;
+    transition: opacity 0.2s;
+  `;
+  minimizeBtn.title = 'Minimize/Maximize';
+  
+  minimizeBtn.addEventListener('mouseenter', () => {
+    minimizeBtn.style.opacity = '1';
+  });
+  minimizeBtn.addEventListener('mouseleave', () => {
+    minimizeBtn.style.opacity = '0.7';
+  });
+  
+  header.style.display = 'flex';
+  header.style.justifyContent = 'space-between';
+  header.style.alignItems = 'center';
+  header.appendChild(minimizeBtn);
+  
+  // Load saved state
+  const isMinimized = localStorage.getItem(minimizeKey) === 'true';
+  if (isMinimized) {
+    contentWrapper.style.display = 'none';
+    minimizeBtn.innerHTML = '▶';
+    element.style.cursor = 'pointer';
+  }
+  
+  // Toggle function
+  const toggle = (e) => {
+    if (e && e.ctrlKey) return;
+    
+    const isCurrentlyMinimized = contentWrapper.style.display === 'none';
+    
+    if (isCurrentlyMinimized) {
+      contentWrapper.style.display = 'block';
+      minimizeBtn.innerHTML = '▼';
+      element.style.cursor = 'default';
+      localStorage.setItem(minimizeKey, 'false');
+    } else {
+      contentWrapper.style.display = 'none';
+      minimizeBtn.innerHTML = '▶';
+      element.style.cursor = 'pointer';
+      localStorage.setItem(minimizeKey, 'true');
+    }
+  };
+  
+  minimizeBtn.addEventListener('click', toggle);
+  header.addEventListener('click', (e) => {
+    if (e.target !== minimizeBtn) toggle(e);
+  });
+}
+
 export function useLayer({ enabled = false, opacity = 0.9, map = null }) {
   const [layersRef, setLayersRef] = useState([]);
   const [qsos, setQsos] = useState([]);
@@ -134,6 +321,15 @@ export function useLayer({ enabled = false, opacity = 0.9, map = null }) {
     };
 
     control.addTo(map);
+    
+    // Add draggable and minimize functionality
+    const controlElement = control.getContainer();
+    if (controlElement) {
+      setTimeout(() => {
+        makeDraggable(controlElement, 'n3fjp-position');
+        addMinimizeToggle(controlElement, 'n3fjp-position');
+      }, 150);
+    }
 
     return () => {
       try { control.remove(); } catch {}
