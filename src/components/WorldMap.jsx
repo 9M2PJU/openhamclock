@@ -74,6 +74,20 @@ export const WorldMap = ({
     return calculateGridSquare(deLocation.lat, deLocation.lon);
   }, [deLocation?.lat, deLocation?.lon]);
 
+  // Expose DE location to window for plugins (e.g., RBN)
+  useEffect(() => {
+    if (deLocation?.lat && deLocation?.lon) {
+      window.deLocation = {
+        lat: deLocation.lat,
+        lon: deLocation.lon
+      };
+    }
+    return () => {
+      // Cleanup on unmount
+      delete window.deLocation;
+    };
+  }, [deLocation?.lat, deLocation?.lon]);
+
   // Keep dxLockedRef in sync with prop
   useEffect(() => {
     dxLockedRef.current = dxLocked;
