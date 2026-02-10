@@ -54,8 +54,22 @@ grep '"version"' package.json | head -1
 echo ""
 echo "🔍 Checking for updates..."
 
-# Fetch latest changes
-git fetch origin
+# Ensure remote URL is correct (fixes broken clones or renamed repos)
+EXPECTED_URL="https://github.com/accius/openhamclock.git"
+CURRENT_URL=$(git remote get-url origin 2>/dev/null || echo "")
+if [ -z "$CURRENT_URL" ]; then
+    echo "   ⚠️  No origin remote — adding it..."
+    git remote add origin "$EXPECTED_URL"
+elif [ "$CURRENT_URL" != "$EXPECTED_URL" ] && [ "$CURRENT_URL" != "https://github.com/accius/openhamclock" ]; then
+    echo "   ⚠️  Fixing remote URL: $CURRENT_URL → $EXPECTED_URL"
+    git remote set-url origin "$EXPECTED_URL"
+fi
+
+# Fetch latest changes (--prune removes stale remote refs)
+git fetch origin --prune 2>&1 || {
+    echo "❌ Error: git fetch failed. Check your internet connection."
+    exit 1
+}
 
 # Detect the default branch (main or master)
 if git rev-parse --verify origin/main >/dev/null 2>&1; then
@@ -64,8 +78,23 @@ elif git rev-parse --verify origin/master >/dev/null 2>&1; then
     BRANCH="master"
 else
     echo "❌ Error: Could not find origin/main or origin/master"
+    echo "   Remote URL: $(git remote get-url origin 2>/dev/null || echo 'not set')"
+    echo "   Try: git remote set-url origin $EXPECTED_URL"
     exit 1
 fi
+
+# Ensure we're on the correct local branch (not detached HEAD)
+CURRENT_BRANCH=$(git symbolic-ref --short HEAD 2>/dev/null || echo "")
+if [ -z "$CURRENT_BRANCH" ]; then
+    echo "   ⚠️  Detached HEAD detected — checking out $BRANCH..."
+    git checkout -B "$BRANCH" "origin/$BRANCH" 2>/dev/null || git checkout "$BRANCH" 2>/dev/null || true
+elif [ "$CURRENT_BRANCH" != "$BRANCH" ]; then
+    echo "   ⚠️  On branch '$CURRENT_BRANCH', switching to '$BRANCH'..."
+    git checkout "$BRANCH" 2>/dev/null || true
+fi
+
+# Set upstream tracking if not configured
+git branch --set-upstream-to="origin/$BRANCH" "$BRANCH" 2>/dev/null || true
 
 # Check if there are updates
 LOCAL=$(git rev-parse HEAD)
@@ -120,7 +149,12 @@ if [ -n "$(git status --porcelain)" ]; then
     git stash --include-untracked 2>/dev/null || git checkout . 2>/dev/null
 fi
 
-git pull origin $BRANCH
+# Pull latest (with fallback to hard reset if pull fails)
+if ! git pull origin $BRANCH 2>&1; then
+    echo "   ⚠️  git pull failed — falling back to hard reset..."
+    git fetch origin --prune 2>/dev/null
+    git reset --hard "origin/$BRANCH"
+fi
 
 echo ""
 echo "📦 Installing dependencies..."

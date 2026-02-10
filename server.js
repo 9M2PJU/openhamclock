@@ -1119,7 +1119,23 @@ async function getDefaultBranch() {
 }
 
 async function hasGitUpdates() {
-  await execFilePromise('git', ['fetch', 'origin'], { cwd: __dirname });
+  // Ensure remote URL is correct
+  try {
+    const { stdout: url } = await execFilePromise('git', ['remote', 'get-url', 'origin'], { cwd: __dirname });
+    if (!url.trim()) {
+      await execFilePromise('git', ['remote', 'add', 'origin', 'https://github.com/accius/openhamclock.git'], { cwd: __dirname });
+    }
+  } catch {
+    try {
+      await execFilePromise('git', ['remote', 'add', 'origin', 'https://github.com/accius/openhamclock.git'], { cwd: __dirname });
+    } catch {} // already exists
+  }
+  
+  // Fetch with --prune to clean stale refs
+  await execFilePromise('git', ['fetch', 'origin', '--prune'], { cwd: __dirname });
+  
+  // Reset branch cache after fetch (refs may have changed)
+  _defaultBranch = null;
   const branch = await getDefaultBranch();
   const local = (await execFilePromise('git', ['rev-parse', 'HEAD'], { cwd: __dirname })).stdout.trim();
   const remote = (await execFilePromise('git', ['rev-parse', `origin/${branch}`], { cwd: __dirname })).stdout.trim();
