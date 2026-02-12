@@ -3729,14 +3729,21 @@ const pskMqtt = {
   subscribedCalls: new Set(),
   reconnectAttempts: 0,
   maxReconnectDelay: 120000, // 2 min max
+  reconnectTimer: null, // guards against multiple pending reconnects
   flushInterval: null,
   cleanupInterval: null,
   stats: { spotsReceived: 0, spotsRelayed: 0, messagesDropped: 0, lastSpotTime: null }
 };
 
 function pskMqttConnect() {
+  // Tear down old client — remove listeners FIRST to prevent its 'close'
+  // event from scheduling a duplicate reconnect (fork bomb prevention)
   if (pskMqtt.client) {
-    try { pskMqtt.client.end(true); } catch {}
+    try {
+      pskMqtt.client.removeAllListeners();
+      pskMqtt.client.end(true);
+    } catch {}
+    pskMqtt.client = null;
   }
 
   const clientId = `ohc_svr_${Math.random().toString(16).substr(2, 8)}`;
@@ -3836,24 +3843,34 @@ function pskMqttConnect() {
   });
 
   client.on('error', (err) => {
+    if (client !== pskMqtt.client) return;
     // "Connection closed" is redundant with on('close') handler
     if (err.message && err.message.includes('onnection closed')) return;
     console.error(`[PSK-MQTT] Error: ${err.message}`);
   });
 
   client.on('close', () => {
+    // Only react to close events from the CURRENT client — stale clients
+    // (replaced by a reconnect) must not schedule additional reconnects
+    if (client !== pskMqtt.client) return;
     pskMqtt.connected = false;
-    // Only log once per disconnect (not on every reconnect cycle)
     logErrorOnce('PSK-MQTT', 'Disconnected from mqtt.pskreporter.info');
     scheduleMqttReconnect();
   });
 
   client.on('offline', () => {
+    if (client !== pskMqtt.client) return;
     pskMqtt.connected = false;
   });
 }
 
 function scheduleMqttReconnect() {
+  // Clear any existing reconnect timer — only one pending reconnect at a time
+  if (pskMqtt.reconnectTimer) {
+    clearTimeout(pskMqtt.reconnectTimer);
+    pskMqtt.reconnectTimer = null;
+  }
+
   pskMqtt.reconnectAttempts++;
   const delay = Math.min(
     (Math.pow(2, pskMqtt.reconnectAttempts) * 1000) + (Math.random() * 5000),
@@ -3863,7 +3880,8 @@ function scheduleMqttReconnect() {
   if (pskMqtt.reconnectAttempts === 1 || pskMqtt.reconnectAttempts % 5 === 0) {
     console.log(`[PSK-MQTT] Reconnecting in ${(delay / 1000).toFixed(1)}s (attempt ${pskMqtt.reconnectAttempts})...`);
   }
-  setTimeout(() => {
+  pskMqtt.reconnectTimer = setTimeout(() => {
+    pskMqtt.reconnectTimer = null;
     if (pskMqtt.subscribers.size > 0) {
       pskMqttConnect();
     } else {
@@ -4026,7 +4044,16 @@ app.get('/api/pskreporter/stream/:callsign', (req, res) => {
             // If no subscribers at all, disconnect MQTT entirely
             if (pskMqtt.subscribedCalls.size === 0 && pskMqtt.client) {
               console.log('[PSK-MQTT] No more subscribers, disconnecting from broker');
-              pskMqtt.client.end(true);
+              // Cancel any pending reconnect
+              if (pskMqtt.reconnectTimer) {
+                clearTimeout(pskMqtt.reconnectTimer);
+                pskMqtt.reconnectTimer = null;
+              }
+              // Strip listeners before end() to prevent close → reconnect
+              try {
+                pskMqtt.client.removeAllListeners();
+                pskMqtt.client.end(true);
+              } catch {}
               pskMqtt.client = null;
               pskMqtt.connected = false;
               pskMqtt.reconnectAttempts = 0;

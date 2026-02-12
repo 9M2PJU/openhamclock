@@ -5,7 +5,10 @@ All notable changes to OpenHamClock will be documented in this file.
 ## [15.2.11] - 2026-02-11
 
 ### Added
-- **ID Timer panel (Dockable layout)** — 10-minute countdown timer that reminds operators to identify their station. Displays a large countdown with progress bar; in the final minute the display turns red and pulses. At expiration, plays three short beeps via Web Audio API and shows a full-screen overlay with your callsign in large blinking text. Clicking anywhere dismisses the alert and resets the timer. Available from the `+` panel picker as 📢 ID Timer — dock it small in a corner or stack it in any tabset
+- **ID Timer panel (Dockable layout)** — 10-minute countdown timer that reminds operators to identify their station. Displays a large countdown with progress bar; in the final minute the display turns red and pulses. At expiration, plays three short beeps via Web Audio API and shows a full-screen overlay with your callsign in large blinking text. Clicking anywhere dismisses the alert and resets the timer. Start/Stop button lets operators pause the timer when not on the air. Available from the `+` panel picker as 📢 ID Timer
+
+### Fixed
+- **PSK-MQTT reconnect fork bomb** — When the MQTT broker connection dropped, `pskMqttConnect()` called `.end(true)` on the old client, which fired its `close` event, which called `scheduleMqttReconnect()`, which called `pskMqttConnect()` again — each cycle doubling the number of pending reconnect chains. Over hours of downtime this created hundreds of parallel reconnect loops, flooding logs with `Disconnected from mqtt.pskreporter.info` and exhausting resources. Three fixes: (1) strip all event listeners from old client before `.end(true)` so its `close` event can't schedule a reconnect; (2) stale-client guard on `close`/`error`/`offline` handlers — only react if the firing client is still the current one; (3) single reconnect timer — `clearTimeout` before scheduling a new reconnect, preventing multiple pending timers
 
 ## [15.2.10] - 2026-02-11
 

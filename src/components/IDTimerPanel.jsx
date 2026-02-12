@@ -3,6 +3,7 @@
  * 10-minute countdown timer that alerts the operator to identify their callsign.
  * When the timer expires, plays a beep and shows a modal reminder.
  * Dismissing the reminder resets and restarts the countdown.
+ * Start/Stop button lets operators pause when not on the air.
  * Dockable layout only.
  */
 import React, { useState, useEffect, useRef, useCallback } from 'react';
@@ -46,28 +47,57 @@ const formatTime = (ms) => {
 
 export const IDTimerPanel = ({ callsign }) => {
   const [remaining, setRemaining] = useState(ID_INTERVAL_MS);
-  const [running, setRunning] = useState(true);
+  const [active, setActive] = useState(false); // starts stopped — user enables when on the air
   const [showAlert, setShowAlert] = useState(false);
-  const endTimeRef = useRef(Date.now() + ID_INTERVAL_MS);
+  const endTimeRef = useRef(null);
   const timerRef = useRef(null);
   const hasBeepedRef = useRef(false);
+  // How much time was left when we paused (for resume)
+  const pausedRemainingRef = useRef(ID_INTERVAL_MS);
 
   const reset = useCallback(() => {
     hasBeepedRef.current = false;
     endTimeRef.current = Date.now() + ID_INTERVAL_MS;
+    pausedRemainingRef.current = ID_INTERVAL_MS;
     setRemaining(ID_INTERVAL_MS);
     setShowAlert(false);
-    setRunning(true);
+    setActive(true);
   }, []);
 
-  // Tick loop
+  const start = useCallback(() => {
+    hasBeepedRef.current = false;
+    // Resume from where we paused, or full reset if expired
+    const resumeMs = pausedRemainingRef.current > 0 ? pausedRemainingRef.current : ID_INTERVAL_MS;
+    endTimeRef.current = Date.now() + resumeMs;
+    setRemaining(resumeMs);
+    setShowAlert(false);
+    setActive(true);
+  }, []);
+
+  const stop = useCallback(() => {
+    // Snapshot how much time is left so we can resume later
+    if (endTimeRef.current) {
+      pausedRemainingRef.current = Math.max(0, endTimeRef.current - Date.now());
+    }
+    setActive(false);
+  }, []);
+
+  const toggle = useCallback(() => {
+    if (active) stop(); else start();
+  }, [active, start, stop]);
+
+  // Tick loop — only runs when active
   useEffect(() => {
-    if (!running) return;
+    if (!active) {
+      clearInterval(timerRef.current);
+      return;
+    }
     timerRef.current = setInterval(() => {
       const left = endTimeRef.current - Date.now();
       if (left <= 0) {
         setRemaining(0);
-        setRunning(false);
+        pausedRemainingRef.current = 0;
+        setActive(false);
         if (!hasBeepedRef.current) {
           hasBeepedRef.current = true;
           playBeep();
@@ -78,11 +108,12 @@ export const IDTimerPanel = ({ callsign }) => {
       }
     }, 250);
     return () => clearInterval(timerRef.current);
-  }, [running]);
+  }, [active]);
 
   const pct = Math.max(0, Math.min(100, (remaining / ID_INTERVAL_MS) * 100));
-  const urgent = remaining < 60000; // last minute
-  const barColor = urgent ? '#ff4444' : '#44cc44';
+  const urgent = active && remaining < 60000; // last minute
+  const expired = remaining <= 0;
+  const barColor = !active && !expired ? '#555' : urgent ? '#ff4444' : '#44cc44';
 
   return (
     <div className="panel" style={{ padding: '8px', height: '100%', display: 'flex', flexDirection: 'column', position: 'relative' }}>
@@ -95,22 +126,40 @@ export const IDTimerPanel = ({ callsign }) => {
         fontSize: '11px'
       }}>
         <span>📢 ID TIMER</span>
-        <button
-          onClick={reset}
-          title="Reset timer"
-          style={{
-            background: 'rgba(100, 100, 100, 0.3)',
-            border: '1px solid #666',
-            color: '#aaa',
-            padding: '1px 6px',
-            borderRadius: '3px',
-            fontSize: '9px',
-            fontFamily: 'JetBrains Mono',
-            cursor: 'pointer'
-          }}
-        >
-          ↺ Reset
-        </button>
+        <div style={{ display: 'flex', gap: '4px' }}>
+          <button
+            onClick={toggle}
+            title={active ? 'Stop timer (off the air)' : 'Start timer (on the air)'}
+            style={{
+              background: active ? 'rgba(255, 68, 68, 0.25)' : 'rgba(68, 204, 68, 0.25)',
+              border: `1px solid ${active ? '#ff4444' : '#44cc44'}`,
+              color: active ? '#ff4444' : '#44cc44',
+              padding: '1px 6px',
+              borderRadius: '3px',
+              fontSize: '9px',
+              fontFamily: 'JetBrains Mono',
+              cursor: 'pointer'
+            }}
+          >
+            {active ? '■ Stop' : '▶ Start'}
+          </button>
+          <button
+            onClick={reset}
+            title="Reset to 10:00 and start"
+            style={{
+              background: 'rgba(100, 100, 100, 0.3)',
+              border: '1px solid #666',
+              color: '#aaa',
+              padding: '1px 6px',
+              borderRadius: '3px',
+              fontSize: '9px',
+              fontFamily: 'JetBrains Mono',
+              cursor: 'pointer'
+            }}
+          >
+            ↺
+          </button>
+        </div>
       </div>
 
       {/* Countdown display */}
@@ -119,9 +168,9 @@ export const IDTimerPanel = ({ callsign }) => {
           fontSize: '32px',
           fontWeight: '900',
           fontFamily: 'Orbitron, JetBrains Mono, monospace',
-          color: urgent ? '#ff4444' : 'var(--text-primary, #eee)',
+          color: expired ? '#ff4444' : !active ? '#555' : urgent ? '#ff4444' : 'var(--text-primary, #eee)',
           letterSpacing: '2px',
-          animation: remaining <= 0 ? 'idBlink 0.6s ease-in-out infinite' : (urgent ? 'idPulse 1s ease-in-out infinite' : 'none')
+          animation: expired ? 'idBlink 0.6s ease-in-out infinite' : (urgent ? 'idPulse 1s ease-in-out infinite' : 'none')
         }}>
           {formatTime(remaining)}
         </div>
@@ -144,7 +193,7 @@ export const IDTimerPanel = ({ callsign }) => {
         </div>
 
         <div style={{ fontSize: '9px', color: 'var(--text-muted, #888)', fontFamily: 'JetBrains Mono, monospace' }}>
-          {remaining <= 0 ? 'TIME TO ID!' : 'Next station ID'}
+          {expired ? 'TIME TO ID!' : !active ? 'Stopped — press Start when on the air' : 'Next station ID'}
         </div>
       </div>
 
