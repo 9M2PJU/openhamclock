@@ -28,4 +28,3 @@ export { default as BandHealthPanel } from './BandHealthPanel.jsx';
 export { IDTimerPanel } from './IDTimerPanel.jsx';
 export { default as RotatorPanel } from './RotatorPanel.jsx';
 export { default as RotatorMapOverlay } from './RotatorMapOverlay.jsx';
-

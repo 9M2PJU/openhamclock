@@ -222,6 +222,7 @@ export const DockableApp = ({
       'dxpeditions': { name: 'DXpeditions', icon: '🏝️' },
       'pota': { name: 'POTA', icon: '🏕️' },
       'sota': { name: 'SOTA', icon: '⛰️' },
+      'rotator': { name: 'Rotator', icon: '🧭' },
       'contests': { name: 'Contests', icon: '🏆' },
       ...(hasAmbient ? { 'ambient': { name: 'Ambient Weather', icon: '🌦️' } } : {}),
       'id-timer': { name: 'ID Timer', icon: '📢' },
@@ -562,6 +563,17 @@ export const DockableApp = ({
           />
         );
         break;
+
+      case 'rotator':
+        content = (
+          <RotatorPanel
+            endpointUrl="/api/rotator/status"
+            pollMs={1000}
+            staleMs={5000}
+            mock={false}
+          />
+        );
+        break;  
 
       case 'id-timer':
         content = <IDTimerPanel callsign={config.callsign} />;
