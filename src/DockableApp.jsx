@@ -168,30 +168,39 @@ export const DockableApp = ({
   }, []);
 
   // Panel definitions
-  const panelDefs = useMemo(() => ({
-    'world-map': { name: 'World Map', icon: '🗺️' },
-    'de-location': { name: 'DE Location', icon: '📍' },
-    'dx-location': { name: 'DX Target', icon: '🎯' },
-    'analog-clock': { name: 'Analog Clock', icon: '🕐' },
-    'solar': { name: 'Solar (all views)', icon: '☀️' },
-    'solar-image': { name: 'Solar Image', icon: '☀️', group: 'Solar' },
-    'solar-indices': { name: 'Solar Indices', icon: '📊', group: 'Solar' },
-    'solar-xray': { name: 'X-Ray Flux', icon: '⚡', group: 'Solar' },
-    'lunar': { name: 'Lunar Phase', icon: '🌙', group: 'Solar' },
-    'propagation': { name: 'Propagation (all views)', icon: '📡' },
-    'propagation-chart': { name: 'VOACAP Chart', icon: '📈', group: 'Propagation' },
-    'propagation-bars': { name: 'VOACAP Bars', icon: '📊', group: 'Propagation' },
-    'band-conditions': { name: 'Band Conditions', icon: '📶', group: 'Propagation' },
-    'band-health': { name: 'Band Health', icon: '📶' },
-    'dx-cluster': { name: 'DX Cluster', icon: '📻' },
-    'psk-reporter': { name: 'PSK Reporter', icon: '📡' },
-    'dxpeditions': { name: 'DXpeditions', icon: '🏝️' },
-    'pota': { name: 'POTA', icon: '🏕️' },
-    'sota': { name: 'SOTA', icon: '⛰️' },
-    'contests': { name: 'Contests', icon: '🏆' },
-    'ambient': { name: 'Ambient Weather', icon: '🌦️' },
-    'id-timer': { name: 'ID Timer', icon: '📢' },
-  }), []);
+  const panelDefs = useMemo(() => {
+    // Only show Ambient Weather when credentials are configured
+    const hasAmbient = (() => {
+      try {
+        return !!(import.meta.env?.VITE_AMBIENT_API_KEY && import.meta.env?.VITE_AMBIENT_APPLICATION_KEY);
+      } catch { return false; }
+    })();
+
+    return {
+      'world-map': { name: 'World Map', icon: '🗺️' },
+      'de-location': { name: 'DE Location', icon: '📍' },
+      'dx-location': { name: 'DX Target', icon: '🎯' },
+      'analog-clock': { name: 'Analog Clock', icon: '🕐' },
+      'solar': { name: 'Solar (all views)', icon: '☀️' },
+      'solar-image': { name: 'Solar Image', icon: '☀️', group: 'Solar' },
+      'solar-indices': { name: 'Solar Indices', icon: '📊', group: 'Solar' },
+      'solar-xray': { name: 'X-Ray Flux', icon: '⚡', group: 'Solar' },
+      'lunar': { name: 'Lunar Phase', icon: '🌙', group: 'Solar' },
+      'propagation': { name: 'Propagation (all views)', icon: '📡' },
+      'propagation-chart': { name: 'VOACAP Chart', icon: '📈', group: 'Propagation' },
+      'propagation-bars': { name: 'VOACAP Bars', icon: '📊', group: 'Propagation' },
+      'band-conditions': { name: 'Band Conditions', icon: '📶', group: 'Propagation' },
+      'band-health': { name: 'Band Health', icon: '📶' },
+      'dx-cluster': { name: 'DX Cluster', icon: '📻' },
+      'psk-reporter': { name: 'PSK Reporter', icon: '📡' },
+      'dxpeditions': { name: 'DXpeditions', icon: '🏝️' },
+      'pota': { name: 'POTA', icon: '🏕️' },
+      'sota': { name: 'SOTA', icon: '⛰️' },
+      'contests': { name: 'Contests', icon: '🏆' },
+      ...(hasAmbient ? { 'ambient': { name: 'Ambient Weather', icon: '🌦️' } } : {}),
+      'id-timer': { name: 'ID Timer', icon: '📢' },
+    };
+  }, []);
 
   // Add panel
   const handleAddPanel = useCallback((panelId) => {
