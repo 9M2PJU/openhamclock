@@ -219,6 +219,20 @@ export const SettingsPanel = ({ isOpen, onClose, config, onSave, onResetLayout, 
       }, 100);
     }
   };
+const handleUpdateLayerConfig = (layerId, configDelta) => {
+  if (window.hamclockLayerControls?.updateLayerConfig) {
+
+    window.hamclockLayerControls.updateLayerConfig(layerId, configDelta);
+    
+    setLayers(prevLayers => 
+      prevLayers.map(l => 
+        l.id === layerId 
+          ? { ...l, config: { ...(l.config || {}), ...configDelta } } 
+          : l
+      )
+    );
+  }
+};
 
   const handleOpacityChange = (layerId, opacity) => {
     if (window.hamclockLayerControls) {
@@ -1260,9 +1274,107 @@ export const SettingsPanel = ({ isOpen, onClose, config, onSave, onResetLayout, 
           </div>
         )}
 
-        {/* Satellites Tab */}
+{/* Satellites Tab */}
         {activeTab === 'satellites' && (
           <div>
+            {/* 1. Plugin Layer Toggle Section */}
+            <div style={{ marginBottom: '20px' }}>
+              {layers
+                .filter(layer => layer.category === 'satellites')
+                .map(layer => (
+                  <div key={layer.id} style={{
+                    background: 'var(--bg-tertiary)',
+                    border: `1px solid ${layer.enabled ? 'var(--accent-amber)' : 'var(--border-color)'}`,
+                    borderRadius: '8px',
+                    padding: '14px',
+                    marginBottom: '12px'
+                  }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={layer.enabled}
+                        onChange={() => handleToggleLayer(layer.id)}
+                        style={{ width: '18px', height: '18px', cursor: 'pointer' }}
+                      />
+                      <span style={{ fontSize: '18px' }}>🛰️</span>
+                      <div>
+                        <div style={{
+                          color: layer.enabled ? 'var(--accent-amber)' : 'var(--text-primary)',
+                          fontSize: '14px',
+                          fontWeight: '600',
+                          fontFamily: 'JetBrains Mono, monospace'
+                        }}>
+                          {layer.name}
+                        </div>
+                        <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                          {layer.description}
+                        </div>
+                      </div>
+                    </label>
+
+                    {layer.enabled && (
+                      <div style={{ paddingLeft: '38px', marginTop: '10px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                        {/* Sub-Toggles for Tracks and Footprints */}
+                        <div style={{ display: 'flex', gap: '15px' }}>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', cursor: 'pointer' }}>
+                            <input
+							  type="checkbox"
+							  checked={layer.config?.showTracks !== false}
+							  onChange={(e) => handleUpdateLayerConfig(layer.id, { showTracks: e.target.checked })}
+							/> Track Lines
+                          </label>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', cursor: 'pointer' }}>
+							<input
+							  type="checkbox"
+							  checked={layer.config?.showFootprints !== false}
+							  onChange={(e) => handleUpdateLayerConfig(layer.id, { showFootprints: e.target.checked })}
+							/> Footprints
+                          </label>
+                        </div>
+						{/* Lead Time Slider WIP
+						<div style={{ marginTop: '8px' }}>
+						  <label style={{ 
+							display: 'flex', 
+							justifyContent: 'space-between', 
+							fontSize: '10px', 
+							color: 'var(--text-muted)', 
+							textTransform: 'uppercase' 
+						  }}>
+							<span>Track Prediction (Lead Time)</span>
+							<span style={{ color: 'var(--accent-amber)' }}>{layer.config?.leadTimeMins || 45} min</span>
+						  </label>
+						  <input
+							type="range"
+							min="15"
+							max="120"
+							step="5"
+							value={layer.config?.leadTimeMins || 45}
+							onChange={(e) => handleUpdateLayerConfig(layer.id, { leadTimeMins: parseInt(e.target.value) })}
+							style={{ width: '100%', cursor: 'pointer' }}
+						  />
+						</div> */}
+
+                        {/* Opacity Slider */}
+                        <div>
+                          <label style={{ fontSize: '10px', color: 'var(--text-muted)', textTransform: 'uppercase' }}>
+                            Opacity: {Math.round(layer.opacity * 100)}%
+                          </label>
+                          <input
+                            type="range"
+                            min="0"
+                            max="100"
+                            value={layer.opacity * 100}
+                            onChange={(e) => handleOpacityChange(layer.id, parseFloat(e.target.value) / 100)}
+                            style={{ width: '100%', cursor: 'pointer' }}
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+            </div>
+
+            {/* 2. Existing Satellite Filter Controls */}
             <div style={{
               display: 'flex',
               justifyContent: 'space-between',
@@ -1300,22 +1412,19 @@ export const SettingsPanel = ({ isOpen, onClose, config, onSave, onResetLayout, 
                 }}
               >{t('station.settings.satellites.clear')}</button>
             </div>
-            
+
             <div style={{
               fontSize: '11px',
               color: 'var(--text-muted)',
               marginBottom: '12px'
             }}>
-              {satelliteFilters.length === 0 
+              {satelliteFilters.length === 0
                 ? t('station.settings.satellites.showAll')
                 : t('station.settings.satellites.selectedCount', { count: satelliteFilters.length })}
             </div>
-            
+
             {/* Search Box */}
-            <div style={{
-              position: 'relative',
-              marginBottom: '12px'
-            }}>
+            <div style={{ position: 'relative', marginBottom: '12px' }}>
               <input
                 type="text"
                 value={satelliteSearch}
@@ -1351,7 +1460,8 @@ export const SettingsPanel = ({ isOpen, onClose, config, onSave, onResetLayout, 
                 >×</button>
               )}
             </div>
-            
+
+            {/* Satellite Grid */}
             <div style={{
               display: 'grid',
               gridTemplateColumns: 'repeat(2, 1fr)',
@@ -1360,74 +1470,70 @@ export const SettingsPanel = ({ isOpen, onClose, config, onSave, onResetLayout, 
               overflowY: 'auto'
             }}>
               {(satellites || [])
-                .filter(sat => 
-                  !satelliteSearch || 
+                .filter(sat =>
+                  !satelliteSearch ||
                   sat.name.toLowerCase().includes(satelliteSearch.toLowerCase())
                 )
                 .sort((a, b) => {
                   const aSelected = satelliteFilters.includes(a.name);
                   const bSelected = satelliteFilters.includes(b.name);
-                  
-                  // Selected satellites come first
                   if (aSelected && !bSelected) return -1;
                   if (!aSelected && bSelected) return 1;
-                  
-                  // Then alphabetically by name
                   return a.name.localeCompare(b.name);
                 })
                 .map(sat => {
-                const isSelected = satelliteFilters.includes(sat.name);
-                return (
-                  <button
-                    key={sat.name}
-                    onClick={() => {
-                      if (isSelected) {
-                        onSatelliteFiltersChange(satelliteFilters.filter(n => n !== sat.name));
-                      } else {
-                        onSatelliteFiltersChange([...satelliteFilters, sat.name]);
-                      }
-                    }}
-                    style={{
-                      background: isSelected ? 'rgba(0, 255, 255, 0.15)' : 'var(--bg-tertiary)',
-                      border: `1px solid ${isSelected ? '#00ffff' : 'var(--border-color)'}`,
-                      borderRadius: '6px',
-                      padding: '10px',
-                      textAlign: 'left',
-                      cursor: 'pointer',
-                      color: 'var(--text-primary)',
-                      fontFamily: 'JetBrains Mono',
-                      fontSize: '12px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px'
-                    }}
-                  >
-                    <span style={{
-                      width: '16px',
-                      height: '16px',
-                      borderRadius: '3px',
-                      border: `2px solid ${isSelected ? '#00ffff' : '#666'}`,
-                      background: isSelected ? '#00ffff' : 'transparent',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      fontSize: '10px',
-                      flexShrink: 0
-                    }}>
-                      {isSelected && '✓'}
-                    </span>
-                    <div style={{ flex: 1, overflow: 'hidden' }}>
-                      <div style={{ 
-                        color: isSelected ? '#00ffff' : 'var(--text-primary)',
-                        fontWeight: '600',
-                        whiteSpace: 'nowrap',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis'
-                      }}>{sat.name}</div>
-                    </div>
-                  </button>
-                );
-              })}
+                  const isSelected = satelliteFilters.includes(sat.name);
+                  return (
+                    <button
+                      key={sat.name}
+                      onClick={() => {
+                        if (isSelected) {
+                          onSatelliteFiltersChange(satelliteFilters.filter(n => n !== sat.name));
+                        } else {
+                          onSatelliteFiltersChange([...satelliteFilters, sat.name]);
+                        }
+                      }}
+                      style={{
+                        background: isSelected ? 'rgba(0, 255, 255, 0.15)' : 'var(--bg-tertiary)',
+                        border: `1px solid ${isSelected ? '#00ffff' : 'var(--border-color)'}`,
+                        borderRadius: '6px',
+                        padding: '10px',
+                        textAlign: 'left',
+                        cursor: 'pointer',
+                        color: 'var(--text-primary)',
+                        fontFamily: 'JetBrains Mono',
+                        fontSize: '12px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px'
+                      }}
+                    >
+                      <span style={{
+                        width: '16px',
+                        height: '16px',
+                        borderRadius: '3px',
+                        border: `2px solid ${isSelected ? '#00ffff' : '#666'}`,
+                        background: isSelected ? '#00ffff' : 'transparent',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontSize: '10px',
+                        flexShrink: 0
+                      }}>
+                        {isSelected && '✓'}
+                      </span>
+                      <div style={{ flex: 1, overflow: 'hidden' }}>
+                        <div style={{
+                          color: isSelected ? '#00ffff' : 'var(--text-primary)',
+                          fontWeight: '600',
+                          whiteSpace: 'nowrap',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis'
+                        }}>{sat.name}</div>
+                      </div>
+                    </button>
+                  );
+                })}
             </div>
           </div>
         )}

@@ -15,10 +15,12 @@ import * as RBNPlugin from './layers/useRBN.js';
 import * as ContestQsosPlugin from './layers/useContestQsos.js';
 import * as GreatCirclePlugin from './layers/useGreatCircle.js';
 import * as VOACAPHeatmapPlugin from './layers/useVOACAPHeatmap.js';
+import * as SatellitePlugin from './layers/useSatelliteLayer.js';
 
 const layerPlugins = [
   OWMCloudsPlugin,
   CityLightsPlugin,
+  SatellitePlugin,
   WXRadarPlugin,
   EarthquakesPlugin,
   AuroraPlugin,

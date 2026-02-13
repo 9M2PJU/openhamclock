@@ -15,7 +15,6 @@ import {
 } from '../utils/geo.js';
 import { getBandColor } from '../utils/callsign.js';
 import { createTerminator } from '../utils/terminator.js';
-
 import { getAllLayers } from '../plugins/layerRegistry.js';
 import useLocalInstall from '../hooks/app/useLocalInstall.js';
 import { IconSatellite, IconTag, IconSun, IconMoon } from './Icons.jsx';
@@ -42,10 +41,8 @@ export const WorldMap = ({
   onToggleDXLabels, 
   showPOTA, 
   showSOTA,
-  showSatellites, 
   showPSKReporter,
   showWSJTX,
-  onToggleSatellites, 
   hoveredSpot,
   callsign = 'N0CALL',
   showDXNews = true,
@@ -627,84 +624,7 @@ export const WorldMap = ({
     }
   }, [sotaSpots, showSOTA, showDXLabels]);
 
-  // Update satellite markers with orbit tracks
-  useEffect(() => {
-    if (!mapInstanceRef.current) return;
-    const map = mapInstanceRef.current;
-
-    satMarkersRef.current.forEach(m => map.removeLayer(m));
-    satMarkersRef.current = [];
-    satTracksRef.current.forEach(t => map.removeLayer(t));
-    satTracksRef.current = [];
-
-    if (showSatellites && satellites && satellites.length > 0) {
-      satellites.forEach(sat => {
-        const satColor = sat.color || '#00ffff';
-        const satColorDark = sat.visible ? satColor : '#446666';
-        
-        // Draw orbit track if available
-        if (sat.track && sat.track.length > 1) {
-          // Unwrap longitudes for continuous path, then replicate across world copies
-          const unwrapped = sat.track.map(p => [...p]);
-          for (let i = 1; i < unwrapped.length; i++) {
-            while (unwrapped[i][1] - unwrapped[i-1][1] > 180) unwrapped[i][1] -= 360;
-            while (unwrapped[i][1] - unwrapped[i-1][1] < -180) unwrapped[i][1] += 360;
-          }
-          
-          // Render on all 3 world copies
-          replicatePath(unwrapped).forEach(copy => {
-            const trackLine = L.polyline(copy, {
-              color: sat.visible ? satColor : satColorDark,
-              weight: 2,
-              opacity: sat.visible ? 0.8 : 0.4,
-              dashArray: sat.visible ? null : '5, 5'
-            }).addTo(map);
-            satTracksRef.current.push(trackLine);
-          });
-        }
-        
-        // Draw footprint circle if available and satellite is visible
-        if (sat.footprintRadius && sat.lat && sat.lon && sat.visible) {
-          replicatePoint(sat.lat, sat.lon).forEach(([fLat, fLon]) => {
-            const footprint = L.circle([fLat, fLon], {
-              radius: sat.footprintRadius * 1000, // Convert km to meters
-              color: satColor,
-              weight: 1,
-              opacity: 0.5,
-              fillColor: satColor,
-              fillOpacity: 0.1
-            }).addTo(map);
-            satTracksRef.current.push(footprint);
-          });
-        }
-        
-        // Add satellite marker icon
-        const icon = L.divIcon({
-          className: '',
-          html: `<span style="display:inline-block;background:${sat.visible ? satColor : satColorDark};color:${sat.visible ? '#000' : '#fff'};padding:4px 8px;border-radius:4px;font-size:11px;font-family:'JetBrains Mono',monospace;white-space:nowrap;border:2px solid ${sat.visible ? '#fff' : '#666'};font-weight:bold;box-shadow:0 2px 4px rgba(0,0,0,0.4);">⛊ ${sat.name}</span>`,
-          iconSize: null,
-          iconAnchor: [0, 0]
-        });
-        
-        const marker = L.marker([sat.lat, sat.lon], { icon })
-          .bindPopup(`
-            <b>⛊ ${sat.name}</b><br>
-            <table style="font-size: 11px;">
-              <tr><td>Mode:</td><td><b>${sat.mode || 'Unknown'}</b></td></tr>
-              <tr><td>Alt:</td><td>${units === 'imperial' ? Math.round(sat.alt * 0.621371).toLocaleString() + ' mi' : Math.round(sat.alt).toLocaleString() + ' km'}</td></tr>
-              <tr><td>Az:</td><td>${sat.azimuth}°</td></tr>
-              <tr><td>El:</td><td>${sat.elevation}°</td></tr>
-              <tr><td>Range:</td><td>${units === 'imperial' ? Math.round(sat.range * 0.621371).toLocaleString() + ' mi' : Math.round(sat.range).toLocaleString() + ' km'}</td></tr>
-              <tr><td>Status:</td><td>${sat.visible ? '<span style="color:green">✓ Visible</span>' : '<span style="color:gray">Below horizon</span>'}</td></tr>
-            </table>
-          `)
-          .addTo(map);
-        satMarkersRef.current.push(marker);
-      });
-    }
-  }, [satellites, showSatellites]);
-
-  // Plugin layer system - properly load saved states
+    // Plugin layer system - properly load saved states
   useEffect(() => {
     if (!mapInstanceRef.current) return;
 
@@ -734,49 +654,54 @@ export const WorldMap = ({
       }
 
       // Expose controls for SettingsPanel
-      window.hamclockLayerControls = {
-        layers: availableLayers.map(l => ({
-          ...l,
-          enabled: pluginLayerStates[l.id]?.enabled ?? initialStates[l.id]?.enabled ?? l.defaultEnabled,
-          opacity: pluginLayerStates[l.id]?.opacity ?? initialStates[l.id]?.opacity ?? l.defaultOpacity
-        })),
-        toggleLayer: (id, enabled) => {
-          console.log(`Toggle layer ${id}:`, enabled);
-          const settings = getStoredMapSettings();
-          const layers = settings.layers || {};
-          layers[id] = { 
-            enabled: enabled,
-            opacity: layers[id]?.opacity ?? 0.6
-          };
-          localStorage.setItem('openhamclock_mapSettings', JSON.stringify({ ...settings, layers }));
-          console.log('Saved to localStorage:', layers);
-          setPluginLayerStates(prev => ({ 
-            ...prev, 
-            [id]: { 
-              ...prev[id], 
-              enabled: enabled 
-            } 
-          }));
-        },
-        setOpacity: (id, opacity) => {
-          console.log(`Set opacity ${id}:`, opacity);
-          const settings = getStoredMapSettings();
-          const layers = settings.layers || {};
-          layers[id] = { 
-            enabled: layers[id]?.enabled ?? false,
-            opacity: opacity
-          };
-          localStorage.setItem('openhamclock_mapSettings', JSON.stringify({ ...settings, layers }));
-          console.log('Saved to localStorage:', layers);
-          setPluginLayerStates(prev => ({ 
-            ...prev, 
-            [id]: { 
-              ...prev[id], 
-              opacity: opacity 
-            } 
-          }));
-        }
-      };
+		window.hamclockLayerControls = {
+		  layers: availableLayers.map(l => ({
+			...l,
+			enabled: pluginLayerStates[l.id]?.enabled ?? initialStates[l.id]?.enabled ?? l.defaultEnabled,
+			opacity: pluginLayerStates[l.id]?.opacity ?? initialStates[l.id]?.opacity ?? l.defaultOpacity,
+			// ADD: Pass the current config (showTracks/showFootprints) to the settings menu
+			config: pluginLayerStates[l.id]?.config ?? initialStates[l.id]?.config ?? l.config
+		  })),
+		  
+		  toggleLayer: (id, enabled) => {
+			const settings = getStoredMapSettings();
+			const layers = settings.layers || {};
+			layers[id] = { ...(layers[id] || {}), enabled };
+			localStorage.setItem('openhamclock_mapSettings', JSON.stringify({ ...settings, layers }));
+			setPluginLayerStates(prev => ({ ...prev, [id]: { ...prev[id], enabled } }));
+		  },
+
+		  setOpacity: (id, opacity) => {
+			const settings = getStoredMapSettings();
+			const layers = settings.layers || {};
+			layers[id] = { ...(layers[id] || {}), opacity };
+			localStorage.setItem('openhamclock_mapSettings', JSON.stringify({ ...settings, layers }));
+			setPluginLayerStates(prev => ({ ...prev, [id]: { ...prev[id], opacity } }));
+		  },
+
+		  // ADD THIS NEW FUNCTION:
+		  updateLayerConfig: (id, configDelta) => {
+			const settings = getStoredMapSettings();
+			const layers = settings.layers || {};
+			const currentLayer = layers[id] || {};
+			
+			// Merge the new checkbox state (e.g., {showTracks: false}) into existing config
+			layers[id] = {
+			  ...currentLayer,
+			  config: { ...(currentLayer.config || {}), ...configDelta }
+			};
+			
+			// Save to localStorage so it persists after refresh
+			localStorage.setItem('openhamclock_mapSettings', JSON.stringify({ ...settings, layers }));
+			
+			// Update React state to trigger the map redraw
+			setPluginLayerStates(prev => ({
+			  ...prev,
+			  [id]: { ...prev[id], config: { ...(prev[id]?.config || {}), ...configDelta } }
+			}));
+		  }
+		};
+		
     } catch (err) {
       console.error('Plugin system error:', err);
     }
@@ -940,18 +865,22 @@ export const WorldMap = ({
       <div ref={mapRef} style={{ height: '100%', width: '100%', borderRadius: '8px', background: mapStyle === 'countries' ? '#4a90d9' : undefined }} />
 
       {/* Render all plugin layers */}
-      {mapInstanceRef.current && getAvailableLayers().map(layerDef => (
-        <PluginLayer
-          key={layerDef.id}
-          plugin={layerDef}
-          enabled={pluginLayerStates[layerDef.id]?.enabled ?? layerDef.defaultEnabled}
-          opacity={pluginLayerStates[layerDef.id]?.opacity ?? layerDef.defaultOpacity}
-          map={mapInstanceRef.current}
-          callsign={callsign}
-          locator={deLocator}
-          lowMemoryMode={lowMemoryMode}
-        />
-      ))}
+      {mapInstanceRef.current && getAllLayers().map(layerDef => (
+	  <PluginLayer
+		key={layerDef.id}
+		plugin={layerDef}
+		enabled={pluginLayerStates[layerDef.id]?.enabled ?? layerDef.defaultEnabled}
+		opacity={pluginLayerStates[layerDef.id]?.opacity ?? layerDef.defaultOpacity}
+		config={pluginLayerStates[layerDef.id]?.config ?? layerDef.config}
+		  
+		  map={mapInstanceRef.current}
+		  satellites={satellites}
+		  units={units}
+		  callsign={callsign}
+		  locator={deLocator}
+		  lowMemoryMode={lowMemoryMode}
+		/>
+		))}
 
       {/* MODIS Control (Only shows when MODIS map style is active) */}
       {mapStyle === 'MODIS' && (
@@ -1006,28 +935,7 @@ export const WorldMap = ({
       </select>
       
       {/* Satellite toggle */}
-      {onToggleSatellites && (
-        <button
-          onClick={onToggleSatellites}
-          title={showSatellites ? 'Hide satellite tracks' : 'Show satellite tracks'}
-          style={{
-            position: 'absolute',
-            top: '10px',
-            left: '50px',
-            background: showSatellites ? 'rgba(0, 255, 255, 0.2)' : 'rgba(0, 0, 0, 0.8)',
-            border: `1px solid ${showSatellites ? '#00ffff' : '#666'}`,
-            color: showSatellites ? '#00ffff' : '#888',
-            padding: '6px 10px',
-            borderRadius: '4px',
-            fontSize: '11px',
-            fontFamily: 'JetBrains Mono',
-            cursor: 'pointer',
-            zIndex: 1000
-          }}
-        >
-          ⛊ SAT {showSatellites ? 'ON' : 'OFF'}
-        </button>
-      )}
+
       
       {/* Labels toggle */}
       {onToggleDXLabels && showDXPaths && (
