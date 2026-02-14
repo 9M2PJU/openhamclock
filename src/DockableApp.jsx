@@ -454,7 +454,7 @@ export const DockableApp = ({
         break;
       
       case 'wwff':
-        content = <WWFFPanel data={wwffSpots.data} loading={wwffSpots.loading} showOnMap={mapLayers.wwffPOTA} onToggleMap={toggleWWFF} />;
+        content = <WWFFPanel data={wwffSpots.data} loading={wwffSpots.loading} showOnMap={mapLayers.wwffWWFF} onToggleMap={toggleWWFF} />;
         break;
 
       case 'sota':
