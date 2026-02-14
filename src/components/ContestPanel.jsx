@@ -6,7 +6,7 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
 export const ContestPanel = ({ data, loading }) => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
 
   // Switchable option: open WA7BNM contest page on click
   const [openContestLinks, setOpenContestLinks] = useState(() => {
@@ -59,6 +59,23 @@ export const ContestPanel = ({ data, loading }) => {
   const formatDate = (dateStr) => {
     if (!dateStr) return "";
     const date = new Date(dateStr);
+    const language = (i18n.resolvedLanguage || i18n.language || "en")
+      .split("-")[0]
+      .toLowerCase();
+
+    if (language === "de") {
+      const parts = new Intl.DateTimeFormat("de-DE", {
+        day: "numeric",
+        month: "short",
+      }).formatToParts(date);
+      const day = parts.find((p) => p.type === "day")?.value || "";
+      const month = (parts.find((p) => p.type === "month")?.value || "").replace(
+        /\.$/,
+        "",
+      );
+      return `${day}. ${month}`;
+    }
+
     return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
   };
 
@@ -95,14 +112,17 @@ export const ContestPanel = ({ data, loading }) => {
         ((end - now) % (1000 * 60 * 60)) / (1000 * 60),
       );
       if (hoursLeft > 0) {
-        return `${hoursLeft}h ${minsLeft}m left`;
+        return t("contest.panel.time.live.hoursMinutes", {
+          hours: hoursLeft,
+          minutes: minsLeft,
+        });
       }
-      return `${minsLeft}m left`;
+      return t("contest.panel.time.live.minutes", { minutes: minsLeft });
     } else if (now < start) {
       // Contest hasn't started
       const hoursUntil = Math.floor((start - now) / (1000 * 60 * 60));
       if (hoursUntil < 24) {
-        return `Starts in ${hoursUntil}h`;
+        return t("contest.panel.time.startsIn", { hours: hoursUntil });
       }
       return formatDate(contest.start);
     }
