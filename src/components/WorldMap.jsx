@@ -45,8 +45,12 @@ function esc(str) {
 export const WorldMap = ({
   deLocation,
   dxLocation,
+export const WorldMap = ({
+  deLocation,
+  dxLocation,
   onDXChange,
   dxLocked,
+  potaSpots,
   potaSpots,
   sotaSpots,
   dxPaths,
@@ -57,11 +61,16 @@ export const WorldMap = ({
   showDXPaths,
   showDXLabels,
   onToggleDXLabels,
+  showDXPaths,
+  showDXLabels,
+  onToggleDXLabels,
   showPOTA,
   showPOTALabels = true,
   showSOTA,
   showPSKReporter,
   showWSJTX,
+  onToggleSatellites,
+  onSpotClick,
   hoveredSpot,
   callsign = "N0CALL",
   showDXNews = true,
@@ -105,6 +114,7 @@ export const WorldMap = ({
     return calculateGridSquare(deLocation.lat, deLocation.lon);
   }, [deLocation?.lat, deLocation?.lon]);
 
+
   // Expose DE location to window for plugins (e.g., RBN)
   useEffect(() => {
     if (deLocation?.lat && deLocation?.lon) {
@@ -143,6 +153,7 @@ export const WorldMap = ({
   // Plugin system refs and state
   const [pluginLayerStates, setPluginLayerStates] = useState({});
   const isLocalInstall = useLocalInstall();
+
 
   // Filter out localOnly layers on hosted version
   const getAvailableLayers = () =>
@@ -486,10 +497,12 @@ export const WorldMap = ({
     } catch {}
   }, [mapLocked]);
 
+
   // Update tile layer and handle night light clipping
   useEffect(() => {
     if (!mapInstanceRef.current || !tileLayerRef.current) return;
     const map = mapInstanceRef.current;
+
 
     // Remove old tile layer completely — setUrl() doesn't flush the tile cache,
     // leaving stale "Map data not yet available" tiles visible until zoom/pan.
@@ -531,6 +544,7 @@ export const WorldMap = ({
       }
     }
 
+
     // If you have a countries overlay, ensure it stays visible
     if (countriesLayerRef.current?.length) {
       countriesLayerRef.current.forEach((l) => {
@@ -570,12 +584,14 @@ export const WorldMap = ({
     } catch {}
   }, [nightDarkness]);
 
+
   // End code dynamic GIBS generator if 'MODIS' is selected
 
   // Countries overlay for "Countries" map style
   useEffect(() => {
     if (!mapInstanceRef.current) return;
     const map = mapInstanceRef.current;
+
 
     // Remove existing countries layers (all world copies)
     countriesLayerRef.current.forEach((layer) => {
@@ -585,8 +601,10 @@ export const WorldMap = ({
     });
     countriesLayerRef.current = [];
 
+
     // Only add overlay for countries style
     if (!MAP_STYLES[mapStyle]?.countriesOverlay) return;
+
 
     // Bright distinct colors for countries (designed for maximum contrast between neighbors)
     const COLORS = [
@@ -716,7 +734,7 @@ export const WorldMap = ({
           map.removeLayer(rotatorGlowRef.current);
           rotatorGlowRef.current = null;
         }
-      } catch {}
+      } catch { }
     };
   }, [mapStyle]);
 
@@ -892,15 +910,22 @@ export const WorldMap = ({
               color: isHovered ? color : "#fff",
               weight: isHovered ? 3 : 1.5,
               opacity: 1,
-              fillOpacity: isHovered ? 1 : 0.9,
+              fillOpacity: isHovered ? 1 : 0.9,,
+              interactive: !!onSpotClick
             })
               .bindPopup(
                 `<b data-qrz-call="${esc(path.dxCall)}" style="color: ${color}; cursor:pointer">${esc(path.dxCall)}</b><br>${esc(path.freq)} MHz<br>by <span data-qrz-call="${esc(path.spotter)}" style="cursor:pointer">${esc(path.spotter)}</span>`,
               )
               .addTo(map);
+
+            if (onSpotClick) {
+              dxCircle.on('click', () => onSpotClick(path));
+            }
+
             if (isHovered) dxCircle.bringToFront();
             dxPathsMarkersRef.current.push(dxCircle);
           });
+
 
           // Add label if enabled — replicate across world copies
           if (showDXLabels || isHovered) {
@@ -913,9 +938,14 @@ export const WorldMap = ({
             replicatePoint(path.dxLat, path.dxLon).forEach(([lat, lon]) => {
               const label = L.marker([lat, lon], {
                 icon: labelIcon,
-                interactive: false,
-                zIndexOffset: isHovered ? 10000 : 0,
+                interactive: !!onSpotClick,
+                zIndexOffset: isHovered ? 10000 : 0
               }).addTo(map);
+
+              if (onSpotClick) {
+                label.on('click', () => onSpotClick(path));
+              }
+
               dxPathsMarkersRef.current.push(label);
             });
           }
@@ -1045,6 +1075,11 @@ export const WorldMap = ({
                 `<b data-qrz-call="${esc(spot.call)}" style="color:#44cc44; cursor:pointer">${esc(spot.call)}</b><br><span style="color:#888">${esc(spot.ref)}</span> ${esc(spot.locationDesc || "")}<br>${spot.name ? `<i>${esc(spot.name)}</i><br>` : ""}${esc(spot.freq)} ${esc(spot.mode || "")} <span style="color:#888">${esc(spot.time || "")}</span>`,
               )
               .addTo(map);
+
+            if (onSpotClick) {
+              marker.on('click', () => onSpotClick(spot));
+            }
+
             potaMarkersRef.current.push(marker);
           });
 
@@ -1093,6 +1128,11 @@ export const WorldMap = ({
                 `<b data-qrz-call="${esc(spot.call)}" style="color:#ff9632; cursor:pointer">${esc(spot.call)}</b><br><span style="color:#888">${esc(spot.ref)}</span>${spot.summit ? ` — ${esc(spot.summit)}` : ""}${spot.points ? ` <span style="color:#ff9632">(${esc(spot.points)}pt)</span>` : ""}<br>${esc(spot.freq)} ${esc(spot.mode || "")} <span style="color:#888">${esc(spot.time || "")}</span>`,
               )
               .addTo(map);
+
+            if (onSpotClick) {
+              marker.on('click', () => onSpotClick(spot));
+            }
+
             sotaMarkersRef.current.push(marker);
           });
 
@@ -1163,6 +1203,7 @@ export const WorldMap = ({
             initialStates[l.id]?.config ??
             l.config,
         })),
+
 
         toggleLayer: (id, enabled) => {
           const settings = getStoredMapSettings();
@@ -1248,6 +1289,7 @@ export const WorldMap = ({
         let spotLat = parseFloat(spot.lat);
         let spotLon = parseFloat(spot.lon);
 
+
         if (!isNaN(spotLat) && !isNaN(spotLon)) {
           // For TX spots (you transmitted → someone received): show the receiver (remote station)
           // For RX spots (someone transmitted → you received): show the sender (remote station)
@@ -1305,10 +1347,13 @@ export const WorldMap = ({
                   `
                 <b data-qrz-call="${esc(displayCall)}" style="cursor:pointer">${esc(displayCall)}</b> <span style="color:#888;font-size:10px">${dirLabel}</span><br>
                 ${esc(spot.mode)} @ ${esc(freqMHz)} MHz<br>
-                ${spot.snr !== null ? `SNR: ${spot.snr > 0 ? "+" : ""}${spot.snr} dB` : ""}
-              `,
-                )
-                .addTo(map);
+                ${spot.snr !== null ? `SNR: ${spot.snr > 0 ? '+' : ''}${spot.snr} dB` : ''}
+              `).addTo(map);
+
+              if (onSpotClick) {
+                circle.on('click', () => onSpotClick(spot));
+              }
+
               pskMarkersRef.current.push(circle);
             });
           } catch (err) {
@@ -1401,17 +1446,18 @@ export const WorldMap = ({
                     opacity: ${isEstimated ? 0.5 : 0.9};
                   "></div>`,
                   iconSize: [8, 8],
-                  iconAnchor: [4, 4],
-                }),
-              })
-                .bindPopup(
-                  `
-                <b data-qrz-call="${esc(call)}" style="cursor:pointer">${esc(call)}</b> ${spot.type === "CQ" ? "CQ" : ""}<br>
-                ${esc(spot.grid || "")} ${esc(spot.band || "")}${spot.gridSource === "prefix" ? " <i>(est)</i>" : spot.gridSource === "cache" ? " <i>(prev)</i>" : ""}<br>
-                ${esc(spot.mode || "")} SNR: ${spot.snr != null ? (spot.snr >= 0 ? "+" : "") + spot.snr : "?"} dB
-              `,
-                )
-                .addTo(map);
+                  iconAnchor: [4, 4]
+                })
+              }).bindPopup(`
+                <b data-qrz-call="${esc(call)}" style="cursor:pointer">${esc(call)}</b> ${spot.type === 'CQ' ? 'CQ' : ''}<br>
+                ${esc(spot.grid || '')} ${esc(spot.band || '')}${spot.gridSource === 'prefix' ? ' <i>(est)</i>' : spot.gridSource === 'cache' ? ' <i>(prev)</i>' : ''}<br>
+                ${esc(spot.mode || '')} SNR: ${spot.snr != null ? (spot.snr >= 0 ? '+' : '') + spot.snr : '?'} dB
+              `).addTo(map);
+
+              if (onSpotClick) {
+                diamond.on('click', () => onSpotClick(spot));
+              }
+
               wsjtxMarkersRef.current.push(diamond);
             });
           } catch (err) {

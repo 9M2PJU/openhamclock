@@ -22,11 +22,14 @@ import {
   WeatherPanel,
   AmbientPanel,
   AnalogClockPanel,
+  RigControlPanel,
+  OnAirPanel,
   IDTimerPanel
 } from './components';
 
 import { loadLayout, saveLayout, DEFAULT_LAYOUT } from './store/layoutStore.js';
 import { DockableLayoutProvider } from './contexts';
+import { useRig } from './contexts/RigContext.jsx';
 import './styles/flexlayout-openhamclock.css';
 import useMapLayers from './hooks/app/useMapLayers';
 import useRotator from "./hooks/useRotator";
@@ -152,7 +155,7 @@ export const DockableApp = ({
   });
 
   useEffect(() => {
-    try { localStorage.setItem('openhamclock_panelZoom', JSON.stringify(panelZoom)); } catch {}
+    try { localStorage.setItem('openhamclock_panelZoom', JSON.stringify(panelZoom)); } catch { }
   }, [panelZoom]);
 
   const ZOOM_STEPS = [0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.5, 1.75, 2.0];
@@ -169,6 +172,35 @@ export const DockableApp = ({
       return { ...prev, [component]: newZoom };
     });
   }, []);
+
+  // Rig Control Hook
+  const { tuneTo, enabled } = useRig();
+
+  // Unified Spot Click Handler (Tune + Set DX)
+  const handleSpotClick = useCallback((spot) => {
+    if (!spot) return;
+
+    // 1. Tune Rig if frequency is available and rig control is enabled
+    // Spot freq is usually in kHz or MHz string
+    if (enabled && (spot.freq || spot.freqMHz)) {
+      const freq = spot.freq || (parseFloat(spot.freqMHz) * 1000); // Normalize to kHz for tuneTo (which handles units)
+      // tuneTo handles unit detection (MHz vs kHz vs Hz) so just pass the raw value
+      tuneTo(spot.freq || spot.freqMHz, spot.mode);
+    }
+
+    // 2. Set DX Location if location data is available
+    // For DX Cluster spots, we need to find the path data which contains coordinates
+    // For POTA/SOTA, the spot object itself has lat/lon
+    if (spot.lat && spot.lon) {
+      handleDXChange({ lat: spot.lat, lon: spot.lon });
+    } else if (spot.call) {
+      // Try to find in DX Cluster paths
+      const path = (dxClusterData.paths || []).find(p => p.dxCall === spot.call);
+      if (path && path.dxLat != null && path.dxLon != null) {
+        handleDXChange({ lat: path.dxLat, lon: path.dxLon });
+      }
+    }
+  }, [tuneTo, enabled, handleDXChange, dxClusterData.paths]);
 
   const resetZoom = useCallback((component) => {
     setPanelZoom(prev => {
@@ -224,6 +256,8 @@ export const DockableApp = ({
       ...(isLocalInstall ? { 'rotator': { name: 'Rotator', icon: '🧭' } } : {}),
       'contests': { name: 'Contests', icon: '🏆' },
       ...(hasAmbient ? { 'ambient': { name: 'Ambient Weather', icon: '🌦️' } } : {}),
+      'rig-control': { name: 'Rig Control', icon: '📻' },
+      'on-air': { name: 'On Air', icon: '🔴' },
       'id-timer': { name: 'ID Timer', icon: '📢' },
     };
   }, [isLocalInstall]);
@@ -256,7 +290,7 @@ export const DockableApp = ({
       <WeatherPanel
         weatherData={localWeather}
         tempUnit={tempUnit}
-        onTempUnitChange={(unit) => { setTempUnit(unit); try { localStorage.setItem('openhamclock_tempUnit', unit); } catch {} }}
+        onTempUnitChange={(unit) => { setTempUnit(unit); try { localStorage.setItem('openhamclock_tempUnit', unit); } catch { } }}
         nodeId={nodeId}
       />
     </div>
@@ -303,7 +337,7 @@ export const DockableApp = ({
         <WeatherPanel
           weatherData={dxWeather}
           tempUnit={tempUnit}
-          onTempUnitChange={(unit) => { setTempUnit(unit); try { localStorage.setItem('openhamclock_tempUnit', unit); } catch {} }}
+          onTempUnitChange={(unit) => { setTempUnit(unit); try { localStorage.setItem('openhamclock_tempUnit', unit); } catch { } }}
           nodeId={nodeId}
         />
       )}
@@ -311,11 +345,11 @@ export const DockableApp = ({
   );
 
   const rot = useRotator({
-  mock: false,
-  endpointUrl: isLocalInstall ? "/api/rotator/status" : undefined,
-  pollMs: 2000,
-  staleMs: 5000,
-});
+    mock: false,
+    endpointUrl: isLocalInstall ? "/api/rotator/status" : undefined,
+    pollMs: 2000,
+    staleMs: 5000,
+  });
   const turnRotator = useCallback(async (azimuth) => {
     const res = await fetch("/api/rotator/turn", {
       method: "POST",
@@ -337,7 +371,7 @@ export const DockableApp = ({
     }
     return data;
   }, []);
-  
+
   // Render World Map
   const renderWorldMap = () => (
     <div style={{ height: '100%', width: '100%', position: 'relative' }}>
@@ -386,6 +420,7 @@ export const DockableApp = ({
         callsign={config.callsign}
         lowMemoryMode={config.lowMemoryMode}
         units={config.units}
+        onSpotClick={handleSpotClick}
         mouseZoom={config.mouseZoom}
       />
     </div>
@@ -468,12 +503,7 @@ export const DockableApp = ({
             onFilterChange={setDxFilters}
             onOpenFilters={() => setShowDXFilters(true)}
             onHoverSpot={setHoveredSpot}
-            onSpotClick={(spot) => {
-              const path = (dxClusterData.paths || []).find(p => p.dxCall === spot.call);
-              if (path && path.dxLat != null && path.dxLon != null) {
-                handleDXChange({ lat: path.dxLat, lon: path.dxLon });
-              }
-            }}
+            onSpotClick={handleSpotClick}
             hoveredSpot={hoveredSpot}
             showOnMap={mapLayersEff.showDXPaths}
             onToggleMap={toggleDXPathsEff}
@@ -490,11 +520,7 @@ export const DockableApp = ({
             onToggleMap={togglePSKReporterEff}
             filters={pskFilters}
             onOpenFilters={() => setShowPSKFilters(true)}
-            onShowOnMap={(report) => {
-              if (report.lat && report.lon) {
-                handleDXChange({ lat: report.lat, lon: report.lon });
-              }
-            }}
+            onSpotClick={handleSpotClick}
             wsjtxDecodes={wsjtx.decodes}
             wsjtxClients={wsjtx.clients}
             wsjtxQsos={wsjtx.qsos}
@@ -530,13 +556,13 @@ export const DockableApp = ({
         break;
 
       case 'sota':
-        content = <SOTAPanel data={sotaSpots.data} loading={sotaSpots.loading} showOnMap={mapLayers.showSOTA} onToggleMap={toggleSOTA} />;
+        content = <SOTAPanel data={sotaSpots.data} loading={sotaSpots.loading} showOnMap={mapLayers.showSOTA} onToggleMap={toggleSOTA} onSpotClick={handleSpotClick} />;
         break;
 
       case 'contests':
         content = <ContestPanel data={contests.data} loading={contests.loading} />;
         break;
-      
+
       case "rotator":
         return (
           <RotatorPanel
@@ -550,19 +576,26 @@ export const DockableApp = ({
           />
         );
 
-       
+
       case 'ambient':
         content = (
           <AmbientPanel
             tempUnit={tempUnit}
             onTempUnitChange={(unit) => {
               setTempUnit(unit);
-              try { localStorage.setItem('openhamclock_tempUnit', unit); } catch {}
+              try { localStorage.setItem('openhamclock_tempUnit', unit); } catch { }
             }}
-            nodeId={nodeId}
           />
         );
-        break; 
+        break;
+
+      case 'rig-control':
+        content = <RigControlPanel />;
+        break;
+
+      case 'on-air':
+        content = <OnAirPanel />;
+        break;
 
       case 'id-timer':
         content = <IDTimerPanel callsign={config.callsign} />;
