@@ -1972,7 +1972,7 @@ let sotaSummits = { data: null, timestamp: 0};
 const SOTASUMMITS_CACHE_TTL = 24 * 60 * 60 * 1000; // 1 day
 
 // SOTA Summits
-// SOTA publishes a CSV of teh Summit detail every day. Save this into
+// SOTA publishes a CSV of the Summit detail every day. Save this into
 // a cache so we can look it up when loading the spots.
 
 async function checkSummitCache() {
@@ -2027,7 +2027,7 @@ app.get('/api/sota/spots', async (req, res) => {
     const data = await response.json();
 
     if (sotaSummits.data) {
-      // If we have data in teh sotaSummits cache, use it to populate summitDetails.
+      // If we have data in the sotaSummits cache, use it to populate summitDetails.
       data.map(s => {
         const summit = `${s.associationCode}/${s.summitCode}`;
         s.summitDetails = sotaSummits.data[summit];
