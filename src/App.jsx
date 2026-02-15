@@ -43,6 +43,10 @@ import useResponsiveScale from './hooks/app/useResponsiveScale';
 import useLocalInstall from './hooks/app/useLocalInstall';
 import useVersionCheck from './hooks/app/useVersionCheck';
 import WhatsNew from './components/WhatsNew.jsx';
+import { initCtyLookup } from './utils/ctyLookup.js';
+
+// Load DXCC entity database on app startup (non-blocking)
+initCtyLookup();
 
 const App = () => {
   const { t } = useTranslation();

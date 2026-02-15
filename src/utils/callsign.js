@@ -2,6 +2,7 @@
  * Callsign and Band Utilities
  * Band detection, mode detection, callsign parsing
  */
+import { ctyLookup } from './ctyLookup.js';
 
 /**
  * HF Amateur Bands
@@ -188,35 +189,64 @@ const FALLBACK_MAP = {
 };
 
 /**
- * Get CQ zone, ITU zone, and continent from callsign
+ * Get CQ zone, ITU zone, continent, and entity info from callsign.
+ *
+ * Uses the cty.dat database (loaded from server on startup) for comprehensive
+ * DXCC entity identification with thousands of prefix patterns and exact
+ * callsign matches. Falls back to the built-in PREFIX_MAP if cty.dat
+ * hasn't loaded yet.
  */
 export const getCallsignInfo = (call) => {
-  if (!call) return { cqZone: null, ituZone: null, continent: null };
+  if (!call) return { cqZone: null, ituZone: null, continent: null, entity: null, lat: null, lon: null, dxcc: null };
+
+  // Try cty.dat lookup first (comprehensive: ~400 entities, thousands of prefixes)
+  const cty = ctyLookup(call);
+  if (cty) {
+    return {
+      cqZone: cty.cq,
+      ituZone: cty.itu,
+      continent: cty.cont,
+      entity: cty.entity,
+      dxcc: cty.dxcc,
+      lat: cty.lat,
+      lon: cty.lon,
+    };
+  }
+
+  // Fallback to built-in PREFIX_MAP (used before cty.dat loads or if fetch fails)
   const upper = call.toUpperCase();
-  
+
   // Try to match prefix (longest match first)
   for (let len = 4; len >= 1; len--) {
     const prefix = upper.substring(0, len);
     if (PREFIX_MAP[prefix]) {
-      return { 
-        cqZone: PREFIX_MAP[prefix].cq, 
-        ituZone: PREFIX_MAP[prefix].itu, 
-        continent: PREFIX_MAP[prefix].cont 
+      return {
+        cqZone: PREFIX_MAP[prefix].cq,
+        ituZone: PREFIX_MAP[prefix].itu,
+        continent: PREFIX_MAP[prefix].cont,
+        entity: null,
+        dxcc: null,
+        lat: null,
+        lon: null,
       };
     }
   }
-  
+
   // Fallback based on first character
   const firstChar = upper[0];
   if (FALLBACK_MAP[firstChar]) {
     return {
       cqZone: FALLBACK_MAP[firstChar].cq,
       ituZone: FALLBACK_MAP[firstChar].itu,
-      continent: FALLBACK_MAP[firstChar].cont
+      continent: FALLBACK_MAP[firstChar].cont,
+      entity: null,
+      dxcc: null,
+      lat: null,
+      lon: null,
     };
   }
-  
-  return { cqZone: null, ituZone: null, continent: null };
+
+  return { cqZone: null, ituZone: null, continent: null, entity: null, lat: null, lon: null, dxcc: null };
 };
 
 export default {
@@ -227,5 +257,5 @@ export default {
   getBandColor,
   detectMode,
   PREFIX_MAP,
-  getCallsignInfo
+  getCallsignInfo,
 };

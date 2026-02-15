@@ -28,6 +28,7 @@ const dgram = require('dgram');
 const fs = require('fs');
 const { execFile, spawn } = require('child_process');
 const mqttLib = require('mqtt');
+const { initCtyData, getCtyData, lookupCall } = require('./src/server/ctydat.js');
 
 // Read version from package.json as single source of truth
 const APP_VERSION = (() => {
@@ -4166,6 +4167,20 @@ function estimateLocationFromPrefix(callsign) {
     }
   }
   
+  // Fallback: try cty.dat database (has lat/lon for every DXCC entity)
+  const ctyResult = lookupCall(callsign);
+  if (ctyResult && ctyResult.lat != null && ctyResult.lon != null) {
+    return {
+      callsign,
+      lat: ctyResult.lat,
+      lon: ctyResult.lon,
+      grid: null,
+      country: ctyResult.entity || 'Unknown',
+      estimated: true,
+      source: 'prefix'
+    };
+  }
+
   // Fallback to first character (most likely country for each letter)
   const firstCharGrids = {
     'A': 'EM79', 'B': 'PL02', 'C': 'FN03', 'D': 'JO51', 'E': 'IO63', // A=USA (AA-AL), B=China, C=Canada, D=Germany, E=Spain/Ireland
@@ -9076,6 +9091,30 @@ app.get('/api/wsjtx/relay/download/:platform', (req, res) => {
 // CONTEST LOGGER UDP + API (N1MM / DXLog)
 // ============================================
 
+// ── CTY.DAT — DXCC Entity Database ────────────────────────
+// Serves the parsed cty.dat prefix → entity lookup for client-side callsign identification.
+// Data from country-files.com (AD1C), refreshed every 24h.
+
+app.get('/api/cty', (req, res) => {
+  const data = getCtyData();
+  if (!data) {
+    return res.status(503).json({ error: 'CTY data not yet loaded' });
+  }
+  // Long cache — data only changes every few weeks upstream
+  res.set('Cache-Control', 'public, max-age=3600, s-maxage=3600');
+  res.json(data);
+});
+
+// Lightweight single-call lookup (avoids sending full 200KB+ database to client)
+app.get('/api/cty/lookup/:call', (req, res) => {
+  const result = lookupCall(req.params.call);
+  if (!result) {
+    return res.status(404).json({ error: 'Unknown callsign prefix' });
+  }
+  res.set('Cache-Control', 'public, max-age=3600, s-maxage=3600');
+  res.json(result);
+});
+
 // ── RIG LISTENER DOWNLOAD ─────────────────────────────────
 // Serves the rig-listener.js agent and generates one-click launcher scripts
 // that auto-download portable Node.js + serialport. User double-clicks → wizard runs.
@@ -9656,6 +9695,14 @@ if (N1MM_ENABLED) {
   console.log('');
 
   startAutoUpdateScheduler();
+  
+  // Load DXCC entity database (cty.dat) — async, non-blocking
+  initCtyData().then(() => {
+    const data = getCtyData();
+    if (data) {
+      console.log(`  📡 CTY database: ${data.entities.length} entities, ${Object.keys(data.prefixes).length} prefixes`);
+    }
+  }).catch(() => {});
   
   // Check for outdated systemd service file that prevents auto-update restart
   if (AUTO_UPDATE_ENABLED && (process.env.INVOCATION_ID || process.ppid === 1)) {
