@@ -9057,6 +9057,11 @@ app.get('/api/rig/listener.js', (req, res) => {
   }
 });
 
+app.get('/api/rig/package.json', (req, res) => {
+  res.setHeader('Content-Type', 'application/json');
+  res.json({ name: 'ohc-rig', version: '1.0.0', dependencies: { serialport: '^12.0.0' } });
+});
+
 app.get('/api/rig/download/:platform', (req, res) => {
   const platform = req.params.platform;
   if (!['linux', 'mac', 'windows'].includes(platform)) {
@@ -9140,10 +9145,8 @@ app.get('/api/rig/download/:platform', (req, res) => {
       '    exit /b 1',
       ')',
       '',
-      ':: ---- package.json ----',
-      'if not exist "%RIG_DIR%\\package.json" (',
-      '    powershell -Command "Set-Content -Path \'%RIG_DIR%\\package.json\' -Value \'{""name"":""ohc-rig"",""version"":""1.0.0"",""dependencies"":{""serialport"":""^12.0.0""}}\'"',
-      ')',
+      ':: ---- package.json (always refresh) ----',
+      'powershell -Command "try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri \'' + serverURL + '/api/rig/package.json\' -OutFile \'%RIG_DIR%\\package.json\' } catch { Write-Host $_.Exception.Message; exit 1 }"',
       '',
       ':: ---- npm install (one-time) ----',
       'if not exist "%RIG_DIR%\\node_modules\\serialport" (',
@@ -9221,10 +9224,8 @@ app.get('/api/rig/download/:platform', (req, res) => {
       'echo "  Downloading rig listener..."',
       'curl -sL "' + serverURL + '/api/rig/listener.js" -o "$RIG_DIR/rig-listener.js"',
       '',
-      '# package.json',
-      'if [ ! -f "$RIG_DIR/package.json" ]; then',
-      '  echo \'{"name":"ohc-rig","version":"1.0.0","dependencies":{"serialport":"^12.0.0"}}\' > "$RIG_DIR/package.json"',
-      'fi',
+      '# package.json (always refresh)',
+      'curl -sL "' + serverURL + '/api/rig/package.json" -o "$RIG_DIR/package.json"',
       '',
       '# npm install (one-time)',
       'if [ ! -d "$RIG_DIR/node_modules/serialport" ]; then',
