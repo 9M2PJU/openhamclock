@@ -160,6 +160,8 @@ export const saveConfig = (config) => {
   try {
     localStorage.setItem('openhamclock_config', JSON.stringify(config));
     console.log('[Config] Saved to localStorage');
+    // Notify plugins of config change (storage events don't fire in the same tab)
+    window.dispatchEvent(new CustomEvent('openhamclock-config-change', { detail: config }));
   } catch (e) {
     console.error('[Config] Error saving to localStorage:', e);
   }

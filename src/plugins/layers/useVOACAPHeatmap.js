@@ -179,6 +179,18 @@ export function useLayer({ map, enabled, opacity, callsign, locator }) {
     const saved = localStorage.getItem('voacap-heatmap-grid');
     return saved ? parseInt(saved) : 10;
   });
+  const [propMode, setPropMode] = useState(() => {
+    try {
+      const cfg = JSON.parse(localStorage.getItem('openhamclock_config') || '{}');
+      return cfg.propagation?.mode || 'SSB';
+    } catch { return 'SSB'; }
+  });
+  const [propPower, setPropPower] = useState(() => {
+    try {
+      const cfg = JSON.parse(localStorage.getItem('openhamclock_config') || '{}');
+      return cfg.propagation?.power || 100;
+    } catch { return 100; }
+  });
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [lastFetch, setLastFetch] = useState(0);
@@ -186,6 +198,20 @@ export function useLayer({ map, enabled, opacity, callsign, locator }) {
   const layersRef = useRef([]);
   const controlRef = useRef(null);
   const intervalRef = useRef(null);
+  
+  // Listen for config changes (fired by saveConfig in config.js)
+  useEffect(() => {
+    const onConfigChange = (e) => {
+      const cfg = e.detail || {};
+      const newMode = cfg.propagation?.mode || 'SSB';
+      const newPower = cfg.propagation?.power || 100;
+      setPropMode(prev => prev !== newMode ? newMode : prev);
+      setPropPower(prev => prev !== newPower ? newPower : prev);
+    };
+    
+    window.addEventListener('openhamclock-config-change', onConfigChange);
+    return () => window.removeEventListener('openhamclock-config-change', onConfigChange);
+  }, []);
   
   // Parse DE location from locator grid square
   const deLocation = (() => {
@@ -208,14 +234,6 @@ export function useLayer({ map, enabled, opacity, callsign, locator }) {
       
       setLoading(true);
       try {
-        // Read propagation mode/power from config
-        let propMode = 'SSB', propPower = 100;
-        try {
-          const cfg = JSON.parse(localStorage.getItem('openhamclock_config') || '{}');
-          if (cfg.propagation?.mode) propMode = cfg.propagation.mode;
-          if (cfg.propagation?.power) propPower = cfg.propagation.power;
-        } catch (e) {}
-        
         const url = `/api/propagation/heatmap?deLat=${deLocation.lat.toFixed(1)}&deLon=${deLocation.lon.toFixed(1)}&freq=${band.freq}&grid=${gridSize}&mode=${propMode}&power=${propPower}`;
         const res = await fetch(url);
         if (res.ok) {
@@ -236,7 +254,7 @@ export function useLayer({ map, enabled, opacity, callsign, locator }) {
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
-  }, [enabled, deLocation?.lat, deLocation?.lon, selectedBand, gridSize]);
+  }, [enabled, deLocation?.lat, deLocation?.lon, selectedBand, gridSize, propMode, propPower]);
   
   // Create control panel
   useEffect(() => {
@@ -261,6 +279,14 @@ export function useLayer({ map, enabled, opacity, callsign, locator }) {
         
         const gridOptions = [5, 10, 15, 20].map(g =>
           `<option value="${g}" ${g === gridSize ? 'selected' : ''}>${g}°</option>`
+        ).join('');
+        
+        const modeOptions = ['SSB', 'CW', 'FT8', 'FT4', 'RTTY', 'AM', 'FM'].map(m =>
+          `<option value="${m}" ${m === propMode ? 'selected' : ''}>${m}</option>`
+        ).join('');
+        
+        const powerOptions = [5, 10, 25, 50, 100, 200, 400, 500, 750, 1000, 1500].map(p =>
+          `<option value="${p}" ${p === propPower ? 'selected' : ''}>${p}W</option>`
         ).join('');
         
         container.innerHTML = `
@@ -291,6 +317,26 @@ export function useLayer({ map, enabled, opacity, callsign, locator }) {
                   border: 1px solid #555; border-radius: 4px;
                   font-family: 'JetBrains Mono', monospace; font-size: 11px;
                 ">${bandOptions}</select>
+              </div>
+              <div style="display: flex; gap: 6px; margin-bottom: 6px;">
+                <div style="flex: 1;">
+                  <label style="color: #888; font-size: 10px;">Mode</label>
+                  <select id="voacap-mode-select" style="
+                    width: 100%; margin-top: 2px; padding: 4px;
+                    background: rgba(0,0,0,0.5); color: #fff;
+                    border: 1px solid #555; border-radius: 4px;
+                    font-family: 'JetBrains Mono', monospace; font-size: 11px;
+                  ">${modeOptions}</select>
+                </div>
+                <div style="flex: 1;">
+                  <label style="color: #888; font-size: 10px;">Power</label>
+                  <select id="voacap-power-select" style="
+                    width: 100%; margin-top: 2px; padding: 4px;
+                    background: rgba(0,0,0,0.5); color: #fff;
+                    border: 1px solid #555; border-radius: 4px;
+                    font-family: 'JetBrains Mono', monospace; font-size: 11px;
+                  ">${powerOptions}</select>
+                </div>
               </div>
               <div style="margin-bottom: 8px;">
                 <label style="color: #888; font-size: 10px;">Grid Resolution</label>
@@ -326,6 +372,18 @@ export function useLayer({ map, enabled, opacity, callsign, locator }) {
     controlRef.current = new VOACAPControl();
     map.addControl(controlRef.current);
     
+    // Helper to update both plugin state AND global config in localStorage
+    const updateGlobalConfig = (mode, power) => {
+      try {
+        const cfg = JSON.parse(localStorage.getItem('openhamclock_config') || '{}');
+        if (!cfg.propagation) cfg.propagation = {};
+        cfg.propagation.mode = mode;
+        cfg.propagation.power = power;
+        localStorage.setItem('openhamclock_config', JSON.stringify(cfg));
+        // Don't dispatch event here — we're already updating local state directly
+      } catch (e) {}
+    };
+    
     // Wire up event handlers after DOM is ready
     setTimeout(() => {
       const container = controlRef.current?._container;
@@ -349,6 +407,8 @@ export function useLayer({ map, enabled, opacity, callsign, locator }) {
       
       const bandSelect = document.getElementById('voacap-band-select');
       const gridSelect = document.getElementById('voacap-grid-select');
+      const modeSelect = document.getElementById('voacap-mode-select');
+      const powerSelect = document.getElementById('voacap-power-select');
       
       if (bandSelect) {
         bandSelect.addEventListener('change', (e) => {
@@ -364,21 +424,43 @@ export function useLayer({ map, enabled, opacity, callsign, locator }) {
           localStorage.setItem('voacap-heatmap-grid', val);
         });
       }
+      if (modeSelect) {
+        modeSelect.addEventListener('change', (e) => {
+          const val = e.target.value;
+          setPropMode(val);
+          updateGlobalConfig(val, propPower);
+        });
+      }
+      if (powerSelect) {
+        powerSelect.addEventListener('change', (e) => {
+          const val = parseFloat(e.target.value);
+          setPropPower(val);
+          updateGlobalConfig(propMode, val);
+        });
+      }
     }, 150);
     
   }, [enabled, map]);
   
-  // Update status text
+  // Update status text and sync panel dropdowns when mode/power change
   useEffect(() => {
+    if (!enabled) return;
+    
     const statusEl = document.getElementById('voacap-status');
-    if (statusEl && enabled) {
+    if (statusEl) {
       if (loading) {
         statusEl.textContent = 'Loading...';
       } else if (data) {
         statusEl.textContent = `${data.mode || 'SSB'} ${data.power || 100}W | SFI: ${data.solarData?.sfi} K: ${data.solarData?.kIndex}`;
       }
     }
-  }, [loading, data, enabled]);
+    
+    // Sync dropdowns if changed externally (e.g. from Settings panel)
+    const modeSelect = document.getElementById('voacap-mode-select');
+    const powerSelect = document.getElementById('voacap-power-select');
+    if (modeSelect && modeSelect.value !== propMode) modeSelect.value = propMode;
+    if (powerSelect && parseFloat(powerSelect.value) !== propPower) powerSelect.value = propPower;
+  }, [loading, data, enabled, propMode, propPower]);
   
   // Render heatmap rectangles on the map
   useEffect(() => {
