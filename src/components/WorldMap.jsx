@@ -805,7 +805,10 @@ export const WorldMap = ({
         let spotLon = parseFloat(spot.lon);
         
         if (!isNaN(spotLat) && !isNaN(spotLon)) {
-          const displayCall = spot.receiver || spot.sender;
+          // For TX spots (you transmitted → someone received): show the receiver (remote station)
+          // For RX spots (someone transmitted → you received): show the sender (remote station)
+          const displayCall = spot.direction === 'rx' ? spot.sender : (spot.receiver || spot.sender);
+          const dirLabel = spot.direction === 'rx' ? 'RX' : 'TX';
           const freqMHz = spot.freqMHz || (spot.freq ? (spot.freq / 1000000).toFixed(3) : '?');
           const bandColor = getBandColor(parseFloat(freqMHz));
           
@@ -841,7 +844,7 @@ export const WorldMap = ({
                 opacity: 0.9,
                 fillOpacity: 0.8
               }).bindPopup(`
-                <b data-qrz-call="${esc(displayCall)}" style="cursor:pointer">${esc(displayCall)}</b><br>
+                <b data-qrz-call="${esc(displayCall)}" style="cursor:pointer">${esc(displayCall)}</b> <span style="color:#888;font-size:10px">${dirLabel}</span><br>
                 ${esc(spot.mode)} @ ${esc(freqMHz)} MHz<br>
                 ${spot.snr !== null ? `SNR: ${spot.snr > 0 ? '+' : ''}${spot.snr} dB` : ''}
               `).addTo(map);
