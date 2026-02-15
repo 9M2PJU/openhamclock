@@ -57,6 +57,7 @@ export default function ModernLayout(props) {
     propagation,
     dxClusterData,
     potaSpots,
+    wwffSpots,
     sotaSpots,
     mySpots,
     dxpeditions,
@@ -75,6 +76,7 @@ export default function ModernLayout(props) {
     toggleDXPaths,
     toggleDXLabels,
     togglePOTA,
+    toggleWWFF,
     toggleSOTA,
     toggleSatellites,
     togglePSKReporter,
@@ -279,6 +281,7 @@ export default function ModernLayout(props) {
           onDXChange={handleDXChange}
           dxLocked={dxLocked}
           potaSpots={potaSpots.data}
+          wwffSpots={wwffSpots.data}
           sotaSpots={sotaSpots.data}
           mySpots={mySpots.data}
           dxPaths={dxClusterData.paths}
@@ -289,6 +292,7 @@ export default function ModernLayout(props) {
           showDXLabels={mapLayers.showDXLabels}
           onToggleDXLabels={toggleDXLabels}
           showPOTA={mapLayers.showPOTA}
+          showWWFF={mapLayers.showWWFF}
           showSOTA={mapLayers.showSOTA}
           showSatellites={mapLayers.showSatellites}
           showPSKReporter={mapLayers.showPSKReporter}
@@ -396,6 +400,10 @@ export default function ModernLayout(props) {
                 sotaLoading={sotaSpots.loading}
                 showSOTA={mapLayers.showSOTA}
                 onToggleSOTA={toggleSOTA}
+                wwffData={wwffSpots.data}
+                wwffLoading={wwffSpots.loading}
+                showWWFF={mapLayers.showWWFF}
+                onToggleWWFF={toggleWWFF}
               />
             </div>
           )}

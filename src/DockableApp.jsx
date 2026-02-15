@@ -11,6 +11,7 @@ import {
   WorldMap,
   DXClusterPanel,
   POTAPanel,
+  WWFFPanel,
   SOTAPanel,
   ContestPanel,
   SolarPanel,
@@ -72,6 +73,7 @@ export const DockableApp = ({
   // Spots & data
   dxClusterData,
   potaSpots,
+  wwffSpots,
   sotaSpots,
   mySpots,
   dxpeditions,
@@ -96,6 +98,7 @@ export const DockableApp = ({
   toggleDXLabels,
   togglePOTA,
   togglePOTALabels,
+  toggleWWFF,
   toggleSOTA,
   toggleSatellites,
   togglePSKReporter,
@@ -141,6 +144,8 @@ export const DockableApp = ({
   const toggleDXLabelsEff = useInternalMapLayers ? internalMap.toggleDXLabels : toggleDXLabels;
   const togglePOTAEff = useInternalMapLayers ? internalMap.togglePOTA : togglePOTA;
   const togglePOTALabelsEff = useInternalMapLayers ? internalMap.togglePOTALabels : togglePOTALabels;
+  const toggleWWFFEff = useInternalMapLayers ? internalMap.toggleWWFF : toggleWWFF;
+  const toggleWWFFLabelsEff = useInternalMapLayers ? internalMap.toggleWWFFLabels : toggleWWFFLabels;
   const toggleSatellitesEff = useInternalMapLayers ? internalMap.toggleSatellites : toggleSatellites;
   const togglePSKReporterEff = useInternalMapLayers ? internalMap.togglePSKReporter : togglePSKReporter;
   const toggleWSJTXEff = useInternalMapLayers ? internalMap.toggleWSJTX : toggleWSJTX;
@@ -252,6 +257,7 @@ export const DockableApp = ({
       'psk-reporter': { name: 'PSK Reporter', icon: '📡' },
       'dxpeditions': { name: 'DXpeditions', icon: '🏝️' },
       'pota': { name: 'POTA', icon: '🏕️' },
+      'wwff': { name: 'WWFF', icon: '🌲' },
       'sota': { name: 'SOTA', icon: '⛰️' },
       ...(isLocalInstall ? { 'rotator': { name: 'Rotator', icon: '🧭' } } : {}),
       'contests': { name: 'Contests', icon: '🏆' },
@@ -382,6 +388,7 @@ export const DockableApp = ({
         dxLocked={dxLocked}
 
         potaSpots={potaSpots.data}
+        wwffSpots={wwffSpots.data}
         sotaSpots={sotaSpots.data}
         mySpots={mySpots.data}
         dxPaths={dxClusterData.paths}
@@ -396,6 +403,9 @@ export const DockableApp = ({
 
         showPOTA={mapLayersEff.showPOTA}
         showPOTALabels={mapLayersEff.showPOTALabels}
+
+        showWWFF={mapLayersEff.showWWFF}
+        showWWFFLabels={mapLayersEff.showWWFFLabels}
 
         showSOTA={mapLayersEff.showSOTA}
 
@@ -554,6 +564,20 @@ export const DockableApp = ({
           />
         );
         break;
+      
+      case 'wwff':
+        content = (
+          <WWFFPanel
+            data={wwffSpots.data}
+            loading={wwffSpots.loading}
+            showOnMap={mapLayersEff.showWWFF}
+            onToggleMap={toggleWWFFEff}
+
+            showLabelsOnMap={mapLayersEff.showWWFFLabels}
+            onToggleLabelsOnMap={toggleWWFFLabelsEff}
+          />
+        );
+        break;
 
       case 'sota':
         content = <SOTAPanel data={sotaSpots.data} loading={sotaSpots.loading} showOnMap={mapLayers.showSOTA} onToggleMap={toggleSOTA} onSpotClick={handleSpotClick} />;
@@ -622,10 +646,10 @@ export const DockableApp = ({
     return content;
   }, [
     config, deGrid, dxGrid, dxLocation, deSunTimes, dxSunTimes, showDxWeather, tempUnit, localWeather, dxWeather, solarIndices,
-    propagation, bandConditions, dxClusterData, dxFilters, hoveredSpot, mapLayers, potaSpots, sotaSpots,
+    propagation, bandConditions, dxClusterData, dxFilters, hoveredSpot, mapLayers, potaSpots, wwffSpots, sotaSpots,
     mySpots, satellites, filteredSatellites, filteredPskSpots, wsjtxMapSpots, dxpeditions, contests,
     pskFilters, wsjtx, handleDXChange, setDxFilters, setShowDXFilters, setShowPSKFilters,
-    setHoveredSpot, toggleDXPaths, toggleDXLabels, togglePOTA, toggleSOTA, toggleSatellites, togglePSKReporter, toggleWSJTX,
+    setHoveredSpot, toggleDXPaths, toggleDXLabels, togglePOTA, toggleWWFF, toggleSOTA, toggleSatellites, togglePSKReporter, toggleWSJTX,
     dxLocked, handleToggleDxLock, panelZoom
   ]);
 
