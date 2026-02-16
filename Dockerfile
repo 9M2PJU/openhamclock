@@ -47,6 +47,7 @@ RUN npm install --omit=dev
 # Copy server files
 COPY server.js ./
 COPY config.js ./
+COPY src/server ./src/server
 
 # Copy WSJT-X relay agent (served as download to users)
 COPY wsjtx-relay ./wsjtx-relay

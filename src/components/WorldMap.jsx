@@ -19,6 +19,7 @@ import { getAllLayers } from '../plugins/layerRegistry.js';
 import useLocalInstall from '../hooks/app/useLocalInstall.js';
 import { IconSatellite, IconTag, IconSun, IconMoon } from './Icons.jsx';
 import PluginLayer from './PluginLayer.jsx';
+import AzimuthalMap from './AzimuthalMap.jsx';
 import { DXNewsTicker } from './DXNewsTicker.jsx';
 import { filterDXPaths } from "../utils";
 
@@ -1271,10 +1272,38 @@ export const WorldMap = ({
 
   return (
     <div style={{ position: 'relative', height: '100%', minHeight: '200px' }}>
-      <div ref={mapRef} style={{ height: '100%', width: '100%', borderRadius: '8px', background: mapStyle === 'countries' ? '#4a90d9' : undefined }} />
+      {/* Azimuthal equidistant projection (canvas-based) */}
+      {mapStyle === 'azimuthal' && (
+        <AzimuthalMap
+          deLocation={deLocation}
+          dxLocation={dxLocation}
+          onDXChange={onDXChange}
+          dxLocked={dxLocked}
+          potaSpots={potaSpots}
+          wwffSpots={wwffSpots}
+          sotaSpots={sotaSpots}
+          dxPaths={dxPaths}
+          dxFilters={dxFilters}
+          pskReporterSpots={pskReporterSpots}
+          wsjtxSpots={wsjtxSpots}
+          showDXPaths={showDXPaths}
+          showPOTA={showPOTA}
+          showWWFF={showWWFF}
+          showSOTA={showSOTA}
+          showPSKReporter={showPSKReporter}
+          showWSJTX={showWSJTX}
+          onSpotClick={onSpotClick}
+          hoveredSpot={hoveredSpot}
+          callsign={callsign}
+          hideOverlays={hideOverlays}
+        />
+      )}
 
-      {/* Render all plugin layers */}
-      {mapInstanceRef.current && getAllLayers().map(layerDef => (
+      {/* Leaflet map (hidden when azimuthal is active) */}
+      <div ref={mapRef} style={{ height: '100%', width: '100%', borderRadius: '8px', background: mapStyle === 'countries' ? '#4a90d9' : undefined, display: mapStyle === 'azimuthal' ? 'none' : undefined }} />
+
+      {/* Render all plugin layers (Leaflet only) */}
+      {mapStyle !== 'azimuthal' && mapInstanceRef.current && getAllLayers().map(layerDef => (
         <PluginLayer
           key={layerDef.id}
           plugin={layerDef}
@@ -1292,8 +1321,8 @@ export const WorldMap = ({
 
       {/* MODIS Control (Only shows when MODIS map style is active) */}
 
-      {/* Map lock toggle — below Leaflet zoom controls */}
-      <button
+      {/* Map lock toggle — below Leaflet zoom controls (Leaflet only) */}
+      {mapStyle !== 'azimuthal' && <button
         onClick={() => setMapLocked(prev => !prev)}
         title={mapLocked ? 'Unlock map (enable panning/zooming)' : 'Lock map (prevent accidental panning/zooming)'}
         style={{
@@ -1316,10 +1345,10 @@ export const WorldMap = ({
         }}
       >
         {mapLocked ? '🔒' : '🔓'}
-      </button>
+      </button>}
 
-      {/* Night darkness slider */}
-      <div
+      {/* Night darkness slider (Leaflet only) */}
+      {mapStyle !== 'azimuthal' && <div
         title="Adjust night overlay darkness"
         style={{
           position: 'absolute',
@@ -1360,7 +1389,7 @@ export const WorldMap = ({
         }}>
           {nightDarkness}%
         </span>
-      </div>
+      </div>}
 
       {mapStyle === 'MODIS' && (
         <div style={{

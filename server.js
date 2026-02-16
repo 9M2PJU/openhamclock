@@ -28,6 +28,11 @@ const dgram = require('dgram');
 const fs = require('fs');
 const { execFile, spawn } = require('child_process');
 const mqttLib = require('mqtt');
+const {
+  initCtyData,
+  getCtyData,
+  lookupCall,
+} = require('./src/server/ctydat.js');
 
 // Read version from package.json as single source of truth
 const APP_VERSION = (() => {
@@ -43,6 +48,13 @@ const APP_VERSION = (() => {
 
 // Global safety nets — log but don't crash on stray errors (e.g. MQTT connack timeout)
 process.on('uncaughtException', (err) => {
+  // BadRequestError: request aborted — benign, just a client disconnecting mid-request
+  if (
+    err.type === 'request.aborted' ||
+    (err.name === 'BadRequestError' && err.message === 'request aborted')
+  ) {
+    return; // Silently ignore — not a real crash
+  }
   console.error(`[FATAL] Uncaught exception: ${err.message}`);
   console.error(err.stack);
   // Exit on truly fatal errors, but give time to flush logs
@@ -2558,22 +2570,27 @@ const WWFF_CACHE_TTL = 90 * 1000; // 90 seconds (longer than 60s frontend poll t
 app.get('/api/wwff/spots', async (req, res) => {
   try {
     // Return cached data if fresh
-    if (potaCache.data && (Date.now() - potaCache.timestamp) < WWFF_CACHE_TTL) {
+    if (potaCache.data && Date.now() - potaCache.timestamp < WWFF_CACHE_TTL) {
       return res.json(wwffCache.data);
     }
-    
+
     const response = await fetch('https://spots.wwff.co/static/spots.json');
     const data = await response.json();
-    
+
     // Log diagnostic info about the response
     if (Array.isArray(data) && data.length > 0) {
       const sample = data[0];
-      logDebug('[WWFF] API returned', data.length, 'spots. Sample fields:', Object.keys(sample).join(', '));
+      logDebug(
+        '[WWFF] API returned',
+        data.length,
+        'spots. Sample fields:',
+        Object.keys(sample).join(', '),
+      );
     }
-    
+
     // Cache the response
     wwffCache = { data, timestamp: Date.now() };
-    
+
     res.json(data);
   } catch (error) {
     logErrorOnce('WWFF', error.message);
@@ -3768,7 +3785,7 @@ app.get('/api/dxcluster/paths', async (req, res) => {
             const lonMatch = text.match(/<lng>([^<]+)<\/lng>/);
             const countryMatch = text.match(/<n>([^<]+)<\/name>/);
             if (latMatch && lonMatch) {
-              callsignLookupCache.set(call, {
+              cacheCallsignLookup(call, {
                 data: {
                   callsign: call,
                   lat: parseFloat(latMatch[1]),
@@ -3974,6 +3991,53 @@ app.get('/api/dxcluster/paths', async (req, res) => {
 // Cache for callsign lookups - callsigns don't change location often
 const callsignLookupCache = new Map(); // key = callsign, value = { data, timestamp }
 const CALLSIGN_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
+const CALLSIGN_CACHE_MAX = 10000; // Hard cap — evict oldest when exceeded
+
+// Periodic cleanup: purge expired entries every 30 minutes
+setInterval(
+  () => {
+    const now = Date.now();
+    let purged = 0;
+    for (const [call, entry] of callsignLookupCache) {
+      if (now - entry.timestamp > CALLSIGN_CACHE_TTL) {
+        callsignLookupCache.delete(call);
+        purged++;
+      }
+    }
+    // If still over cap after TTL purge, evict oldest entries
+    if (callsignLookupCache.size > CALLSIGN_CACHE_MAX) {
+      const sorted = [...callsignLookupCache.entries()].sort(
+        (a, b) => a[1].timestamp - b[1].timestamp,
+      );
+      const toRemove = sorted.slice(
+        0,
+        callsignLookupCache.size - CALLSIGN_CACHE_MAX,
+      );
+      for (const [call] of toRemove) {
+        callsignLookupCache.delete(call);
+        purged++;
+      }
+    }
+    if (purged > 0)
+      logDebug(
+        `[Cache] Callsign lookup: purged ${purged} expired/excess entries, ${callsignLookupCache.size} remaining`,
+      );
+  },
+  30 * 60 * 1000,
+);
+
+// Helper: add to cache with size enforcement — prevents unbounded growth between cleanups
+function cacheCallsignLookup(call, data) {
+  if (
+    callsignLookupCache.size >= CALLSIGN_CACHE_MAX &&
+    !callsignLookupCache.has(call)
+  ) {
+    // Evict oldest entry to make room
+    const oldest = callsignLookupCache.keys().next().value;
+    if (oldest) callsignLookupCache.delete(oldest);
+  }
+  callsignLookupCache.set(call, data);
+}
 
 // ── Extract base callsign from decorated/portable calls ──
 // Strips prefixes (5Z4/OZ6ABL → OZ6ABL) and suffixes (UA1TAN/M → UA1TAN)
@@ -4051,6 +4115,8 @@ const qrzSession = {
   loginInFlight: null, // Dedup concurrent login attempts
   lookupCount: 0,
   lastError: null,
+  authFailedUntil: 0, // Cooldown after credential failures — don't retry until this timestamp
+  authFailCooldown: 60 * 60 * 1000, // 1 hour cooldown after bad credentials
 };
 
 // Persist QRZ credentials to a file so they survive restarts (set via Settings UI)
@@ -4088,6 +4154,11 @@ function isQRZConfigured() {
 async function qrzLogin() {
   if (!isQRZConfigured()) return null;
 
+  // Don't retry if credentials failed recently — avoids hammering QRZ with bad creds
+  if (Date.now() < qrzSession.authFailedUntil) {
+    return null;
+  }
+
   // Dedup: if a login is already in-flight, piggyback on it
   if (qrzSession.loginInFlight) return qrzSession.loginInFlight;
 
@@ -4110,7 +4181,19 @@ async function qrzLogin() {
 
       if (errorMatch) {
         qrzSession.lastError = errorMatch[1];
-        console.error(`[QRZ] Login failed: ${errorMatch[1]}`);
+        // Credential failures get a long cooldown — no point retrying until creds change
+        if (
+          errorMatch[1].includes('incorrect') ||
+          errorMatch[1].includes('Invalid') ||
+          errorMatch[1].includes('denied')
+        ) {
+          qrzSession.authFailedUntil = Date.now() + qrzSession.authFailCooldown;
+          console.error(
+            `[QRZ] Login failed: ${errorMatch[1]} — suppressing retries for 1 hour`,
+          );
+        } else {
+          console.error(`[QRZ] Login failed: ${errorMatch[1]}`);
+        }
         return null;
       }
 
@@ -4118,6 +4201,7 @@ async function qrzLogin() {
         qrzSession.key = keyMatch[1];
         qrzSession.expiry = Date.now() + qrzSession.maxAge;
         qrzSession.lastError = null;
+        qrzSession.authFailedUntil = 0; // Clear cooldown on success
         const subInfo = subExpMatch ? subExpMatch[1] : 'unknown';
         console.log(`[QRZ] Session established (subscription: ${subInfo})`);
         return qrzSession.key;
@@ -4272,6 +4356,10 @@ app.get('/api/qrz/status', (req, res) => {
     hasSession: !!qrzSession.key,
     lookupCount: qrzSession.lookupCount,
     lastError: qrzSession.lastError,
+    authCooldownRemaining:
+      qrzSession.authFailedUntil > Date.now()
+        ? Math.round((qrzSession.authFailedUntil - Date.now()) / 60000)
+        : 0,
     source: CONFIG._qrzUsername
       ? 'env'
       : qrzSession.username
@@ -4295,6 +4383,7 @@ app.post('/api/qrz/configure', writeLimiter, async (req, res) => {
   qrzSession.password = password.trim();
   qrzSession.key = null;
   qrzSession.expiry = 0;
+  qrzSession.authFailedUntil = 0; // Clear cooldown — user is providing new credentials
 
   const key = await qrzLogin();
 
@@ -4338,6 +4427,7 @@ app.post('/api/qrz/remove', writeLimiter, (req, res) => {
   qrzSession.expiry = 0;
   qrzSession.lookupCount = 0;
   qrzSession.lastError = null;
+  qrzSession.authFailedUntil = 0;
 
   try {
     if (fs.existsSync(QRZ_CREDS_FILE)) {
@@ -4406,7 +4496,7 @@ app.get('/api/callsign/:call', async (req, res) => {
       logDebug(
         `[Callsign Lookup] ${callsign}: ${result.source} -> ${result.lat?.toFixed(2)}, ${result.lon?.toFixed(2)}`,
       );
-      callsignLookupCache.set(callsign, { data: result, timestamp: now });
+      cacheCallsignLookup(callsign, { data: result, timestamp: now });
       return res.json(result);
     }
 
@@ -4418,7 +4508,7 @@ app.get('/api/callsign/:call', async (req, res) => {
     // Still try prefix estimate on error
     const estimated = estimateLocationFromPrefix(callsign);
     if (estimated) {
-      callsignLookupCache.set(callsign, {
+      cacheCallsignLookup(callsign, {
         data: { ...estimated, source: 'prefix' },
         timestamp: now,
       });
@@ -5613,6 +5703,20 @@ function estimateLocationFromPrefix(callsign) {
         };
       }
     }
+  }
+
+  // Fallback: try cty.dat database (has lat/lon for every DXCC entity)
+  const ctyResult = lookupCall(callsign);
+  if (ctyResult && ctyResult.lat != null && ctyResult.lon != null) {
+    return {
+      callsign,
+      lat: ctyResult.lat,
+      lon: ctyResult.lon,
+      grid: null,
+      country: ctyResult.entity || 'Unknown',
+      estimated: true,
+      source: 'prefix',
+    };
   }
 
   // Fallback to first character (most likely country for each letter)
@@ -8650,15 +8754,15 @@ function calculateEnhancedReliability(
   );
   const luf = calculateLUF(distance, midLat, hour, sfi, kIndex);
 
-  // Apply signal margin from mode + power
-  // Positive margin (e.g. FT8 or high power) effectively widens the usable window:
-  //   - Extends effective MUF (weak-signal modes can decode signals near/above MUF)
+  // Apply signal margin from mode + power to MUF/LUF boundaries.
+  // Positive margin (e.g. FT8 or high power) widens the usable window:
+  //   - Extends effective MUF (more power/sensitivity can use marginal propagation)
   //   - Reduces effective LUF (more power overcomes D-layer absorption)
-  // Each dB of margin extends MUF by ~1.2% and reduces LUF by ~0.8%
-  const effectiveMuf = muf * (1 + signalMarginDb * 0.012);
-  const effectiveLuf = luf * Math.max(0.1, 1 - signalMarginDb * 0.008);
+  // Scale: ~2% per dB for MUF, ~1.5% per dB for LUF
+  const effectiveMuf = muf * (1 + signalMarginDb * 0.02);
+  const effectiveLuf = luf * Math.max(0.1, 1 - signalMarginDb * 0.015);
 
-  // Calculate reliability based on frequency position relative to effective MUF/LUF
+  // Calculate BASE reliability from frequency position relative to effective MUF/LUF
   let reliability = 0;
 
   if (freq > effectiveMuf * 1.1) {
@@ -8696,6 +8800,32 @@ function calculateEnhancedReliability(
         reliability =
           95 - ((position - optimalPosition) / (1 - optimalPosition)) * 45;
       }
+    }
+  }
+
+  // ── Power/mode signal margin: direct effect on reliability ──
+  // In real propagation, more power = higher received SNR = better probability
+  // of maintaining a link. A marginal path (30% reliability) at 100W SSB becomes
+  // much more reliable at 1000W, and much worse at 5W.
+  //
+  // signalMarginDb: 0 at SSB/100W, +10 at SSB/1000W, -13 at SSB/5W, +34 at FT8/100W
+  //
+  // Apply as a sigmoid-shaped boost/penalty centered on the baseline reliability.
+  // Positive margin pushes reliability toward 99, negative pushes toward 0.
+  if (signalMarginDb !== 0 && reliability > 0 && reliability < 99) {
+    // Convert dB margin to a reliability shift.
+    // Each 10 dB roughly doubles (or halves) the chance of a usable link.
+    // Use logistic scaling so we don't exceed 0-99 bounds.
+    const marginFactor = signalMarginDb / 15; // normalized: ±1 at ±15dB
+
+    if (marginFactor > 0) {
+      // Boost: push toward 99. Marginal paths benefit most.
+      const headroom = 99 - reliability;
+      reliability += headroom * (1 - Math.exp(-marginFactor * 1.2));
+    } else {
+      // Penalty: push toward 0. Good paths degrade.
+      const room = reliability;
+      reliability -= room * (1 - Math.exp(marginFactor * 1.2));
     }
   }
 
@@ -10957,35 +11087,7 @@ function handleWSJTXMessage(msg, state) {
                 const lonMatch = text.match(/<lng>([^<]+)<\/lng>/);
                 const countryMatch = text.match(/<n>([^<]+)<\/name>/);
                 if (latMatch && lonMatch) {
-                  callsignLookupCache.set(targetCall, {
-                    data: {
-                      callsign: targetCall,
-                      lat: parseFloat(latMatch[1]),
-                      lon: parseFloat(lonMatch[1]),
-                      country: countryMatch ? countryMatch[1] : '',
-                    },
-                    timestamp: Date.now(),
-                  });
-                }
-              })
-              .finally(() => {
-                wsjtxHamqthInflight.delete(targetCall);
-              });
-            fetch(
-              `https://www.hamqth.com/dxcc.php?callsign=${encodeURIComponent(targetCall)}`,
-              {
-                headers: { 'User-Agent': 'OpenHamClock/' + APP_VERSION },
-                signal: AbortSignal.timeout(5000),
-              },
-            )
-              .then(async (resp) => {
-                if (!resp.ok) return;
-                const text = await resp.text();
-                const latMatch = text.match(/<lat>([^<]+)<\/lat>/);
-                const lonMatch = text.match(/<lng>([^<]+)<\/lng>/);
-                const countryMatch = text.match(/<n>([^<]+)<\/name>/);
-                if (latMatch && lonMatch) {
-                  callsignLookupCache.set(targetCall, {
+                  cacheCallsignLookup(targetCall, {
                     data: {
                       callsign: targetCall,
                       lat: parseFloat(latMatch[1]),
@@ -11606,6 +11708,30 @@ app.get('/api/wsjtx/relay/download/:platform', (req, res) => {
 
 // CONTEST LOGGER UDP + API (N1MM / DXLog)
 // ============================================
+
+// ── CTY.DAT — DXCC Entity Database ────────────────────────
+// Serves the parsed cty.dat prefix → entity lookup for client-side callsign identification.
+// Data from country-files.com (AD1C), refreshed every 24h.
+
+app.get('/api/cty', (req, res) => {
+  const data = getCtyData();
+  if (!data) {
+    return res.status(503).json({ error: 'CTY data not yet loaded' });
+  }
+  // Long cache — data only changes every few weeks upstream
+  res.set('Cache-Control', 'public, max-age=3600, s-maxage=3600');
+  res.json(data);
+});
+
+// Lightweight single-call lookup (avoids sending full 200KB+ database to client)
+app.get('/api/cty/lookup/:call', (req, res) => {
+  const result = lookupCall(req.params.call);
+  if (!result) {
+    return res.status(404).json({ error: 'Unknown callsign prefix' });
+  }
+  res.set('Cache-Control', 'public, max-age=3600, s-maxage=3600');
+  res.json(result);
+});
 
 // ── RIG LISTENER DOWNLOAD ─────────────────────────────────
 // Serves the rig-listener.js agent and generates one-click launcher scripts
@@ -12241,6 +12367,18 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log('');
 
   startAutoUpdateScheduler();
+
+  // Load DXCC entity database (cty.dat) — async, non-blocking
+  initCtyData()
+    .then(() => {
+      const data = getCtyData();
+      if (data) {
+        console.log(
+          `  📡 CTY database: ${data.entities.length} entities, ${Object.keys(data.prefixes).length} prefixes`,
+        );
+      }
+    })
+    .catch(() => {});
 
   // Check for outdated systemd service file that prevents auto-update restart
   if (

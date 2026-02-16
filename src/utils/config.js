@@ -382,6 +382,12 @@ export const MAP_STYLES = {
     url: 'https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
     attribution: '&copy; Esri, Natural Earth',
     countriesOverlay: true
+  },
+  azimuthal: {
+    name: 'Azimuthal',
+    url: '',
+    attribution: 'Azimuthal Equidistant',
+    isCanvas: true
   }
 };
 

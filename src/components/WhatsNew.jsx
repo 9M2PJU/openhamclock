@@ -10,6 +10,33 @@ import { useState, useEffect } from 'react';
 // Each entry: { version, date, heading, features: [...] }
 const CHANGELOG = [
   {
+    version: '15.5.1',
+    date: '2026-02-15',
+    heading: 'Better callsign lookups, better propagation maps.',
+    features: [
+      {
+        icon: '🌍',
+        title: 'cty.dat DXCC Entity Database',
+        desc: 'Callsign → entity identification now uses the full AD1C cty.dat database — the same file every contest logger uses. ~400 DXCC entities, thousands of prefixes, zone overrides, and exact callsign matches. Replaces the old hand-coded 120-entry prefix table.'
+      },
+      {
+        icon: '📡',
+        title: 'MUF Layer Restored',
+        desc: 'Fixed a regression where the MUF Map layer disappeared from the Map Layers list. The ionosonde-based MUF overlay is back.'
+      },
+      {
+        icon: '🔥',
+        title: 'VOACAP Power Levels Fixed',
+        desc: 'Changing TX power (e.g. 5W vs 1000W) now produces dramatically different propagation maps, matching real-world behavior. Previously, power barely affected the heatmap colors.'
+      },
+      {
+        icon: '🔎',
+        title: 'Smarter DX Cluster Filtering',
+        desc: 'Spotter and spot continent/zone filtering is now far more accurate thanks to the cty.dat database. Calls like 3B9WR (Rodriguez Island) and 5B4 (Cyprus) are correctly identified instead of falling through to crude single-character guesses.'
+      },
+    ]
+  },
+  {
     version: '15.5.0',
     date: '2026-02-15',
     heading: 'Click a spot. Tune your radio. Just like that.',
