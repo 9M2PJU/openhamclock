@@ -79,6 +79,12 @@ export default function ClassicLayout(props) {
 
   const { tuneTo } = useRig();
 
+  // Handler for POTA/WWFF/SOTA spot clicks
+  const handleParkSpotClick = (spot) => {
+    // tuneTo() in RigContext handles spot objects and all frequency conversions
+    tuneTo(spot);
+  };
+
   return config.layout === "classic" ? (
     <div
       style={{
