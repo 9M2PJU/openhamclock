@@ -340,6 +340,18 @@ export const DockableApp = ({
       </div>
       <div style={{ fontFamily: 'JetBrains Mono', fontSize: '14px' }}>
         <div style={{ color: 'var(--accent-amber)', fontSize: '22px', fontWeight: '700' }}>{dxGrid}</div>
+        {(() => {
+          const utcOffsetH = Math.round(dxLocation.lon / 15);
+          const dxDate = new Date(currentTime.getTime() + utcOffsetH * 3600000);
+          const hh = String(dxDate.getUTCHours()).padStart(2, '0');
+          const mm = String(dxDate.getUTCMinutes()).padStart(2, '0');
+          const sign = utcOffsetH >= 0 ? '+' : '';
+          return (
+            <div style={{ color: 'var(--accent-cyan)', fontSize: '13px', marginTop: '2px' }}>
+              {hh}:{mm} <span style={{ color: 'var(--text-muted)', fontSize: '11px' }}>(UTC{sign}{utcOffsetH})</span>
+            </div>
+          );
+        })()}
         <div style={{ color: 'var(--text-secondary)', fontSize: '13px', marginTop: '4px' }}>{dxLocation.lat.toFixed(4)}°, {dxLocation.lon.toFixed(4)}°</div>
         <div style={{ marginTop: '8px', fontSize: '13px' }}>
           <span style={{ color: 'var(--text-secondary)' }}>☀ </span>
