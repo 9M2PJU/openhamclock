@@ -2265,17 +2265,16 @@ async function checkSummitCache() {
     logDebug('[SOTA] Refreshing sotaSummits');
     const response = await fetch('https://storage.sota.org.uk/summitslist.csv');
     const data = await response.text();
-    const rows = data.trim().split('\n');
-    rows.shift(); // discard the title line
-    const headers = rows.shift().split(',').map(header => header.trim());
+    const Papa = require('papaparse');
+    const csvresults = Papa.parse(data, {
+        skipFirstNLines: 1,
+        header: true
+      }
+    );
+
     let summit = {};
 
-    rows.forEach(row => {
-      values = row.split(',').map(value => value.trim());
-      const obj = {};
-      headers.forEach((header, index) => {
-        obj[header] = values[index].replace(/"/g, '');
-      });
+    csvresults.data.forEach( obj => {
       summit[obj['SummitCode']] = {
         latitude: obj['Latitude'],
         longitude: obj['Longitude'],
@@ -2284,6 +2283,7 @@ async function checkSummitCache() {
         points: obj['Points']
       };
     });
+
     sotaSummits = {
       data: summit,
       timestamp: now
