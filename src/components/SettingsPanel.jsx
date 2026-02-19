@@ -534,6 +534,23 @@ export const SettingsPanel = ({
           >
             Community
           </button>
+          <button
+            onClick={() => setActiveTab('sponsor')}
+            style={{
+              flex: 1,
+              padding: '10px',
+              background: activeTab === 'sponsor' ? 'var(--accent-amber)' : 'transparent',
+              border: 'none',
+              borderRadius: '6px 6px 0 0',
+              color: activeTab === 'sponsor' ? '#000' : 'var(--text-secondary)',
+              fontSize: '13px',
+              cursor: 'pointer',
+              fontWeight: activeTab === 'sponsor' ? '700' : '400',
+              fontFamily: 'JetBrains Mono, monospace',
+            }}
+          >
+            ⭐ Sponsor
+          </button>
         </div>
 
         {/* Station Settings Tab */}
@@ -3560,6 +3577,85 @@ export const SettingsPanel = ({
               <div style={{ fontSize: '10px', color: 'var(--text-muted)', textAlign: 'center', marginTop: '10px' }}>
                 Want to contribute? Check out our GitHub — issues, pull requests, and ideas are all welcome.
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* Sponsor Tab */}
+        {activeTab === 'sponsor' && (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '20px', padding: '10px 0' }}>
+            <div style={{ fontSize: '14px', color: 'var(--text-secondary)', textAlign: 'center', lineHeight: 1.6 }}>
+              OpenHamClock is proudly sponsored by
+            </div>
+
+            <a
+              href="https://www.dxengineering.com/"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                display: 'block',
+                padding: '24px 32px',
+                background: 'var(--bg-tertiary)',
+                borderRadius: '12px',
+                border: '1px solid var(--border-color)',
+                transition: 'border-color 0.2s, transform 0.2s',
+                textDecoration: 'none',
+              }}
+              onMouseOver={(e) => {
+                e.currentTarget.style.borderColor = 'var(--accent-amber)';
+                e.currentTarget.style.transform = 'scale(1.02)';
+              }}
+              onMouseOut={(e) => {
+                e.currentTarget.style.borderColor = 'var(--border-color)';
+                e.currentTarget.style.transform = 'scale(1)';
+              }}
+            >
+              <img
+                src="https://lh4.googleusercontent.com/proxy/Jbm18FgAfoi1d_4WUqqzp0YkXQJYCqoVL5PWvxIF5ejvX3nfzwthgiEpavjwlCd0ZaAYR_pIu0NiwVOdf0niZeGPRCLU-JdGocoExKATcxVV_NKWg6tvy0gmKrnBJNIzcAg_rSc2bQ"
+                alt="DX Engineering"
+                style={{ maxWidth: '280px', width: '100%', objectFit: 'contain' }}
+              />
+            </a>
+
+            <div style={{ textAlign: 'center', maxWidth: '400px' }}>
+              <div style={{ fontSize: '13px', color: 'var(--text-secondary)', lineHeight: 1.6, marginBottom: '16px' }}>
+                DX Engineering is the premier source for amateur radio equipment, antennas, and accessories.
+                Their support helps keep OpenHamClock free and open source for the ham radio community.
+              </div>
+              <a
+                href="https://www.dxengineering.com/"
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  display: 'inline-block',
+                  padding: '12px 28px',
+                  background: 'linear-gradient(135deg, var(--accent-amber) 0%, #ff8800 100%)',
+                  border: 'none',
+                  borderRadius: '6px',
+                  color: '#000',
+                  fontSize: '14px',
+                  fontWeight: '700',
+                  textDecoration: 'none',
+                  cursor: 'pointer',
+                  fontFamily: 'JetBrains Mono, monospace',
+                }}
+              >
+                Visit DX Engineering
+              </a>
+            </div>
+
+            <div style={{
+              fontSize: '11px',
+              color: 'var(--text-muted)',
+              textAlign: 'center',
+              marginTop: '8px',
+              padding: '12px',
+              background: 'rgba(255, 193, 7, 0.06)',
+              borderRadius: '8px',
+              maxWidth: '400px',
+              width: '100%',
+            }}>
+              Interested in sponsoring OpenHamClock? Contact K0CJH for partnership inquiries.
             </div>
           </div>
         )}

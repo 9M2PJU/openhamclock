@@ -1935,7 +1935,10 @@ const MOON_CACHE_TTL = 60 * 60 * 1000; // 1 hour
 app.get('/api/moon-image', async (req, res) => {
   try {
     // Return cached image if fresh
-    if (moonImageCache.buffer && Date.now() - moonImageCache.timestamp < MOON_CACHE_TTL) {
+    if (
+      moonImageCache.buffer &&
+      Date.now() - moonImageCache.timestamp < MOON_CACHE_TTL
+    ) {
       res.set('Content-Type', moonImageCache.contentType);
       res.set('Cache-Control', 'public, max-age=3600');
       return res.send(moonImageCache.buffer);

@@ -215,9 +215,34 @@ export const Header = ({
       </div>
 
       {/* Settings & Fullscreen Buttons */}
-      <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
+      <div style={{ display: 'flex', gap: '6px', flexShrink: 0, alignItems: 'center' }}>
         {!isFullscreen && (
           <>
+            <a
+              href="https://www.dxengineering.com/"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '5px',
+                padding: '4px 8px',
+                borderRadius: '4px',
+                textDecoration: 'none',
+                opacity: 0.6,
+                transition: 'opacity 0.2s',
+              }}
+              onMouseOver={(e) => (e.currentTarget.style.opacity = '1')}
+              onMouseOut={(e) => (e.currentTarget.style.opacity = '0.6')}
+              title="Sponsored by DX Engineering"
+            >
+              <img
+                src="https://lh4.googleusercontent.com/proxy/Jbm18FgAfoi1d_4WUqqzp0YkXQJYCqoVL5PWvxIF5ejvX3nfzwthgiEpavjwlCd0ZaAYR_pIu0NiwVOdf0niZeGPRCLU-JdGocoExKATcxVV_NKWg6tvy0gmKrnBJNIzcAg_rSc2bQ"
+                alt="DX Engineering"
+                style={{ height: '16px', objectFit: 'contain' }}
+              />
+              <span style={{ fontSize: '9px', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>Sponsored by</span>
+            </a>
             <a
               href="https://buymeacoffee.com/k0cjh"
               target="_blank"
