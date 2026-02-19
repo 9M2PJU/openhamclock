@@ -99,7 +99,6 @@ export const DockableApp = ({
   togglePOTA,
   togglePOTALabels,
   toggleWWFF,
-  toggleWWFFLabels,
   toggleSOTA,
   toggleSatellites,
   togglePSKReporter,
@@ -148,6 +147,7 @@ export const DockableApp = ({
   const toggleWWFFEff = useInternalMapLayers ? internalMap.toggleWWFF : toggleWWFF;
   const toggleWWFFLabelsEff = useInternalMapLayers ? internalMap.toggleWWFFLabels : toggleWWFFLabels;
   const toggleSOTAEff = useInternalMapLayers ? internalMap.toggleSOTA : toggleSOTA;
+  const toggleSOTALabelsEff = useInternalMapLayers ? internalMap.toggleSOTALabels : toggleSOTALabels;
   const toggleSatellitesEff = useInternalMapLayers ? internalMap.toggleSatellites : toggleSatellites;
   const togglePSKReporterEff = useInternalMapLayers ? internalMap.togglePSKReporter : togglePSKReporter;
   const toggleWSJTXEff = useInternalMapLayers ? internalMap.toggleWSJTX : toggleWSJTX;
@@ -445,7 +445,6 @@ export const DockableApp = ({
         dxLocation={dxLocation}
         onDXChange={handleDXChange}
         dxLocked={dxLocked}
-        onHoverSpot={setHoveredSpot}
         potaSpots={potaSpots.data}
         wwffSpots={wwffSpots.data}
         sotaSpots={sotaSpots.data}
@@ -642,7 +641,6 @@ export const DockableApp = ({
               lastChecked={potaSpots.lastChecked}
               showOnMap={mapLayersEff.showPOTA}
               onToggleMap={togglePOTAEff}
-              onHoverSpot={setHoveredSpot}
               showLabelsOnMap={mapLayersEff.showPOTALabels}
               onToggleLabelsOnMap={togglePOTALabelsEff}
               onSpotClick={handleSpotClick}

@@ -2,7 +2,6 @@
  * DXClusterPanel Component
  * Displays DX cluster spots with filtering controls and ON/OFF toggle
  */
-import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { getBandColor, detectMode } from '../utils/callsign.js';
 import { useRig } from '../contexts/RigContext.jsx';
@@ -61,7 +60,6 @@ export const DXClusterPanel = ({
 
     return t('dxClusterPanel.relativeTime', { minutes, time: clock });
   };
-
   const getActiveFilterCount = () => {
     let count = 0;
     if (filters?.continents?.length) count++;
@@ -159,7 +157,12 @@ export const DXClusterPanel = ({
           type="text"
           placeholder={t('dxClusterPanel.quickSearch')}
           value={filters?.callsign || ''}
-          onChange={(e) => onFilterChange?.({ ...filters, callsign: e.target.value || undefined })}
+          onChange={(e) =>
+            onFilterChange?.({
+              ...filters,
+              callsign: e.target.value || undefined,
+            })
+          }
           style={{
             flex: 1,
             padding: '4px 8px',
@@ -277,7 +280,6 @@ export const DXClusterPanel = ({
                 >
                   {formatSpotTimeLabel(spot)}
                 </div>
-                <div style={{ color: 'var(--text-muted)', fontSize: '10px' }}>{spot.time || ''}</div>
               </div>
             );
           })}

@@ -527,7 +527,9 @@ export const SolarPanel = ({ solarIndices, forcedMode }) => {
                     litPath = `M${CX},${CY - R} A${R},${R} 0 0,0 ${CX},${CY + R} A${absTermX},${R} 0 0,1 ${CX},${CY - R}`;
                   }
                 }
-                return litPath ? <path d={litPath} fill="#c8c0ae" clipPath="url(#moonClip)" /> : null;
+                return litPath ? (
+                  <path d={litPath} fill="#c8c0ae" clipPath="url(#moonClip)" />
+                ) : null;
               })()}
 
             {/* Subtle outer glow */}
@@ -552,7 +554,9 @@ export const SolarPanel = ({ solarIndices, forcedMode }) => {
 
         {/* Credit line */}
         <div style={{ textAlign: 'center', marginBottom: '6px' }}>
-          <span style={{ fontSize: '8px', color: 'var(--text-muted)', opacity: 0.6 }}>NASA/SVS Dial-A-Moon</span>
+          <span style={{ fontSize: '8px', color: 'var(--text-muted)', opacity: 0.6 }}>
+            NASA/SVS Dial-A-Moon
+          </span>
         </div>
 
         {/* Next phases */}
