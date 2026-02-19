@@ -236,12 +236,12 @@ export const Header = ({
               onMouseOut={(e) => (e.currentTarget.style.opacity = '0.6')}
               title="Sponsored by DX Engineering"
             >
+              <span style={{ fontSize: '9px', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>Sponsored by</span>
               <img
                 src="https://lh4.googleusercontent.com/proxy/Jbm18FgAfoi1d_4WUqqzp0YkXQJYCqoVL5PWvxIF5ejvX3nfzwthgiEpavjwlCd0ZaAYR_pIu0NiwVOdf0niZeGPRCLU-JdGocoExKATcxVV_NKWg6tvy0gmKrnBJNIzcAg_rSc2bQ"
                 alt="DX Engineering"
-                style={{ height: '16px', objectFit: 'contain' }}
+                style={{ height: '16px', objectFit: 'contain', filter: 'brightness(0) invert(1)' }}
               />
-              <span style={{ fontSize: '9px', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>Sponsored by</span>
             </a>
             <a
               href="https://buymeacoffee.com/k0cjh"
