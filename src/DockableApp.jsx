@@ -13,6 +13,7 @@ import {
   POTAPanel,
   WWFFPanel,
   SOTAPanel,
+  WWBOTAPanel,
   ContestPanel,
   SolarPanel,
   PropagationPanel,
@@ -91,6 +92,7 @@ export const DockableApp = ({
   potaSpots,
   wwffSpots,
   sotaSpots,
+  wwbotaSpots,
   mySpots,
   dxpeditions,
   contests,
@@ -120,6 +122,8 @@ export const DockableApp = ({
   toggleWWFF,
   toggleWWFFLabels,
   toggleSOTA,
+  toggleWWBOTA,
+  toggleWWBOTALabels,
   toggleSatellites,
   togglePSKReporter,
   toggleWSJTX,
@@ -170,6 +174,8 @@ export const DockableApp = ({
   const toggleWWFFEff = useInternalMapLayers ? internalMap.toggleWWFF : toggleWWFF;
   const toggleWWFFLabelsEff = useInternalMapLayers ? internalMap.toggleWWFFLabels : toggleWWFFLabels;
   const toggleSOTAEff = useInternalMapLayers ? internalMap.toggleSOTA : toggleSOTA;
+  const toggleWWBOTAEff = useInternalMapLayers ? internalMap.toggleWWBOTA : toggleWWBOTA;
+  const toggleWWBOTALabelsEff = useInternalMapLayers ? internalMap.toggleWWBOTALabels : toggleWWBOTALabels;
   const toggleSatellitesEff = useInternalMapLayers ? internalMap.toggleSatellites : toggleSatellites;
   const togglePSKReporterEff = useInternalMapLayers ? internalMap.togglePSKReporter : togglePSKReporter;
   const toggleWSJTXEff = useInternalMapLayers ? internalMap.toggleWSJTX : toggleWSJTX;
@@ -312,6 +318,7 @@ export const DockableApp = ({
       pota: { name: 'POTA', icon: '🏕️' },
       wwff: { name: 'WWFF', icon: '🌲' },
       sota: { name: 'SOTA', icon: '⛰️' },
+      wwbota: { name: 'WWBOTA', icon: '☢️' },
       aprs: { name: 'APRS', icon: '📍' },
       ...(isLocalInstall ? { rotator: { name: 'Rotator', icon: '🧭' } } : {}),
       contests: { name: 'Contests', icon: '🏆' },
@@ -526,6 +533,7 @@ export const DockableApp = ({
         potaSpots={potaSpots.data}
         wwffSpots={wwffSpots.data}
         sotaSpots={sotaSpots.data}
+        wwbotaSpots={wwbotaSpots.data}
         mySpots={mySpots.data}
         dxPaths={dxClusterData.paths}
         dxFilters={dxFilters}
@@ -543,6 +551,8 @@ export const DockableApp = ({
         showWWFFLabels={mapLayersEff.showWWFFLabels}
         showSOTA={mapLayersEff.showSOTA}
         showSOTALabels={mapLayersEff.showSOTALabels}
+        showWWBOTA={mapLayersEff.showWWBOTA}
+        showWWBOTALabels={mapLayersEff.showWWBOTALabels}
         showSatellites={mapLayersEff.showSatellites}
         onToggleSatellites={toggleSatellitesEff}
         showPSKReporter={mapLayersEff.showPSKReporter}
@@ -761,6 +771,23 @@ export const DockableApp = ({
               onHoverSpot={setHoveredSpot}
               showLabelsOnMap={mapLayersEff.showSOTALabels}
               onToggleLabelsOnMap={toggleSOTALabelsEff}
+              onSpotClick={handleSpotClick}
+            />
+          );
+          break;
+
+        case 'wwbota':
+          content = (
+            <WWBOTAPanel
+              data={wwbotaSpots.data}
+              loading={wwbotaSpots.loading}
+              lastUpdated={wwbotaSpots.lastUpdated}
+              connected={wwbotaSpots.connected}
+              showOnMap={mapLayersEff.showWWBOTA}
+              onToggleMap={toggleWWBOTAEff}
+              onHoverSpot={setHoveredSpot}
+              showLabelsOnMap={mapLayersEff.showWWBOTALabels}
+              onToggleLabelsOnMap={toggleWWBOTALabelsEff}
               onSpotClick={handleSpotClick}
             />
           );

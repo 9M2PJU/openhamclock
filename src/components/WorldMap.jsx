@@ -1,6 +1,6 @@
 /**
  * WorldMap Component
- * Leaflet map with DE/DX markers, terminator, DX paths, POTA/WWFF/SOTA, satellites, PSKReporter, WSJT-X
+ * Leaflet map with DE/DX markers, terminator, DX paths, POTA/WWFF/SOTA/WWBOTA, satellites, PSKReporter, WSJT-X
  * Includes DX Weather (local-only) hover overlay + popup weather + DX highlight.
  */
 
@@ -59,6 +59,7 @@ export const WorldMap = ({
   potaSpots,
   wwffSpots,
   sotaSpots,
+  wwbotaSpots,
   mySpots,
   dxPaths,
   dxFilters,
@@ -77,6 +78,8 @@ export const WorldMap = ({
   showWWFF,
   showWWFFLabels = true,
   showSOTA,
+  showWWBOTA,
+  showWWBOTALabels = true,
   showPSKReporter,
   showWSJTX,
   onToggleSatellites,
@@ -117,6 +120,7 @@ export const WorldMap = ({
   const potaMarkersRef = useRef([]);
   const wwffMarkersRef = useRef([]);
   const sotaMarkersRef = useRef([]);
+  const wwbotaMarkersRef = useRef([]);
 
   const dxPathsLinesRef = useRef([]);
   const dxPathsMarkersRef = useRef([]);
@@ -1023,6 +1027,10 @@ export const WorldMap = ({
     addSimpleSpotMarkers(sotaSpots, showSOTA, showDXLabels, '#ff9632', 'diamond', sotaMarkersRef);
   }, [addSimpleSpotMarkers, sotaSpots, showSOTA, showDXLabels]);
 
+  useEffect(() => {
+    addSimpleSpotMarkers(wwbotaSpots, showWWBOTA, showWWBOTALabels, '#8b7fff', 'square', wwbotaMarkersRef);
+  }, [addSimpleSpotMarkers, wwbotaSpots, showWWBOTA, showWWBOTALabels]);
+
   // --- PSKReporter ---
   useEffect(() => {
     const map = mapInstanceRef.current;
@@ -1511,6 +1519,21 @@ export const WorldMap = ({
             >
               ◆ SOTA
             </span>
+          )}
+          {showWWBOTA && (
+            <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+              <span
+                style={{
+                  background: '#8b7fff',
+                  color: '#000',
+                  padding: '2px 5px',
+                  borderRadius: '3px',
+                  fontWeight: '600',
+                }}
+              >
+                ■&nbsp;WWBOTA
+              </span>
+            </div>
           )}
           <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
             <span style={{ color: '#ffcc00' }}>☼ Sun</span>
