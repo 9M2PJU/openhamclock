@@ -54,14 +54,15 @@ export const Header = ({
         border: '1px solid var(--border-color)',
         borderRadius: '6px',
         padding: isMobile ? '4px 6px' : '6px 12px',
-        minHeight: isMobile ? '38px' : '50px',
+        minHeight: isMobile ? '38px' : '46px',
         fontFamily: 'JetBrains Mono, monospace',
+        boxSizing: 'border-box',
       }}
     >
       {/* Callsign */}
       <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? '4px' : '12px', flexShrink: 0 }}>
         <span
-          style={{ fontSize: callsignSize, fontWeight: '900', color: 'var(--accent-amber)', cursor: 'pointer', fontFamily: 'Orbitron, monospace', whiteSpace: 'nowrap' }}
+          style={{ fontSize: callsignSize, fontWeight: '900', color: 'var(--accent-amber)', cursor: 'pointer', fontFamily: 'Orbitron, monospace', whiteSpace: 'nowrap', lineHeight: 1 }}
           onClick={onSettingsClick}
           title="Click for settings"
         >
@@ -79,20 +80,20 @@ export const Header = ({
       {/* UTC Clock */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
         <span style={{ fontSize: isMobile ? '10px' : '13px', color: 'var(--accent-cyan)', fontWeight: '600' }}>UTC</span>
-        <span style={{ fontSize: clockSize, fontWeight: '700', color: 'var(--accent-cyan)', fontFamily: 'JetBrains Mono, Consolas, monospace', whiteSpace: 'nowrap' }}>{utcTime}</span>
+        <span style={{ fontSize: clockSize, fontWeight: '700', color: 'var(--accent-cyan)', fontFamily: 'JetBrains Mono, Consolas, monospace', whiteSpace: 'nowrap', lineHeight: 1 }}>{utcTime}</span>
         {!isMobile && <span style={{ fontSize: '12px', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{utcDate}</span>}
       </div>
 
       {/* Local Clock */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer', flexShrink: 0 }} onClick={onTimeFormatToggle} title={`Click to switch to ${use12Hour ? '24-hour' : '12-hour'} format`}>
         <span style={{ fontSize: isMobile ? '10px' : '13px', color: 'var(--accent-amber)', fontWeight: '600' }}>LOCAL</span>
-        <span style={{ fontSize: clockSize, fontWeight: '700', color: 'var(--accent-amber)', fontFamily: 'JetBrains Mono, Consolas, monospace', whiteSpace: 'nowrap' }}>{localTime}</span>
+        <span style={{ fontSize: clockSize, fontWeight: '700', color: 'var(--accent-amber)', fontFamily: 'JetBrains Mono, Consolas, monospace', whiteSpace: 'nowrap', lineHeight: 1 }}>{localTime}</span>
         {!isMobile && <span style={{ fontSize: '12px', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{localDate}</span>}
       </div>
 
       {/* Weather & Solar Stats — hidden on mobile */}
       {!isMobile && (
-        <div style={{ display: 'flex', gap: isTablet ? '6px' : '12px', fontSize: isTablet ? '11px' : '13px', fontFamily: 'JetBrains Mono, Consolas, monospace', whiteSpace: 'nowrap', flexShrink: 1, minWidth: 0, overflow: 'hidden' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: isTablet ? '6px' : '12px', fontSize: isTablet ? '11px' : '13px', fontFamily: 'JetBrains Mono, Consolas, monospace', whiteSpace: 'nowrap', flexShrink: 1, minWidth: 0, overflow: 'hidden' }}>
           {localWeather?.data && (() => {
             const rawC = localWeather.data.rawTempC;
             return (
@@ -115,7 +116,7 @@ export const Header = ({
       )}
 
       {/* Buttons */}
-      <div style={{ display: 'flex', gap: isMobile ? '4px' : '6px', flexShrink: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? '4px' : '6px', flexShrink: 0 }}>
         {!isFullscreen && !isMobile && (
           <>
             <a href="https://buymeacoffee.com/k0cjh" target="_blank" rel="noopener noreferrer" style={{ background: 'linear-gradient(135deg, #ff813f 0%, #ffdd00 100%)', border: 'none', padding: isTablet ? '4px 6px' : '6px 10px', borderRadius: '4px', color: '#000', fontSize: '12px', cursor: 'pointer', fontWeight: '600', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '3px', whiteSpace: 'nowrap' }} title="Buy me a coffee!">☕{isTablet ? '' : ' Donate'}</a>

@@ -351,7 +351,7 @@ export default function ModernLayout(props) {
         transformOrigin: 'center center',
         display: 'grid',
         gridTemplateColumns: getGridCols(),
-        gridTemplateRows: '55px 1fr',
+        gridTemplateRows: 'auto 1fr',
         gap: leftSidebarVisible || rightSidebarVisible ? '8px' : '0',
         padding: leftSidebarVisible || rightSidebarVisible ? '8px' : '0',
         overflow: 'hidden',
