@@ -16,6 +16,9 @@ export const PluginLayer = ({
   satellites,
   units,
   config,
+  onDXChange,
+  dxLocked,
+  dxLocation,
 }) => {
   const layerFunc = plugin.useLayer || plugin.hook;
 
@@ -31,6 +34,9 @@ export const PluginLayer = ({
       satellites,
       units,
       config,
+      onDXChange,
+      dxLocked,
+      dxLocation,
     });
   }
 

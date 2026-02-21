@@ -1751,6 +1751,9 @@ export const WorldMap = ({
             callsign={callsign}
             locator={deLocator}
             lowMemoryMode={lowMemoryMode}
+            onDXChange={onDXChange}
+            dxLocked={dxLocked}
+            dxLocation={dxLocation}
           />
         ))}
 
