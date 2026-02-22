@@ -122,6 +122,7 @@ export const DockableApp = ({
   toggleWWFF,
   toggleWWFFLabels,
   toggleSOTA,
+  toggleSOTALabels,
   toggleWWBOTA,
   toggleWWBOTALabels,
   toggleSatellites,
@@ -192,6 +193,7 @@ export const DockableApp = ({
   const toggleWWFFEff = useInternalMapLayers ? internalMap.toggleWWFF : toggleWWFF;
   const toggleWWFFLabelsEff = useInternalMapLayers ? internalMap.toggleWWFFLabels : toggleWWFFLabels;
   const toggleSOTAEff = useInternalMapLayers ? internalMap.toggleSOTA : toggleSOTA;
+  const toggleSOTALabelsEff = useInternalMapLayers ? internalMap.toggleSOTALabels : toggleSOTALabels;
   const toggleWWBOTAEff = useInternalMapLayers ? internalMap.toggleWWBOTA : toggleWWBOTA;
   const toggleWWBOTALabelsEff = useInternalMapLayers ? internalMap.toggleWWBOTALabels : toggleWWBOTALabels;
   const toggleSatellitesEff = useInternalMapLayers ? internalMap.toggleSatellites : toggleSatellites;

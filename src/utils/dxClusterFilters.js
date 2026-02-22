@@ -170,14 +170,7 @@ const applyBandFilter = (item, filters) => {
  */
 const applyModeFilter = (item, filters) => {
   if (filters.modes?.length > 0) {
-    // If a mode filter is active but we have no text to infer the mode from,
-    // treat as non-matching (test expects missing comment to fail).
-    const comment = (item?.comment ?? '').toString().trim();
-    const explicitMode = (item?.mode ?? '').toString().trim();
-    if (!comment && !explicitMode) return false;
-
-    // Prefer comment text for mode detection; fall back to explicit mode if provided.
-    const mode = detectMode(comment || explicitMode, item.freq);
+    const mode = detectMode(item.comment, item.freq);
     if (!mode || !filters.modes.includes(mode)) return false;
   }
   return true;
