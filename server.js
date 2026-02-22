@@ -383,12 +383,63 @@ if (ITURHFPROP_URL) {
 }
 
 // Middleware — Security
+// A proper CSP + Permissions-Policy signals legitimacy to endpoint-protection
+// software (Bitdefender, Norton, etc.) that use header presence as a trust signal.
 app.use(
   helmet({
-    contentSecurityPolicy: false, // CSP breaks inline Leaflet/React scripts
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"], // React/Vite HMR needs inline+eval
+        styleSrc: ["'self'", "'unsafe-inline'"], // Inline styles used throughout
+        imgSrc: [
+          "'self'",
+          'data:',
+          'blob:',
+          'https://*.basemaps.cartocdn.com',
+          'https://services.arcgisonline.com',
+          'https://*.tile.openstreetmap.org',
+          'https://*.tile.opentopomap.org',
+          'https://gibs.earthdata.nasa.gov',
+          'https://cdn.jsdelivr.net',
+        ],
+        connectSrc: [
+          "'self'",
+          'wss:',
+          'ws:', // WebSocket for WSJT-X relay & dev HMR
+          'https://*.basemaps.cartocdn.com',
+          'https://services.arcgisonline.com',
+          'https://*.tile.openstreetmap.org',
+          'https://*.tile.opentopomap.org',
+          'https://gibs.earthdata.nasa.gov',
+          'https://cdn.jsdelivr.net',
+        ],
+        fontSrc: ["'self'", 'data:'],
+        objectSrc: ["'none'"],
+        baseUri: ["'self'"],
+        formAction: ["'self'"],
+        frameAncestors: ["'self'"],
+      },
+    },
     crossOriginEmbedderPolicy: false, // Breaks tile loading from CDNs
+    // helmet enables these by default, but we list them explicitly for clarity:
+    // X-Content-Type-Options: nosniff
+    // X-Frame-Options: SAMEORIGIN
+    // X-XSS-Protection: 0  (modern browsers use CSP instead)
+    // Strict-Transport-Security (HSTS)
+    // X-DNS-Prefetch-Control: off
   }),
 );
+
+// Permissions-Policy — declare which browser features the app uses
+// Presence of this header is a trust signal for endpoint-protection scanners
+app.use((req, res, next) => {
+  res.setHeader(
+    'Permissions-Policy',
+    'camera=(), microphone=(), geolocation=(self), payment=(), usb=()',
+  );
+  next();
+});
 
 // CORS — restrict to same origin by default; allow override via env
 const CORS_ORIGINS = process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(',').map((s) => s.trim()) : true; // true = reflect request origin (same as before for local installs)
@@ -10078,6 +10129,28 @@ function generateStatusDashboard() {
 </body>
 </html>`;
 }
+
+// /.well-known/security.txt — standard security contact disclosure (RFC 9116)
+// Presence of this file signals a legitimate, maintained project to AV scanners
+// and security researchers.
+app.get(['/.well-known/security.txt', '/security.txt'], (req, res) => {
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  res.setHeader('Cache-Control', 'public, max-age=86400');
+  res.send(
+    [
+      'Contact: https://github.com/accius/openhamclock/security/advisories',
+      'Contact: https://github.com/accius/openhamclock/issues',
+      'Preferred-Languages: en',
+      'Canonical: https://openhamclock.com/.well-known/security.txt',
+      `Expires: ${new Date(Date.now() + 365 * 86400000).toISOString()}`,
+      '',
+      '# OpenHamClock is an open-source amateur radio dashboard.',
+      '# Source: https://github.com/accius/openhamclock',
+      '# If an antivirus product flagged this site, it is a false positive.',
+      '# The app polls its own API endpoints for real-time ham radio data.',
+    ].join('\n'),
+  );
+});
 
 app.get('/api/health', (req, res) => {
   rolloverVisitorStats();
