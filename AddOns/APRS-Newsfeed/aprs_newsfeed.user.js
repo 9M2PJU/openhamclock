@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         APRS Newsfeed (Inbox) for OpenHamClock
 // @namespace    http://tampermonkey.net/
-// @version      1.6
+// @version      1.7
 // @description  Fetches and displays your latest APRS messages from aprs.fi
 // @author       DO3EET
 // @match        https://openhamclock.com/*
@@ -88,6 +88,9 @@
             z-index: 10000;
             pointer-events: none;
         }
+        #ohc-addon-drawer.ohc-vertical {
+            flex-direction: column-reverse;
+        }
         .ohc-addon-icon {
             position: relative;
             width: 45px;
@@ -166,7 +169,6 @@
         if (!document.body) return;
         callsign = getCallsign();
 
-        // Specific style tag for APRS
         const styleSheet = document.createElement("style");
         styleSheet.id = "ohc-aprs-styles";
         styleSheet.innerText = styles;
@@ -176,16 +178,24 @@
         if (!drawer) {
             drawer = document.createElement("div");
             drawer.id = "ohc-addon-drawer";
+            const savedLayout = localStorage.getItem('ohc_addon_layout') || 'horizontal';
+            if (savedLayout === 'vertical') drawer.classList.add('ohc-vertical');
+
             const launcher = document.createElement("div");
             launcher.id = "ohc-addon-launcher";
             launcher.className = "ohc-addon-icon";
             launcher.innerHTML = "\uD83E\uDDE9";
-            launcher.title = "AddOns";
+            launcher.title = "L: Toggle | R: Rotate";
             launcher.onclick = () => {
                 const items = document.querySelectorAll(".ohc-addon-item");
                 const isHidden = items[0]?.style.display !== "flex";
                 items.forEach(el => el.style.display = isHidden ? "flex" : "none");
                 launcher.style.transform = isHidden ? "rotate(90deg)" : "rotate(0deg)";
+            };
+            launcher.oncontextmenu = (e) => {
+                e.preventDefault();
+                const isVert = drawer.classList.toggle('ohc-vertical');
+                localStorage.setItem('ohc_addon_layout', isVert ? 'vertical' : 'horizontal');
             };
             drawer.appendChild(launcher);
             document.body.appendChild(drawer);
@@ -286,7 +296,7 @@
                 method: "GET",
                 url: url,
                 onload: (response) => { try { handleResponse(JSON.parse(response.responseText)); } catch (e) { status.innerText = "Parse Error"; } },
-                onerror: () => { status.innerText = "Network Error (GM)"; }
+                onerror: () => { status.innerText = t('error_api'); }
             });
         } else {
             try { const response = await fetch(url); handleResponse(await response.json()); }

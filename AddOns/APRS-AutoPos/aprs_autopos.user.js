@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         APRS Auto-Position for OpenHamClock
 // @namespace    http://tampermonkey.net/
-// @version      1.0
+// @version      1.1
 // @description  Automatically updates your station position in OpenHamClock based on APRS beacons
 // @author       DO3EET
 // @match        https://openhamclock.com/*
@@ -12,7 +12,7 @@
 (function() {
     'use strict';
 
-    const STORAGE_API_KEY = 'ohc_aprsfi_apikey'; // Shared with Newsfeed
+    const STORAGE_API_KEY = 'ohc_aprsfi_apikey';
     const STORAGE_TRACK_SSID = 'ohc_autopos_ssid';
     const STORAGE_AUTO_INTERVAL = 'ohc_autopos_interval';
 
@@ -49,6 +49,40 @@
     const t = (key) => translations[lang][key] || key;
 
     const styles = `
+        #ohc-addon-drawer {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            display: flex;
+            flex-direction: row-reverse;
+            align-items: center;
+            gap: 10px;
+            z-index: 10000;
+            pointer-events: none;
+        }
+        #ohc-addon-drawer.ohc-vertical {
+            flex-direction: column-reverse;
+        }
+        .ohc-addon-icon {
+            width: 45px;
+            height: 45px;
+            background: var(--bg-panel, rgba(17, 24, 32, 0.95));
+            border: 1px solid var(--border-color, rgba(255, 180, 50, 0.3));
+            border-radius: 50%;
+            color: var(--accent-cyan, #00ddff);
+            font-size: 20px;
+            cursor: pointer;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+            pointer-events: auto;
+            transition: all 0.3s ease;
+        }
+        .ohc-addon-icon:hover { border-color: var(--accent-amber, #ffb432); transform: scale(1.1); }
+        #ohc-addon-launcher { background: var(--bg-tertiary, #1a2332); color: var(--accent-amber); }
+        .ohc-addon-item { display: none; }
+
         #ohc-autopos-container {
             position: fixed;
             top: 140px;
@@ -95,7 +129,6 @@
         } catch(e) { return null; }
     }
 
-    // Helper: Lat/Lon to Grid Square
     function latLonToGrid(lat, lon) {
         let adjLat = lat + 90;
         let adjLon = lon + 180;
@@ -119,10 +152,32 @@
 
         let drawer = document.getElementById("ohc-addon-drawer");
         if (!drawer) {
-            // Logic handled by shared drawer in other scripts
-            // We just wait or create if we are the only ones
-            setTimeout(init, 500); 
-            return;
+            drawer = document.createElement("div");
+            drawer.id = "ohc-addon-drawer";
+            const savedLayout = localStorage.getItem('ohc_addon_layout') || 'horizontal';
+            if (savedLayout === 'vertical') drawer.classList.add('ohc-vertical');
+
+            const launcher = document.createElement("div");
+            launcher.id = "ohc-addon-launcher";
+            launcher.className = "ohc-addon-icon";
+            launcher.innerHTML = "\uD83E\uDDE9";
+            launcher.title = "L: Toggle | R: Rotate";
+            
+            launcher.onclick = () => {
+                const items = document.querySelectorAll(".ohc-addon-item");
+                const isHidden = items[0]?.style.display !== "flex";
+                items.forEach(el => el.style.display = isHidden ? "flex" : "none");
+                launcher.style.transform = isHidden ? "rotate(90deg)" : "rotate(0deg)";
+            };
+
+            launcher.oncontextmenu = (e) => {
+                e.preventDefault();
+                const isVert = drawer.classList.toggle('ohc-vertical');
+                localStorage.setItem('ohc_addon_layout', isVert ? 'vertical' : 'horizontal');
+            };
+
+            drawer.appendChild(launcher);
+            document.body.appendChild(drawer);
         }
 
         const toggleBtn = document.createElement("div");
@@ -176,17 +231,14 @@
             apiKey = document.getElementById("ohc-autopos-api-input").value.trim();
             trackSsid = document.getElementById("ohc-autopos-ssid-input").value.trim();
             interval = parseInt(document.getElementById("ohc-autopos-int-input").value) || 10;
-            
             localStorage.setItem(STORAGE_API_KEY, apiKey);
             localStorage.setItem(STORAGE_TRACK_SSID, trackSsid);
             localStorage.setItem(STORAGE_AUTO_INTERVAL, interval);
-            
             settingsDiv.style.display = "none";
             startTimer();
             updatePosition();
         };
 
-        // Draggable
         let pos1 = 0, pos2 = 0, pos3 = 0, pos4 = 0;
         document.getElementById("ohc-autopos-header").onmousedown = (e) => {
             if (e.target.classList.contains('ohc-icon-btn')) return;
@@ -214,23 +266,21 @@
     function updatePosition() {
         const baseCall = getCallsign();
         if (!baseCall || !apiKey) {
-            document.getElementById("ohc-autopos-info").innerText = t('setup_required');
+            const info = document.getElementById("ohc-autopos-info");
+            if (info) info.innerText = t('setup_required');
             return;
         }
-
         const info = document.getElementById("ohc-autopos-info");
         const last = document.getElementById("ohc-autopos-last");
-        info.innerText = t('status_loading');
-
+        if (info) info.innerText = t('status_loading');
         const target = baseCall + (trackSsid.startsWith('-') ? trackSsid : '-' + trackSsid);
         const url = `https://api.aprs.fi/api/get?what=loc&name=${target}&apikey=${apiKey}&format=json`;
-
         if (typeof GM_xmlhttpRequest !== 'undefined') {
             GM_xmlhttpRequest({
                 method: "GET",
                 url: url,
-                onload: (response) => { try { handleResponse(JSON.parse(response.responseText)); } catch (e) { info.innerText = "Parse Error"; } },
-                onerror: () => { info.innerText = t('error_api'); }
+                onload: (response) => { try { handleResponse(JSON.parse(response.responseText)); } catch (e) { if (info) info.innerText = "Parse Error"; } },
+                onerror: () => { if (info) info.innerText = t('error_api'); }
             });
         }
     }
@@ -238,39 +288,27 @@
     function handleResponse(data) {
         const info = document.getElementById("ohc-autopos-info");
         const last = document.getElementById("ohc-autopos-last");
-
         if (data.result === 'ok' && data.entries && data.entries.length > 0) {
             const entry = data.entries[0];
             const newLat = parseFloat(entry.lat);
             const newLon = parseFloat(entry.lng);
-            
             try {
                 const config = JSON.parse(localStorage.getItem('openhamclock_config'));
                 const oldLat = config.location.lat;
                 const oldLon = config.location.lon;
-
-                // Threshold check (approx 50m) to avoid noise
                 if (Math.abs(oldLat - newLat) > 0.0005 || Math.abs(oldLon - newLon) > 0.0005) {
                     config.location = { lat: newLat, lon: newLon };
                     config.locator = latLonToGrid(newLat, newLon);
-                    
                     localStorage.setItem('openhamclock_config', JSON.stringify(config));
-                    // Notify app
                     window.dispatchEvent(new CustomEvent('openhamclock-config-change', { detail: config }));
-                    
-                    info.innerText = t('status_updated');
-                    info.style.color = "var(--accent-green)";
+                    if (info) { info.innerText = t('status_updated'); info.style.color = "var(--accent-green)"; }
                 } else {
-                    info.innerText = t('status_no_change');
-                    info.style.color = "var(--text-muted)";
+                    if (info) { info.innerText = t('status_no_change'); info.style.color = "var(--text-muted)"; }
                 }
-                
-                last.innerText = `${entry.name}: ${newLat.toFixed(4)}, ${newLon.toFixed(4)}
-(${config.locator})`;
+                if (last) last.innerText = `${entry.name}: ${newLat.toFixed(4)}, ${newLon.toFixed(4)}\n(${config.locator})`;
             } catch (e) { console.error(e); }
         } else {
-            info.innerText = t('error_api');
-            info.style.color = "var(--accent-red)";
+            if (info) { info.innerText = t('error_api'); info.style.color = "var(--accent-red)"; }
         }
     }
 

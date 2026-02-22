@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HFJ-350M Calculator for OpenHamClock
 // @namespace    http://tampermonkey.net/
-// @version      1.4
+// @version      1.5
 // @description  Adds a portable antenna calculator for the HFJ-350M with multi-language support (DE, EN, JA)
 // @author       DO3EET
 // @match        https://openhamclock.com/*
@@ -145,6 +145,9 @@
             z-index: 10000;
             pointer-events: none;
         }
+        #ohc-addon-drawer.ohc-vertical {
+            flex-direction: column-reverse;
+        }
         .ohc-addon-icon {
             width: 45px;
             height: 45px;
@@ -219,27 +222,39 @@
     function init() {
         if (!document.body) return;
 
-        // Unique style tag for HFJ
-        const styleSheet = document.createElement("style");
-        styleSheet.id = "ohc-hfj-styles";
-        styleSheet.innerText = styles;
-        document.head.appendChild(styleSheet);
+        if (!document.getElementById("ohc-addon-styles")) {
+            const styleSheet = document.createElement("style");
+            styleSheet.id = "ohc-addon-styles";
+            styleSheet.innerText = styles;
+            document.head.appendChild(styleSheet);
+        }
 
         let drawer = document.getElementById("ohc-addon-drawer");
         if (!drawer) {
             drawer = document.createElement("div");
             drawer.id = "ohc-addon-drawer";
+            const savedLayout = localStorage.getItem('ohc_addon_layout') || 'horizontal';
+            if (savedLayout === 'vertical') drawer.classList.add('ohc-vertical');
+
             const launcher = document.createElement("div");
             launcher.id = "ohc-addon-launcher";
             launcher.className = "ohc-addon-icon";
             launcher.innerHTML = "\uD83E\uDDE9";
-            launcher.title = "AddOns";
+            launcher.title = "L: Toggle | R: Rotate";
+            
             launcher.onclick = () => {
                 const items = document.querySelectorAll(".ohc-addon-item");
                 const isHidden = items[0]?.style.display !== "flex";
                 items.forEach(el => el.style.display = isHidden ? "flex" : "none");
                 launcher.style.transform = isHidden ? "rotate(90deg)" : "rotate(0deg)";
             };
+
+            launcher.oncontextmenu = (e) => {
+                e.preventDefault();
+                const isVert = drawer.classList.toggle('ohc-vertical');
+                localStorage.setItem('ohc_addon_layout', isVert ? 'vertical' : 'horizontal');
+            };
+
             drawer.appendChild(launcher);
             document.body.appendChild(drawer);
         }
