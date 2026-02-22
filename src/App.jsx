@@ -21,6 +21,7 @@ import {
   usePOTASpots,
   useWWFFSpots,
   useSOTASpots,
+  useWWBOTASpots,
   useContests,
   useWeather,
   usePropagation,
@@ -144,6 +145,7 @@ const App = () => {
     togglePOTA,
     toggleWWFF,
     toggleSOTA,
+    toggleWWBOTA,
     toggleSatellites,
     togglePSKReporter,
     toggleWSJTX,
@@ -166,6 +168,7 @@ const App = () => {
   const potaSpots = usePOTASpots();
   const wwffSpots = useWWFFSpots();
   const sotaSpots = useSOTASpots();
+  const wwbotaSpots = useWWBOTASpots();
   const dxClusterData = useDXClusterData(dxFilters, config);
   const dxpeditions = useDXpeditions();
   const contests = useContests();
@@ -305,6 +308,7 @@ const App = () => {
     potaSpots,
     wwffSpots,
     sotaSpots,
+    wwbotaSpots,
     mySpots,
     dxpeditions,
     contests,
@@ -326,6 +330,7 @@ const App = () => {
     togglePOTA,
     toggleWWFF,
     toggleSOTA,
+    toggleWWBOTA,
     toggleSatellites,
     togglePSKReporter,
     toggleWSJTX,

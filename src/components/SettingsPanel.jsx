@@ -2271,7 +2271,6 @@ export const SettingsPanel = ({
               >
                 Map Overlays
               </div>
-
               <label
                 style={{
                   display: 'flex',

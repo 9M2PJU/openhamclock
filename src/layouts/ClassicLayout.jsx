@@ -42,6 +42,7 @@ export default function ClassicLayout(props) {
     propagation,
     potaSpots,
     sotaSpots,
+    wwbotaSpots,
     mySpots,
     satellites,
     filteredSatellites,
@@ -422,6 +423,7 @@ export default function ClassicLayout(props) {
             dxLocked={dxLocked}
             potaSpots={potaSpots.data}
             sotaSpots={sotaSpots.data}
+            wwbotaSpots={wwbotaSpots.data}
             mySpots={mySpots.data}
             dxPaths={dxClusterData.paths}
             dxFilters={dxFilters}
@@ -434,6 +436,7 @@ export default function ClassicLayout(props) {
             onToggleDXLabels={toggleDXLabels}
             showPOTA={mapLayers.showPOTA}
             showSOTA={mapLayers.showSOTA}
+            showWWBOTA={mapLayers.showWWBOTA}
             showSatellites={mapLayers.showSatellites}
             showPSKReporter={mapLayers.showPSKReporter}
             wsjtxSpots={wsjtxMapSpots}
@@ -740,6 +743,7 @@ export default function ClassicLayout(props) {
             dxLocked={dxLocked}
             potaSpots={potaSpots.data}
             sotaSpots={sotaSpots.data}
+            wwbotaSpots={wwbotaSpots.data}
             mySpots={mySpots.data}
             dxPaths={dxClusterData.paths}
             dxFilters={dxFilters}
@@ -752,6 +756,7 @@ export default function ClassicLayout(props) {
             onToggleDXLabels={toggleDXLabels}
             showPOTA={mapLayers.showPOTA}
             showSOTA={mapLayers.showSOTA}
+            showWWBOTA={mapLayers.showWWBOTA}
             showSatellites={mapLayers.showSatellites}
             showPSKReporter={mapLayers.showPSKReporter}
             wsjtxSpots={wsjtxMapSpots}
@@ -1365,6 +1370,7 @@ export default function ClassicLayout(props) {
             dxLocked={dxLocked}
             potaSpots={potaSpots.data}
             sotaSpots={sotaSpots.data}
+            wwbotaSpots={wwbotaSpots.data}
             mySpots={mySpots.data}
             dxPaths={dxClusterData.paths}
             dxFilters={dxFilters}
@@ -1377,6 +1383,7 @@ export default function ClassicLayout(props) {
             onToggleDXLabels={toggleDXLabels}
             showPOTA={mapLayers.showPOTA}
             showSOTA={mapLayers.showSOTA}
+            showWWBOTA={mapLayers.showWWBOTA}
             showSatellites={mapLayers.showSatellites}
             showPSKReporter={mapLayers.showPSKReporter}
             wsjtxSpots={wsjtxMapSpots}
