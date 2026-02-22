@@ -2,14 +2,16 @@
 
 To use the **HFJ-350M Calculator** in Firefox, follow these steps:
 
-1. **Install Tampermonkey or Violentmonkey**:
-   - Go to the [Firefox Add-ons Store](https://addons.mozilla.org/en-US/firefox/addon/tampermonkey/).
-   - Click **Add to Firefox**.
+1. **Install a Userscript Manager (Greasemonkey, Tampermonkey, or Violentmonkey)**:
+   - **Greasemonkey**: [Firefox Add-ons Store](https://addons.mozilla.org/en-US/firefox/addon/greasemonkey/)
+   - **Tampermonkey**: [Firefox Add-ons Store](https://addons.mozilla.org/en-US/firefox/addon/tampermonkey/)
+   - **Violentmonkey**: [Firefox Add-ons Store](https://addons.mozilla.org/en-US/firefox/addon/violentmonkey/)
+   - Click **Add to Firefox** for your preferred manager.
 
 2. **Add the Script**:
-   - Open the [hfj350m_calculator.user.js](./hfj350m_calculator.user.js) file in your browser or copy its content.
-   - Click on the Tampermonkey icon in your browser toolbar and select **Create a new script...**.
-   - Paste the code into the editor and press `Ctrl+S` (or File > Save).
+   - Open the [hfj350m_calculator.user.js](./hfj350m_calculator.user.js) file or copy its content.
+   - **For Greasemonkey**: Click the Greasemonkey icon, select **New User Script...**, paste the code, and save.
+   - **For Tampermonkey/Violentmonkey**: Click the icon, select **Create a new script...**, paste the code, and press `Ctrl+S` (or File > Save).
 
 3. **Usage**:
    - Navigate to your OpenHamClock instance.
