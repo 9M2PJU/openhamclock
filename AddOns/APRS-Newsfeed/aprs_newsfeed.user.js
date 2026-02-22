@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         APRS Newsfeed (Inbox) for OpenHamClock
 // @namespace    http://tampermonkey.net/
-// @version      1.1
+// @version      1.3
 // @description  Fetches and displays your latest APRS messages from aprs.fi
 // @author       DO3EET
 // @match        *://*/*
@@ -110,6 +110,14 @@
             font-size: 14px;
             color: var(--accent-cyan, #00ddff);
         }
+        .aprs-icon-btn {
+            cursor: pointer;
+            color: var(--text-muted);
+            margin-left: 10px;
+            font-size: 14px;
+            transition: color 0.2s;
+        }
+        .aprs-icon-btn:hover { color: var(--text-primary); }
         #aprs-news-content {
             padding: 0;
             overflow-y: auto;
@@ -133,9 +141,10 @@
         
         #aprs-news-settings {
             padding: 10px;
-            background: rgba(0,0,0,0.2);
+            background: rgba(0,0,0,0.3);
             border-top: 1px solid var(--border-color, rgba(255, 180, 50, 0.1));
             font-size: 11px;
+            display: none;
         }
         .aprs-input {
             width: 100%;
@@ -146,6 +155,7 @@
             border-radius: 4px;
             margin-bottom: 6px;
             box-sizing: border-box;
+            outline: none;
         }
         #aprs-toggle-btn {
             position: fixed;
@@ -218,7 +228,10 @@
         container.innerHTML = `
             <div id="aprs-news-header">
                 <h3>${t('title')}</h3>
-                <span id="aprs-close" style="cursor:pointer; color:var(--text-muted);">×</span>
+                <div style="display:flex; align-items:center;">
+                    <span id="aprs-settings-toggle" class="aprs-icon-btn" title="Settings">🔧</span>
+                    <span id="aprs-close" class="aprs-icon-btn" style="font-size: 20px; margin-top: -2px;">×</span>
+                </div>
             </div>
             <div id="aprs-news-content">
                 <div style="padding: 20px; text-align: center; color: var(--text-muted);">${t('setup_required')}</div>
@@ -234,8 +247,10 @@
         document.body.appendChild(container);
 
         const closeBtn = document.getElementById("aprs-close");
+        const settingsBtn = document.getElementById("aprs-settings-toggle");
         const saveBtn = document.getElementById("aprs-save-btn");
         const apiKeyInput = document.getElementById("aprs-apikey-input");
+        const settingsDiv = document.getElementById("aprs-news-settings");
 
         toggleBtn.onclick = () => {
             const isVisible = container.style.display === "flex";
@@ -247,10 +262,16 @@
         };
 
         closeBtn.onclick = () => container.style.display = "none";
+        
+        settingsBtn.onclick = () => {
+            const isVisible = settingsDiv.style.display === "block";
+            settingsDiv.style.display = isVisible ? "none" : "block";
+        };
 
         saveBtn.onclick = () => {
             apiKey = apiKeyInput.value.trim();
             localStorage.setItem(STORAGE_API_KEY, apiKey);
+            settingsDiv.style.display = "none";
             fetchMessages();
         };
 
@@ -258,6 +279,7 @@
         let pos1 = 0, pos2 = 0, pos3 = 0, pos4 = 0;
         const header = document.getElementById("aprs-news-header");
         header.onmousedown = (e) => {
+            if (e.target.classList.contains('aprs-icon-btn')) return;
             e.preventDefault();
             pos3 = e.clientX; pos4 = e.clientY;
             document.onmouseup = () => { document.onmouseup = null; document.onmousemove = null; };
@@ -286,7 +308,6 @@
         const status = document.getElementById("aprs-status");
         status.innerText = "Loading...";
 
-        // Construct query: if base call, add common SSIDs
         let queryCalls = baseCall;
         if (!baseCall.includes('-')) {
             queryCalls = `${baseCall},${baseCall}-7,${baseCall}-9,${baseCall}-10,${baseCall}-1,${baseCall}-2`;
@@ -311,7 +332,6 @@
                 }
             });
         } else {
-            // Fallback for environments without GM_xmlhttpRequest (will likely hit CORS)
             try {
                 const response = await fetch(url);
                 const data = await response.json();
@@ -326,12 +346,10 @@
     function handleResponse(data) {
         const status = document.getElementById("aprs-status");
         if (data.result === 'ok') {
-            // Sort entries by time descending (api might return mixed SSIDs)
             const sortedEntries = (data.entries || []).sort((a, b) => b.time - a.time);
             renderMessages(sortedEntries);
             status.innerText = `${t('last_update')}: ${new Date().toLocaleTimeString()}`;
             
-            // Check for new messages
             if (sortedEntries.length > 0) {
                 const latest = sortedEntries[0].messageid;
                 if (latest > lastMsgId && document.getElementById("aprs-news-container").style.display !== "flex") {
@@ -379,4 +397,3 @@
         init();
     }
 })();
-
