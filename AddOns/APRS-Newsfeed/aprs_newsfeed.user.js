@@ -277,8 +277,8 @@
 
     async function fetchMessages() {
         if (!apiKey) return;
-        callsign = getCallsign();
-        if (callsign === 'N0CALL') {
+        const baseCall = getCallsign();
+        if (baseCall === 'N0CALL') {
              document.getElementById("aprs-news-content").innerHTML = `<div style="padding: 20px; text-align: center; color: var(--accent-red);">${t('error_no_call')}</div>`;
              return;
         }
@@ -286,7 +286,13 @@
         const status = document.getElementById("aprs-status");
         status.innerText = "Loading...";
 
-        const url = `https://api.aprs.fi/api/get?what=msg&dst=${callsign}&apikey=${apiKey}&format=json`;
+        // Construct query: if base call, add common SSIDs
+        let queryCalls = baseCall;
+        if (!baseCall.includes('-')) {
+            queryCalls = `${baseCall},${baseCall}-7,${baseCall}-9,${baseCall}-10,${baseCall}-1,${baseCall}-2`;
+        }
+
+        const url = `https://api.aprs.fi/api/get?what=msg&dst=${queryCalls}&apikey=${apiKey}&format=json`;
 
         if (typeof GM_xmlhttpRequest !== 'undefined') {
             GM_xmlhttpRequest({
@@ -320,12 +326,14 @@
     function handleResponse(data) {
         const status = document.getElementById("aprs-status");
         if (data.result === 'ok') {
-            renderMessages(data.entries);
+            // Sort entries by time descending (api might return mixed SSIDs)
+            const sortedEntries = (data.entries || []).sort((a, b) => b.time - a.time);
+            renderMessages(sortedEntries);
             status.innerText = `${t('last_update')}: ${new Date().toLocaleTimeString()}`;
             
             // Check for new messages
-            if (data.entries.length > 0) {
-                const latest = data.entries[0].messageid;
+            if (sortedEntries.length > 0) {
+                const latest = sortedEntries[0].messageid;
                 if (latest > lastMsgId && document.getElementById("aprs-news-container").style.display !== "flex") {
                     const badge = document.getElementById("aprs-news-badge");
                     badge.innerText = "!";
@@ -349,6 +357,7 @@
 
         content.innerHTML = entries.map(entry => {
             const timeStr = new Date(entry.time * 1000).toLocaleString([], {hour: '2-digit', minute:'2-digit', day: '2-digit', month: '2-digit'});
+            const isToSSID = entry.dst.includes('-');
             return `
                 <div class="aprs-msg-entry">
                     <div class="aprs-msg-meta">
@@ -356,6 +365,9 @@
                         <span>${timeStr}</span>
                     </div>
                     <div class="aprs-msg-text">${entry.message}</div>
+                    <div style="font-size: 9px; color: var(--text-muted); text-align: right; margin-top: 2px;">
+                        ${t('to')}: <span style="color: ${isToSSID ? 'var(--accent-amber)' : 'var(--text-secondary)'}">${entry.dst}</span>
+                    </div>
                 </div>
             `;
         }).join('');
