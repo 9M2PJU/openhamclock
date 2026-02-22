@@ -124,6 +124,7 @@ export const useDXClusterData = (filters = {}, config = {}) => {
       time: item.time || '',
       spotter: item.spotter,
       source: 'DXCluster',
+
       dxGrid: item.dxGrid,
       dxLat: item.dxLat,
       dxLon: item.dxLon,

@@ -273,7 +273,6 @@ export const DXClusterPanel = ({
                 >
                   {formatSpotTimeLabel(spot)}
                 </div>
-                <div style={{ color: 'var(--text-muted)', fontSize: '10px' }}>{spot.time || ''}</div>
               </div>
             );
           })}
