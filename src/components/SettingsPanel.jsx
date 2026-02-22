@@ -73,6 +73,15 @@ export const SettingsPanel = ({
     }
   });
 
+  // DX Weather (local-only)
+  const [dxWeatherEnabled, setDxWeatherEnabled] = useState(() => {
+    try {
+      return localStorage.getItem('ohc_dx_weather_enabled') === '1';
+    } catch {
+      return false;
+    }
+  });
+
   // N3FJP UI settings (persisted)
   const [n3fjpDisplayMinutes, setN3fjpDisplayMinutes] = useState(() => {
     try {
@@ -351,6 +360,7 @@ export const SettingsPanel = ({
       lowMemoryMode,
       units,
       propagation: { mode: propMode, power: parseFloat(propPower) || 100 },
+
       rigControl: { enabled: rigEnabled, host: rigHost, port: parseInt(rigPort) || 5555, tuneEnabled, autoMode },
     });
     onClose();
@@ -533,23 +543,6 @@ export const SettingsPanel = ({
             }}
           >
             Community
-          </button>
-          <button
-            onClick={() => setActiveTab('sponsor')}
-            style={{
-              flex: 1,
-              padding: '10px',
-              background: activeTab === 'sponsor' ? 'var(--accent-amber)' : 'transparent',
-              border: 'none',
-              borderRadius: '6px 6px 0 0',
-              color: activeTab === 'sponsor' ? '#000' : 'var(--text-secondary)',
-              fontSize: '13px',
-              cursor: 'pointer',
-              fontWeight: activeTab === 'sponsor' ? '700' : '400',
-              fontFamily: 'JetBrains Mono, monospace',
-            }}
-          >
-            ⭐ Sponsor
           </button>
         </div>
 
@@ -1868,6 +1861,64 @@ export const SettingsPanel = ({
                   </div>
                 </details>
 
+                {/* DX Weather (Map overlays) */}
+                <div
+                  style={{
+                    borderTop: '1px solid rgba(255,255,255,0.08)',
+                    paddingTop: 12,
+                    marginTop: 12,
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+                    <div>
+                      <div style={{ fontWeight: 700, color: 'var(--text-primary)' }}>🌦️ DX Weather</div>
+                      <div style={{ color: 'var(--text-secondary)', fontSize: 12, lineHeight: 1.45 }}>
+                        Adds a small weather bubble on hover and weather details inside map popups (DX spots, POTA/SOTA,
+                        and the movable DX marker).
+                      </div>
+
+                      {!isLocalInstall && (
+                        <div style={{ marginTop: 6, color: 'var(--text-muted)', fontSize: 12, lineHeight: 1.45 }}>
+                          Hosted mode disables this feature to protect shared weather-provider rate limits. Available in
+                          Local mode.
+                        </div>
+                      )}
+                    </div>
+
+                    <label
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        fontFamily: 'JetBrains Mono, monospace',
+                        fontSize: 12,
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        disabled={!isLocalInstall}
+                        checked={!!dxWeatherEnabled}
+                        onChange={(e) => {
+                          const next = !!e.target.checked;
+                          if (!isLocalInstall) return;
+                          setDxWeatherEnabled(next);
+                          try {
+                            localStorage.setItem('ohc_dx_weather_enabled', next ? '1' : '0');
+                          } catch {}
+                          try {
+                            window.dispatchEvent(new Event('ohc-dx-weather-config-changed'));
+                          } catch {}
+                        }}
+                      />
+                      Enable
+                    </label>
+                  </div>
+
+                  <div style={{ marginTop: 10, color: 'var(--text-muted)', fontSize: 12, lineHeight: 1.45 }}>
+                    Tip: A 5–10 minute cache is used automatically and hover fetches are debounced.
+                  </div>
+                </div>
+
                 {!isLocalInstall && (
                   <div
                     style={{
@@ -2129,6 +2180,7 @@ export const SettingsPanel = ({
               >
                 Map Overlays
               </div>
+
               <label
                 style={{
                   display: 'flex',
@@ -2163,9 +2215,33 @@ export const SettingsPanel = ({
             </div>
 
             {layers.length > 0 ? (
-              layers
-                .filter((layer) => layer.category !== 'satellites') // Correctly filter out satellites
-                .map((layer) => (
+              (() => {
+                const categoryOrder = [
+                  { key: 'propagation', label: '📡 Propagation' },
+                  { key: 'amateur', label: '📻 Amateur Radio' },
+                  { key: 'weather', label: '🌤️ Weather' },
+                  { key: 'space-weather', label: '☀️ Space Weather' },
+                  { key: 'hazards', label: '⚠️ Natural Hazards' },
+                  { key: 'geology', label: '🌍 Geology' },
+                  { key: 'overlay', label: '🗺️ Map Overlays' },
+                ];
+
+                const nonSatLayers = layers.filter((l) => l.category !== 'satellites');
+                const grouped = {};
+                nonSatLayers.forEach((l) => {
+                  const cat = l.category || 'overlay';
+                  if (!grouped[cat]) grouped[cat] = [];
+                  grouped[cat].push(l);
+                });
+                Object.values(grouped).forEach((arr) =>
+                  arr.sort((a, b) => {
+                    const nameA = (a.name.startsWith('plugins.') ? t(a.name) : a.name).toLowerCase();
+                    const nameB = (b.name.startsWith('plugins.') ? t(b.name) : b.name).toLowerCase();
+                    return nameA.localeCompare(nameB);
+                  }),
+                );
+
+                const renderLayerCard = (layer) => (
                   <div
                     key={layer.id}
                     style={{
@@ -2176,84 +2252,31 @@ export const SettingsPanel = ({
                       marginBottom: '12px',
                     }}
                   >
-                    <div
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        marginBottom: '8px',
-                      }}
-                    >
-                      <label
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '10px',
-                          cursor: 'pointer',
-                          flex: 1,
-                        }}
-                      >
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', flex: 1 }}>
                         <input
                           type="checkbox"
                           checked={layer.enabled}
                           onChange={() => handleToggleLayer(layer.id)}
-                          style={{
-                            width: '18px',
-                            height: '18px',
-                            cursor: 'pointer',
-                          }}
+                          style={{ width: '18px', height: '18px', cursor: 'pointer' }}
                         />
                         <span style={{ fontSize: '18px' }}>{layer.icon}</span>
                         <div>
-                          <div
-                            style={{
-                              color: layer.enabled ? 'var(--accent-amber)' : 'var(--text-primary)',
-                              fontSize: '14px',
-                              fontWeight: '600',
-                              fontFamily: 'JetBrains Mono, monospace',
-                            }}
-                          >
+                          <div style={{ color: layer.enabled ? 'var(--accent-amber)' : 'var(--text-primary)', fontSize: '14px', fontWeight: '600', fontFamily: 'JetBrains Mono, monospace' }}>
                             {layer.name.startsWith('plugins.') ? t(layer.name) : layer.name}
                           </div>
                           {layer.description && (
-                            <div
-                              style={{
-                                fontSize: '11px',
-                                color: 'var(--text-muted)',
-                                marginTop: '2px',
-                              }}
-                            >
+                            <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>
                               {layer.description.startsWith('plugins.') ? t(layer.description) : layer.description}
                             </div>
                           )}
                         </div>
                       </label>
-                      <span
-                        style={{
-                          fontSize: '11px',
-                          textTransform: 'uppercase',
-                          color: 'var(--text-secondary)',
-                          background: 'var(--bg-hover)',
-                          padding: '2px 8px',
-                          borderRadius: '3px',
-                        }}
-                      >
-                        {layer.category}
-                      </span>
                     </div>
 
                     {layer.enabled && (
                       <div style={{ paddingLeft: '38px', marginTop: '12px' }}>
-                        <label
-                          style={{
-                            display: 'block',
-                            fontSize: '11px',
-                            color: 'var(--text-muted)',
-                            marginBottom: '6px',
-                            textTransform: 'uppercase',
-                            letterSpacing: '0.5px',
-                          }}
-                        >
+                        <label style={{ display: 'block', fontSize: '11px', color: 'var(--text-muted)', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
                           {t('station.settings.layers.opacity')}: {Math.round(layer.opacity * 100)}%
                         </label>
                         <input
@@ -2262,32 +2285,13 @@ export const SettingsPanel = ({
                           max="100"
                           value={layer.opacity * 100}
                           onChange={(e) => handleOpacityChange(layer.id, parseFloat(e.target.value) / 100)}
-                          style={{
-                            width: '100%',
-                            cursor: 'pointer',
-                          }}
+                          style={{ width: '100%', cursor: 'pointer' }}
                         />
-
-                        {/* CTRL+Click Reset Button - Hidden unless CTRL is pressed */}
                         {ctrlPressed &&
-                          ['lightning', 'wspr', 'rbn', 'grayline', 'n3fjp_logged_qsos', 'voacap-heatmap'].includes(
-                            layer.id,
-                          ) && (
+                          ['lightning', 'wspr', 'rbn', 'grayline', 'n3fjp_logged_qsos', 'voacap-heatmap'].includes(layer.id) && (
                             <button
                               onClick={() => resetPopupPositions(layer.id)}
-                              style={{
-                                marginTop: '12px',
-                                padding: '8px 12px',
-                                background: 'var(--accent-red)',
-                                color: 'white',
-                                border: 'none',
-                                borderRadius: '4px',
-                                cursor: 'pointer',
-                                fontSize: '11px',
-                                fontWeight: '600',
-                                textTransform: 'uppercase',
-                                width: '100%',
-                              }}
+                              style={{ marginTop: '12px', padding: '8px 12px', background: 'var(--accent-red)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: '600', textTransform: 'uppercase', width: '100%' }}
                             >
                               🔄 RESET POPUPS
                             </button>
@@ -2295,7 +2299,40 @@ export const SettingsPanel = ({
                       </div>
                     )}
                   </div>
-                ))
+                );
+
+                const result = [];
+                const rendered = new Set();
+                categoryOrder.forEach(({ key, label }) => {
+                  if (!grouped[key] || grouped[key].length === 0) return;
+                  result.push(
+                    <div
+                      key={`cat-${key}`}
+                      style={{
+                        fontSize: '11px',
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.5px',
+                        color: 'var(--text-muted)',
+                        marginBottom: '8px',
+                        marginTop: result.length > 0 ? '16px' : '0',
+                        paddingBottom: '4px',
+                        borderBottom: '1px solid var(--border-color)',
+                      }}
+                    >
+                      {label}
+                    </div>,
+                  );
+                  grouped[key].forEach((layer) => {
+                    result.push(renderLayerCard(layer));
+                    rendered.add(layer.id);
+                  });
+                });
+                // Any uncategorized leftovers
+                nonSatLayers.filter((l) => !rendered.has(l.id)).forEach((layer) => {
+                  result.push(renderLayerCard(layer));
+                });
+                return result;
+              })()
             ) : (
               <div
                 style={{
@@ -3577,85 +3614,6 @@ export const SettingsPanel = ({
               <div style={{ fontSize: '10px', color: 'var(--text-muted)', textAlign: 'center', marginTop: '10px' }}>
                 Want to contribute? Check out our GitHub — issues, pull requests, and ideas are all welcome.
               </div>
-            </div>
-          </div>
-        )}
-
-        {/* Sponsor Tab */}
-        {activeTab === 'sponsor' && (
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '20px', padding: '10px 0' }}>
-            <div style={{ fontSize: '14px', color: 'var(--text-secondary)', textAlign: 'center', lineHeight: 1.6 }}>
-              OpenHamClock is proudly sponsored by
-            </div>
-
-            <a
-              href="https://www.dxengineering.com/"
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{
-                display: 'block',
-                padding: '24px 32px',
-                background: 'var(--bg-tertiary)',
-                borderRadius: '12px',
-                border: '1px solid var(--border-color)',
-                transition: 'border-color 0.2s, transform 0.2s',
-                textDecoration: 'none',
-              }}
-              onMouseOver={(e) => {
-                e.currentTarget.style.borderColor = 'var(--accent-amber)';
-                e.currentTarget.style.transform = 'scale(1.02)';
-              }}
-              onMouseOut={(e) => {
-                e.currentTarget.style.borderColor = 'var(--border-color)';
-                e.currentTarget.style.transform = 'scale(1)';
-              }}
-            >
-              <img
-                src="https://lh4.googleusercontent.com/proxy/Jbm18FgAfoi1d_4WUqqzp0YkXQJYCqoVL5PWvxIF5ejvX3nfzwthgiEpavjwlCd0ZaAYR_pIu0NiwVOdf0niZeGPRCLU-JdGocoExKATcxVV_NKWg6tvy0gmKrnBJNIzcAg_rSc2bQ"
-                alt="DX Engineering"
-                style={{ maxWidth: '280px', width: '100%', objectFit: 'contain' }}
-              />
-            </a>
-
-            <div style={{ textAlign: 'center', maxWidth: '400px' }}>
-              <div style={{ fontSize: '13px', color: 'var(--text-secondary)', lineHeight: 1.6, marginBottom: '16px' }}>
-                DX Engineering is the premier source for amateur radio equipment, antennas, and accessories.
-                Their support helps keep OpenHamClock free and open source for the ham radio community.
-              </div>
-              <a
-                href="https://www.dxengineering.com/"
-                target="_blank"
-                rel="noopener noreferrer"
-                style={{
-                  display: 'inline-block',
-                  padding: '12px 28px',
-                  background: 'linear-gradient(135deg, var(--accent-amber) 0%, #ff8800 100%)',
-                  border: 'none',
-                  borderRadius: '6px',
-                  color: '#000',
-                  fontSize: '14px',
-                  fontWeight: '700',
-                  textDecoration: 'none',
-                  cursor: 'pointer',
-                  fontFamily: 'JetBrains Mono, monospace',
-                }}
-              >
-                Visit DX Engineering
-              </a>
-            </div>
-
-            <div style={{
-              fontSize: '11px',
-              color: 'var(--text-muted)',
-              textAlign: 'center',
-              marginTop: '8px',
-              padding: '12px',
-              background: 'rgba(255, 193, 7, 0.06)',
-              borderRadius: '8px',
-              maxWidth: '400px',
-              width: '100%',
-            }}>
-              Interested in sponsoring OpenHamClock? Contact K0CJH for partnership inquiries.
             </div>
           </div>
         )}

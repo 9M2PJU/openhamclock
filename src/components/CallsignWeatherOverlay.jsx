@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { getCallsignWeather } from '../utils/callsignWeather.js';
-import { calculateSolarElevation, classifyTwilight } from '../utils/geo.js';
 
 function degToCompass(deg) {
   if (deg == null || Number.isNaN(deg)) return '';
@@ -46,7 +45,19 @@ export function CallsignWeatherOverlay({ hoveredSpot, enabled, units = 'imperial
     null;
 
   useEffect(() => {
-    if (!enabled) return;
+    // Always cancel any pending debounce when inputs change
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current);
+      debounceRef.current = null;
+    }
+
+    if (!enabled) {
+      setData(null);
+      setErr(null);
+      setLoading(false);
+      return;
+    }
+
     if (lat == null || lon == null) {
       setData(null);
       setErr(null);
@@ -54,24 +65,30 @@ export function CallsignWeatherOverlay({ hoveredSpot, enabled, units = 'imperial
       return;
     }
 
-    if (debounceRef.current) clearTimeout(debounceRef.current);
+    let cancelled = false;
 
     debounceRef.current = setTimeout(async () => {
       setLoading(true);
       setErr(null);
       try {
         const w = await getCallsignWeather(lat, lon);
-        setData(w);
+        if (!cancelled) setData(w);
       } catch (e) {
-        setErr(e?.message || 'Weather unavailable');
-        setData(null);
+        if (!cancelled) {
+          setErr(e?.message || 'Weather unavailable');
+          setData(null);
+        }
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     }, 550);
 
     return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
+      cancelled = true;
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current);
+        debounceRef.current = null;
+      }
     };
   }, [enabled, lat, lon]);
 
@@ -91,9 +108,6 @@ export function CallsignWeatherOverlay({ hoveredSpot, enabled, units = 'imperial
     }
 
     const precipProb = data?.hourly?.precipitation_probability?.[0];
-    const solarEl = calculateSolarElevation(lat, lon, new Date());
-    const tw = classifyTwilight(solarEl);
-    const greyline = solarEl != null && Math.abs(solarEl) <= 6;
 
     return {
       temp,
@@ -105,11 +119,8 @@ export function CallsignWeatherOverlay({ hoveredSpot, enabled, units = 'imperial
       code: c.weather_code,
       label: weatherCodeLabel(c.weather_code),
       precipProb,
-      solarEl,
-      tw,
-      greyline,
     };
-  }, [data, units, lat, lon]);
+  }, [data, units]);
 
   if (!enabled) return null;
   if (!hoveredSpot) return null;
@@ -203,17 +214,10 @@ export function CallsignWeatherOverlay({ hoveredSpot, enabled, units = 'imperial
               {view.precipProb != null ? `${Math.round(view.precipProb)}%` : '—'}
             </div>
           </div>
-
-          <div>
-            <div style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 800, letterSpacing: '0.08em' }}>
-              SUN
-            </div>
-            <div style={{ fontSize: 16, fontWeight: 800 }}>
-              {view.solarEl != null ? `${Math.round(view.solarEl)}° (${view.tw})` : '—'}
-            </div>
-          </div>
         </div>
       )}
     </div>
   );
 }
+
+export default CallsignWeatherOverlay;

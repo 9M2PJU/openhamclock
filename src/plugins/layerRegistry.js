@@ -7,6 +7,8 @@ import * as WXRadarPlugin from './layers/useWXRadar.js';
 import * as OWMCloudsPlugin from './layers/useOWMClouds.js';
 import * as CityLightsPlugin from './layers/useCityLights.js';
 import * as EarthquakesPlugin from './layers/useEarthquakes.js';
+import * as WildfiresPlugin from './layers/useWildfires.js';
+import * as FloodsPlugin from './layers/useFloods.js';
 import * as AuroraPlugin from './layers/useAurora.js';
 import * as WSPRPlugin from './layers/useWSPR.js';
 import * as GrayLinePlugin from './layers/useGrayLine.js';
@@ -24,6 +26,8 @@ const layerPlugins = [
   SatellitePlugin,
   WXRadarPlugin,
   EarthquakesPlugin,
+  WildfiresPlugin,
+  FloodsPlugin,
   AuroraPlugin,
   WSPRPlugin,
   GrayLinePlugin,

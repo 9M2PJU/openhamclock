@@ -16,7 +16,7 @@ import {
   classifyTwilight,
   calculateSolarElevation,
 } from '../utils/geo.js';
-import { getBandColor } from '../utils/callsign.js';
+import { getBandColor, getBandFromFreq } from '../utils/callsign.js';
 import {
   BAND_LEGEND_ORDER,
   getBandColorForBand,
@@ -52,6 +52,22 @@ function esc(str) {
 // Normalize callsign keys used for DX hover/highlight matching
 const normalizeCallsignKey = (v) => (v || '').toString().toUpperCase().trim();
 
+const normalizeBandKey = (band) => {
+  if (band == null) return null;
+  const raw = String(band).trim().toLowerCase();
+  if (!raw || raw === 'other') return null;
+  if (raw.endsWith('cm') || raw.endsWith('m')) return raw;
+  if (/^\d+(\.\d+)?$/.test(raw)) return `${raw}m`;
+  return raw;
+};
+
+const bandFromAnyFrequency = (freq) => {
+  if (freq == null || freq === '') return null;
+  const n = parseFloat(freq);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return normalizeBandKey(getBandFromFreq(n));
+};
+
 export const WorldMap = ({
   deLocation,
   dxLocation,
@@ -62,6 +78,8 @@ export const WorldMap = ({
   sotaSpots,
   dxPaths,
   dxFilters,
+  mapBandFilter,
+  onMapBandFilterChange,
   satellites,
   pskReporterSpots,
   wsjtxSpots,
@@ -76,6 +94,9 @@ export const WorldMap = ({
   showSOTALabels = true,
   showPSKReporter,
   showWSJTX,
+  showAPRS,
+  aprsStations,
+  aprsWatchlistCalls,
   onSpotClick,
   hoveredSpot,
   callsign = 'N0CALL',
@@ -110,6 +131,7 @@ export const WorldMap = ({
   const dxPathsMarkersRef = useRef([]);
   const pskMarkersRef = useRef([]);
   const wsjtxMarkersRef = useRef([]);
+  const aprsMarkersRef = useRef([]);
   const countriesLayerRef = useRef([]);
   const dxLockedRef = useRef(dxLocked);
   const rotatorLineRef = useRef(null);
@@ -131,6 +153,49 @@ export const WorldMap = ({
     if (!deLocation?.lat || !deLocation?.lon) return '';
     return calculateGridSquare(deLocation.lat, deLocation.lon);
   }, [deLocation?.lat, deLocation?.lon]);
+
+  const selectedMapBands = useMemo(() => {
+    if (!Array.isArray(mapBandFilter)) return new Set();
+    const normalized = mapBandFilter.map((b) => normalizeBandKey(b)).filter(Boolean);
+    return new Set(normalized);
+  }, [mapBandFilter]);
+
+  const hasMapBandFilter = selectedMapBands.size > 0;
+
+  const bandPassesMapFilter = useCallback(
+    (band) => {
+      if (!hasMapBandFilter) return true;
+      const key = normalizeBandKey(band);
+      return !!key && selectedMapBands.has(key);
+    },
+    [hasMapBandFilter, selectedMapBands],
+  );
+
+  const writeMapBandFilter = useCallback(
+    (bands) => {
+      if (typeof onMapBandFilterChange !== 'function') return;
+      const normalized = Array.from(new Set((bands || []).map((b) => normalizeBandKey(b)).filter(Boolean)));
+      onMapBandFilterChange(normalized);
+    },
+    [onMapBandFilterChange],
+  );
+
+  const toggleMapBand = useCallback(
+    (band) => {
+      if (typeof onMapBandFilterChange !== 'function') return;
+      const key = normalizeBandKey(band);
+      if (!key) return;
+      const next = new Set(selectedMapBands);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      writeMapBandFilter(Array.from(next));
+    },
+    [onMapBandFilterChange, selectedMapBands, writeMapBandFilter],
+  );
+
+  const clearMapBandFilter = useCallback(() => {
+    writeMapBandFilter([]);
+  }, [writeMapBandFilter]);
 
   // ── DX highlight helpers (click highlight + DX Cluster panel hover highlight) ──
   const clearDXHighlight = useCallback(() => {
@@ -906,6 +971,9 @@ export const WorldMap = ({
       const filteredPaths = filterDXPaths(dxPaths, dxFilters);
 
       filteredPaths.forEach((path) => {
+        const band = bandFromAnyFrequency(path.freq);
+        if (!bandPassesMapFilter(band)) return;
+
         try {
           if (!path.spotterLat || !path.spotterLon || !path.dxLat || !path.dxLon) return;
           if (isNaN(path.spotterLat) || isNaN(path.spotterLon) || isNaN(path.dxLat) || isNaN(path.dxLon)) return;
@@ -981,7 +1049,7 @@ export const WorldMap = ({
         }
       });
     }
-  }, [dxPaths, dxFilters, showDXPaths, showDXLabels, hoveredSpot, bandColorVersion]);
+  }, [dxPaths, dxFilters, showDXPaths, showDXLabels, hoveredSpot, bandColorVersion, bandPassesMapFilter]);
 
   useEffect(() => {
     const map = mapInstanceRef.current;
@@ -1069,6 +1137,9 @@ export const WorldMap = ({
 
     if (showPOTA && potaSpots) {
       potaSpots.forEach((spot) => {
+        const band = normalizeBandKey(spot.band) || bandFromAnyFrequency(spot.freq);
+        if (!bandPassesMapFilter(band)) return;
+
         if (spot.lat && spot.lon) {
           // Green triangle marker for POTA activators — replicate across world copies
           replicatePoint(spot.lat, spot.lon).forEach(([lat, lon]) => {
@@ -1110,7 +1181,7 @@ export const WorldMap = ({
         }
       });
     }
-  }, [potaSpots, showPOTA, showPOTALabels]);
+  }, [potaSpots, showPOTA, showPOTALabels, bandPassesMapFilter]);
 
   // Update WWFF markers
   useEffect(() => {
@@ -1122,6 +1193,9 @@ export const WorldMap = ({
 
     if (showWWFF && wwffSpots) {
       wwffSpots.forEach((spot) => {
+        const band = normalizeBandKey(spot.band) || bandFromAnyFrequency(spot.freq);
+        if (!bandPassesMapFilter(band)) return;
+
         if (spot.lat && spot.lon) {
           // Light green inverted triangle for WWFF activators — replicate across world copies
           replicatePoint(spot.lat, spot.lon).forEach(([lat, lon]) => {
@@ -1163,7 +1237,7 @@ export const WorldMap = ({
         }
       });
     }
-  }, [wwffSpots, showWWFF, showWWFFLabels]);
+  }, [wwffSpots, showWWFF, showWWFFLabels, bandPassesMapFilter]);
 
   // Update SOTA markers
   useEffect(() => {
@@ -1175,6 +1249,9 @@ export const WorldMap = ({
 
     if (showSOTA && sotaSpots) {
       sotaSpots.forEach((spot) => {
+        const band = normalizeBandKey(spot.band) || bandFromAnyFrequency(spot.freq);
+        if (!bandPassesMapFilter(band)) return;
+
         if (spot.lat && spot.lon) {
           // Orange diamond marker for SOTA activators — replicate across world copies
           replicatePoint(spot.lat, spot.lon).forEach(([lat, lon]) => {
@@ -1216,7 +1293,7 @@ export const WorldMap = ({
         }
       });
     }
-  }, [sotaSpots, showSOTA, showSOTALabels]);
+  }, [sotaSpots, showSOTA, showSOTALabels, bandPassesMapFilter]);
 
   // Plugin layer system - properly load saved states
   useEffect(() => {
@@ -1331,14 +1408,19 @@ export const WorldMap = ({
           // For RX spots (someone transmitted → you received): show the sender (remote station)
           const displayCall = spot.direction === 'rx' ? spot.sender : spot.receiver || spot.sender;
           const dirLabel = spot.direction === 'rx' ? 'RX' : 'TX';
-          const freqMHz = spot.freqMHz || (spot.freq ? (spot.freq / 1000000).toFixed(3) : '?');
-          const bandColor = getBandColor(parseFloat(freqMHz));
+          const isRx = spot.direction === 'rx';
+          const freqMHzRaw = spot.freqMHz || (spot.freq ? spot.freq / 1000000 : null);
+          const band = normalizeBandKey(spot.band) || bandFromAnyFrequency(freqMHzRaw || spot.freq);
+          if (!bandPassesMapFilter(band)) return;
+
+          const freqMHz = Number.isFinite(parseFloat(freqMHzRaw)) ? parseFloat(freqMHzRaw).toFixed(3) : '?';
+          const bandColor = getBandColor(parseFloat(freqMHzRaw));
 
           try {
             // Draw line from DE to spot location
+            // TX = solid line (my signal going out), RX = dashed line (signals coming in)
             const points = getGreatCirclePoints(deLocation.lat, deLocation.lon, spotLat, spotLon, 50);
 
-            // Render polyline on all 3 world copies
             if (
               points &&
               Array.isArray(points) &&
@@ -1348,24 +1430,46 @@ export const WorldMap = ({
               replicatePath(points).forEach((copy) => {
                 const line = L.polyline(copy, {
                   color: bandColor,
-                  weight: 1.5,
-                  opacity: 0.5,
-                  dashArray: '4, 4',
+                  weight: isRx ? 1.5 : 2,
+                  opacity: isRx ? 0.4 : 0.6,
+                  dashArray: isRx ? '4, 6' : null,
                 }).addTo(map);
                 pskMarkersRef.current.push(line);
               });
             }
 
-            // Render circleMarker on all 3 world copies
+            // TX = circle marker, RX = diamond marker (colorblind-friendly shape distinction)
             replicatePoint(spotLat, spotLon).forEach(([rLat, rLon]) => {
-              const circle = L.circleMarker([rLat, rLon], {
-                radius: 4,
-                fillColor: bandColor,
-                color: '#fff',
-                weight: 1,
-                opacity: 0.9,
-                fillOpacity: 0.8,
-              })
+              let marker;
+              if (isRx) {
+                // Diamond marker for RX
+                marker = L.marker([rLat, rLon], {
+                  icon: L.divIcon({
+                    className: '',
+                    html: `<div style="
+                      width: 8px; height: 8px;
+                      background: ${bandColor};
+                      border: 1px solid #fff;
+                      transform: rotate(45deg);
+                      opacity: 0.9;
+                    "></div>`,
+                    iconSize: [8, 8],
+                    iconAnchor: [4, 4],
+                  }),
+                });
+              } else {
+                // Circle marker for TX
+                marker = L.circleMarker([rLat, rLon], {
+                  radius: 4,
+                  fillColor: bandColor,
+                  color: '#fff',
+                  weight: 1,
+                  opacity: 0.9,
+                  fillOpacity: 0.8,
+                });
+              }
+
+              marker
                 .bindPopup(
                   `
                 <b data-qrz-call="${esc(displayCall)}" style="cursor:pointer">${esc(displayCall)}</b> <span style="color:#888;font-size:10px">${dirLabel}</span><br>
@@ -1376,10 +1480,10 @@ export const WorldMap = ({
                 .addTo(map);
 
               if (onSpotClick) {
-                circle.on('click', () => onSpotClick(spot));
+                marker.on('click', () => onSpotClick(spot));
               }
 
-              pskMarkersRef.current.push(circle);
+              pskMarkersRef.current.push(marker);
             });
           } catch (err) {
             console.warn('Error rendering PSKReporter spot:', err);
@@ -1387,7 +1491,7 @@ export const WorldMap = ({
         }
       });
     }
-  }, [pskReporterSpots, showPSKReporter, deLocation, bandColorVersion]);
+  }, [pskReporterSpots, showPSKReporter, deLocation, bandColorVersion, bandPassesMapFilter]);
 
   // Update WSJT-X markers (CQ callers with grid locators)
   useEffect(() => {
@@ -1421,6 +1525,9 @@ export const WorldMap = ({
 
         if (!isNaN(spotLat) && !isNaN(spotLon)) {
           const freqMHz = spot.dialFrequency ? spot.dialFrequency / 1000000 : 0;
+          const band = normalizeBandKey(spot.band) || bandFromAnyFrequency(freqMHz);
+          if (!bandPassesMapFilter(band)) return;
+
           const bandColor = freqMHz ? getBandColor(freqMHz) : '#a78bfa';
           // Prefix-estimated locations get reduced opacity
           const isEstimated = spot.gridSource === 'prefix';
@@ -1484,7 +1591,73 @@ export const WorldMap = ({
         }
       });
     }
-  }, [wsjtxSpots, showWSJTX, deLocation, bandColorVersion]);
+  }, [wsjtxSpots, showWSJTX, deLocation, bandColorVersion, bandPassesMapFilter]);
+
+  // Update APRS markers
+  useEffect(() => {
+    if (!mapInstanceRef.current) return;
+    const map = mapInstanceRef.current;
+
+    aprsMarkersRef.current.forEach((m) => map.removeLayer(m));
+    aprsMarkersRef.current = [];
+
+    if (showAPRS && aprsStations && aprsStations.length > 0) {
+      const watchSet = aprsWatchlistCalls || new Set();
+
+      aprsStations.forEach((station) => {
+        const lat = parseFloat(station.lat);
+        const lon = parseFloat(station.lon);
+        if (isNaN(lat) || isNaN(lon)) return;
+
+        const isWatched = watchSet.has?.(station.call) || watchSet.has?.(station.ssid);
+        const color = isWatched ? '#f59e0b' : '#22d3ee'; // amber for watched, cyan for regular
+        const size = isWatched ? 7 : 5;
+
+        try {
+          // Triangle marker for APRS stations (distinct from circles/diamonds)
+          replicatePoint(lat, lon).forEach(([rLat, rLon]) => {
+            const marker = L.marker([rLat, rLon], {
+              icon: L.divIcon({
+                className: '',
+                html: `<div style="
+                  width: 0; height: 0;
+                  border-left: ${size}px solid transparent;
+                  border-right: ${size}px solid transparent;
+                  border-bottom: ${size * 1.6}px solid ${color};
+                  filter: drop-shadow(0 0 2px rgba(0,0,0,0.5));
+                  opacity: 0.9;
+                "></div>`,
+                iconSize: [size * 2, size * 1.6],
+                iconAnchor: [size, size * 1.6],
+              }),
+              zIndexOffset: isWatched ? 5000 : 1000,
+            });
+
+            const ageStr = station.age < 1 ? 'now' : station.age < 60 ? `${station.age}m ago` : `${Math.floor(station.age / 60)}h ago`;
+
+            marker
+              .bindPopup(`
+                <b data-qrz-call="${esc(station.call)}" style="cursor:pointer">${esc(station.ssid || station.call)}</b>
+                ${isWatched ? ' <span style="color:#f59e0b">★</span>' : ''}<br>
+                <span style="color:#888;font-size:11px">${ageStr}</span><br>
+                ${station.speed > 0 ? `Speed: ${station.speed} kt<br>` : ''}
+                ${station.altitude ? `Alt: ${station.altitude} ft<br>` : ''}
+                ${station.comment ? `<span style="font-size:11px;color:#aaa">${esc(station.comment.substring(0, 80))}</span>` : ''}
+              `)
+              .addTo(map);
+
+            if (onSpotClick) {
+              marker.on('click', () => onSpotClick({ call: station.call, lat, lon }));
+            }
+
+            aprsMarkersRef.current.push(marker);
+          });
+        } catch (err) {
+          // skip bad station
+        }
+      });
+    }
+  }, [aprsStations, showAPRS, aprsWatchlistCalls]);
 
   const openBandColorEditor = (band) => {
     setEditingBand(band);
@@ -1527,6 +1700,7 @@ export const WorldMap = ({
           sotaSpots={sotaSpots}
           dxPaths={dxPaths}
           dxFilters={dxFilters}
+          mapBandFilter={mapBandFilter}
           pskReporterSpots={pskReporterSpots}
           wsjtxSpots={wsjtxSpots}
           showDXPaths={showDXPaths}
@@ -1562,6 +1736,7 @@ export const WorldMap = ({
             plugin={layerDef}
             enabled={pluginLayerStates[layerDef.id]?.enabled ?? layerDef.defaultEnabled}
             opacity={pluginLayerStates[layerDef.id]?.opacity ?? layerDef.defaultOpacity}
+            mapBandFilter={mapBandFilter}
             config={pluginLayerStates[layerDef.id]?.config ?? layerDef.config}
             map={mapInstanceRef.current}
             satellites={satellites}
@@ -1764,36 +1939,64 @@ export const WorldMap = ({
             flexWrap: 'nowrap',
           }}
         >
-          {showDXPaths && (
-            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-              <span style={{ color: '#888' }}>DX:</span>
-              {BAND_LEGEND_ORDER.map((band) => {
-                const bg = getBandColorForBand(band, effectiveBandColors);
-                const fg = getBandTextColor(bg);
-                const isActive = editingBand === band;
-                return (
-                  <button
-                    key={band}
-                    type="button"
-                    onClick={() => openBandColorEditor(band)}
-                    title={`Edit color for ${band}`}
-                    style={{
-                      background: bg,
-                      color: fg,
-                      padding: '2px 5px',
-                      borderRadius: '3px',
-                      fontWeight: '600',
-                      border: isActive ? '2px solid #ffffff' : '1px solid rgba(0,0,0,0.35)',
-                      cursor: 'pointer',
-                      lineHeight: 1.1,
-                    }}
-                  >
-                    {band}
-                  </button>
-                );
-              })}
-            </div>
-          )}
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <span style={{ color: '#888' }}>Bands:</span>
+            <button
+              type="button"
+              onClick={() => clearMapBandFilter()}
+              title="Show all bands"
+              style={{
+                background: hasMapBandFilter ? 'rgba(120,120,120,0.35)' : '#00ffcc',
+                color: hasMapBandFilter ? '#ccc' : '#001f1a',
+                padding: '2px 5px',
+                borderRadius: '3px',
+                fontWeight: '700',
+                border: hasMapBandFilter ? '1px solid #666' : '1px solid rgba(0,0,0,0.35)',
+                cursor: 'pointer',
+                lineHeight: 1.1,
+              }}
+            >
+              ALL
+            </button>
+            {BAND_LEGEND_ORDER.map((band) => {
+              const bg = getBandColorForBand(band, effectiveBandColors);
+              const fg = getBandTextColor(bg);
+              const isEditing = editingBand === band;
+              const isSelected = selectedMapBands.has(normalizeBandKey(band));
+              const isDimmed = hasMapBandFilter && !isSelected;
+              return (
+                <button
+                  key={band}
+                  type="button"
+                  onClick={(e) => {
+                    if (e.shiftKey) {
+                      openBandColorEditor(band);
+                      return;
+                    }
+                    toggleMapBand(band);
+                  }}
+                  title={`Click to filter ${band}; Shift+Click to edit color`}
+                  style={{
+                    background: bg,
+                    color: fg,
+                    padding: '2px 5px',
+                    borderRadius: '3px',
+                    fontWeight: '600',
+                    border: isEditing
+                      ? '2px solid #ffffff'
+                      : isSelected
+                        ? '1px solid #00ffcc'
+                        : '1px solid rgba(0,0,0,0.35)',
+                    cursor: 'pointer',
+                    lineHeight: 1.1,
+                    opacity: isDimmed ? 0.35 : 1,
+                  }}
+                >
+                  {band}
+                </button>
+              );
+            })}
+          </div>
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
             <span
               style={{

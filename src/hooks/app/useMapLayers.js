@@ -16,6 +16,7 @@ export default function useMapLayers() {
     showWSJTX: true,
     showDXNews: true,
     showRotatorBearing: false,
+    showAPRS: true,
   };
 
   const [mapLayers, setMapLayers] = useState(() => {
@@ -80,6 +81,7 @@ export default function useMapLayers() {
     () => setMapLayers((prev) => ({ ...prev, showRotatorBearing: !prev.showRotatorBearing })),
     [],
   );
+  const toggleAPRS = useCallback(() => setMapLayers((prev) => ({ ...prev, showAPRS: !prev.showAPRS })), []);
 
   return {
     mapLayers,
@@ -97,5 +99,6 @@ export default function useMapLayers() {
     toggleWSJTX,
     toggleDXNews,
     toggleRotatorBearing,
+    toggleAPRS,
   };
 }

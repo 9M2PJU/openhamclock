@@ -75,9 +75,19 @@ export function useWSJTX(enabled = true) {
 
       if (json.decodes?.length > 0) {
         setData((prev) => {
-          // Merge new decodes, dedup by id, keep last 200
-          const existing = new Set(prev.decodes.map((d) => d.id));
-          const newDecodes = json.decodes.filter((d) => !existing.has(d.id));
+          // Merge new decodes, dedup by id AND by content (time+freq+message)
+          const existingIds = new Set(prev.decodes.map((d) => d.id));
+          const existingKeys = new Set(
+            prev.decodes.map((d) => `${d.time}-${d.freq}-${(d.message || '').replace(/\s+/g, '')}`),
+          );
+          const newDecodes = json.decodes.filter((d) => {
+            if (existingIds.has(d.id)) return false;
+            const contentKey = `${d.time}-${d.freq}-${(d.message || '').replace(/\s+/g, '')}`;
+            if (existingKeys.has(contentKey)) return false;
+            existingIds.add(d.id);
+            existingKeys.add(contentKey);
+            return true;
+          });
           if (newDecodes.length === 0) return prev;
 
           const merged = [...prev.decodes, ...newDecodes].slice(-500);

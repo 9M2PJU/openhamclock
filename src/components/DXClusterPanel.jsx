@@ -2,6 +2,7 @@
  * DXClusterPanel Component
  * Displays DX cluster spots with filtering controls and ON/OFF toggle
  */
+import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { getBandColor, detectMode } from '../utils/callsign.js';
 import { useRig } from '../contexts/RigContext.jsx';
@@ -51,15 +52,12 @@ export const DXClusterPanel = ({
     const ts = parseSpotTimeToTimestamp(spot);
     if (!ts) return spot?.time || '';
 
-    const diffMs = Math.max(0, Date.now() - ts);
-    const minutes = Math.floor(diffMs / 60000);
     const utc = new Date(ts);
     const hh = String(utc.getUTCHours()).padStart(2, '0');
     const mm = String(utc.getUTCMinutes()).padStart(2, '0');
-    const clock = `${hh}:${mm}z`;
-
-    return t('dxClusterPanel.relativeTime', { minutes, time: clock });
+    return `${hh}:${mm}z`;
   };
+
   const getActiveFilterCount = () => {
     let count = 0;
     if (filters?.continents?.length) count++;
@@ -157,12 +155,7 @@ export const DXClusterPanel = ({
           type="text"
           placeholder={t('dxClusterPanel.quickSearch')}
           value={filters?.callsign || ''}
-          onChange={(e) =>
-            onFilterChange?.({
-              ...filters,
-              callsign: e.target.value || undefined,
-            })
-          }
+          onChange={(e) => onFilterChange?.({ ...filters, callsign: e.target.value || undefined })}
           style={{
             flex: 1,
             padding: '4px 8px',
@@ -232,7 +225,7 @@ export const DXClusterPanel = ({
                 }}
                 style={{
                   display: 'grid',
-                  gridTemplateColumns: '55px 1fr 1fr auto',
+                  gridTemplateColumns: '55px 1fr auto 42px',
                   gap: '6px',
                   padding: '5px 6px',
                   borderRadius: '3px',

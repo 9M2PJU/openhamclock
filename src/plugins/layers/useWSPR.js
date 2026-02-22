@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { getBandFromFreq } from '../../utils/callsign.js';
 
 /**
  * WSPR Propagation Heatmap Plugin v1.6.0
@@ -73,6 +74,22 @@ function fmtDist(km) {
     if (cfg.units === 'metric') return `${Math.round(km).toLocaleString()} km`;
   } catch (e) {}
   return `${Math.round(km * 0.621371).toLocaleString()} mi`;
+}
+
+function normalizeBandKey(band) {
+  if (band == null) return null;
+  const raw = String(band).trim().toLowerCase();
+  if (!raw || raw === 'other') return null;
+  if (raw.endsWith('cm') || raw.endsWith('m')) return raw;
+  if (/^\d+(\.\d+)?$/.test(raw)) return `${raw}m`;
+  return raw;
+}
+
+function bandFromAnyFrequency(freq) {
+  if (freq == null || freq === '') return null;
+  const n = parseFloat(freq);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return normalizeBandKey(getBandFromFreq(n));
 }
 
 // Get color based on SNR (darker colors for better visibility)
@@ -397,7 +414,15 @@ function addMinimizeToggle(element, storageKey) {
   });
 }
 
-export function useLayer({ enabled = false, opacity = 0.7, map = null, callsign, locator, lowMemoryMode = false }) {
+export function useLayer({
+  enabled = false,
+  opacity = 0.7,
+  map = null,
+  callsign,
+  locator,
+  lowMemoryMode = false,
+  mapBandFilter,
+}) {
   const [pathLayers, setPathLayers] = useState([]);
   const [markerLayers, setMarkerLayers] = useState([]);
   const [heatmapLayer, setHeatmapLayer] = useState(null);
@@ -981,11 +1006,18 @@ export function useLayer({ enabled = false, opacity = 0.7, map = null, callsign,
     const newMarkers = [];
     const txStations = new Set();
     const rxStations = new Set();
+    const selectedMapBands = Array.isArray(mapBandFilter)
+      ? new Set(mapBandFilter.map((b) => normalizeBandKey(b)).filter(Boolean))
+      : new Set();
+    const hasMapBandFilter = selectedMapBands.size > 0;
 
     // Filter by SNR threshold and grid square OR callsign
     let filteredData = wsprData.filter((spot) => {
       // SNR filter
       if ((spot.snr || -30) < snrThreshold) return false;
+
+      const spotBand = normalizeBandKey(spot.band) || bandFromAnyFrequency(spot.freqMHz || spot.freq || spot.frequency);
+      if (hasMapBandFilter && (!spotBand || !selectedMapBands.has(spotBand))) return false;
 
       // Grid square filter (if enabled AND grid is set) - show spots in/around that grid
       if (filterByGrid && gridFilter && gridFilter.length >= 2) {
@@ -1389,7 +1421,18 @@ export function useLayer({ enabled = false, opacity = 0.7, map = null, callsign,
         } catch (e) {}
       });
     };
-  }, [enabled, wsprData, map, pathOpacity, snrThreshold, showAnimation, timeWindow, filterByGrid, gridFilter]);
+  }, [
+    enabled,
+    wsprData,
+    map,
+    pathOpacity,
+    snrThreshold,
+    showAnimation,
+    timeWindow,
+    filterByGrid,
+    gridFilter,
+    mapBandFilter,
+  ]);
 
   // Render heatmap overlay (v1.4.0)
   useEffect(() => {
@@ -1410,11 +1453,18 @@ export function useLayer({ enabled = false, opacity = 0.7, map = null, callsign,
     // Create heatmap circles for all TX and RX stations
     const heatPoints = [];
     const stationCounts = {};
+    const selectedMapBands = Array.isArray(mapBandFilter)
+      ? new Set(mapBandFilter.map((b) => normalizeBandKey(b)).filter(Boolean))
+      : new Set();
+    const hasMapBandFilter = selectedMapBands.size > 0;
 
     // Filter by SNR threshold and grid square OR callsign
     let filteredData = wsprData.filter((spot) => {
       // SNR filter
       if ((spot.snr || -30) < snrThreshold) return false;
+
+      const spotBand = normalizeBandKey(spot.band) || bandFromAnyFrequency(spot.freqMHz || spot.freq || spot.frequency);
+      if (hasMapBandFilter && (!spotBand || !selectedMapBands.has(spotBand))) return false;
 
       // Grid square filter (if enabled AND grid is set) - show spots in/around that grid
       if (filterByGrid && gridFilter && gridFilter.length >= 2) {
@@ -1599,7 +1649,18 @@ export function useLayer({ enabled = false, opacity = 0.7, map = null, callsign,
         } catch (e) {}
       });
     };
-  }, [enabled, showHeatmap, wsprData, map, heatmapOpacity, snrThreshold, callsign, filterByGrid, gridFilter]);
+  }, [
+    enabled,
+    showHeatmap,
+    wsprData,
+    map,
+    heatmapOpacity,
+    snrThreshold,
+    callsign,
+    filterByGrid,
+    gridFilter,
+    mapBandFilter,
+  ]);
 
   // Cleanup controls on disable - FIX: properly remove all controls and layers
   useEffect(() => {

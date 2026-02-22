@@ -36,10 +36,29 @@ export default function useFilters() {
     } catch (e) {}
   }, [pskFilters]);
 
+  const [mapBandFilter, setMapBandFilter] = useState(() => {
+    try {
+      const stored = localStorage.getItem('openhamclock_mapBandFilter');
+      const parsed = stored ? JSON.parse(stored) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (e) {
+      return [];
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('openhamclock_mapBandFilter', JSON.stringify(mapBandFilter));
+      syncAllSettingsToServer();
+    } catch (e) {}
+  }, [mapBandFilter]);
+
   return {
     dxFilters,
     setDxFilters,
     pskFilters,
     setPskFilters,
+    mapBandFilter,
+    setMapBandFilter,
   };
 }

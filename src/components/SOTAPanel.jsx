@@ -2,8 +2,7 @@
  * SOTAPanel Component
  * Displays Summits on the Air activations with ON/OFF toggle
  */
-import React from 'react';
-import CallsignLink from './CallsignLink.jsx';
+import ActivatePanel from './ActivatePanel.jsx';
 
 export const SOTAPanel = ({
   data,
@@ -15,151 +14,23 @@ export const SOTAPanel = ({
   showLabelsOnMap,
   onToggleLabelsOnMap = true,
   onSpotClick,
+  onHoverSpot,
 }) => {
-  const staleMinutes = lastUpdated ? Math.floor((Date.now() - lastUpdated) / 60000) : null;
-  const isStale = staleMinutes !== null && staleMinutes >= 5;
-  const checkedTime = lastChecked ? new Date(lastChecked).toISOString().substr(11, 5) + 'z' : '';
-
-  if (typeof onToggleLabelsOnMap === 'function') {
-    console.log('[SOTA] onToggleLabelsOnMap is a function');
-  } else {
-    console.log('[SOTA] onToggleLabelsOnMap is not a function');
-  }
   return (
-    <div className="panel" style={{ padding: '8px', height: '100%', display: 'flex', flexDirection: 'column' }}>
-      <div
-        className="panel-header"
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          marginBottom: '6px',
-          fontSize: '11px',
-        }}
-      >
-        <span>
-          ⛰ SOTA ACTIVATORS {data?.length > 0 ? `(${data.length})` : ''}
-          {checkedTime && (
-            <span
-              style={{
-                color: isStale ? (staleMinutes >= 10 ? '#ff4444' : '#ffaa00') : '#666',
-                marginLeft: '6px',
-                fontSize: '9px',
-              }}
-            >
-              {isStale ? `⚠ ${staleMinutes}m stale` : `✓${checkedTime}`}
-            </span>
-          )}
-        </span>
-        <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-          <button
-            onClick={onToggleMap}
-            title={showOnMap ? 'Hide SOTA activators on map' : 'Show SOTA activators on map'}
-            style={{
-              background: showOnMap ? 'rgba(255, 150, 50, 0.3)' : 'rgba(100, 100, 100, 0.3)',
-              border: `1px solid ${showOnMap ? '#ff9632' : '#666'}`,
-              color: showOnMap ? '#ff9632' : '#888',
-              padding: '1px 6px',
-              borderRadius: '3px',
-              fontSize: '9px',
-              fontFamily: 'JetBrains Mono',
-              cursor: 'pointer',
-            }}
-          >
-            ⊞ Map {showOnMap ? 'ON' : 'OFF'}
-          </button>
-
-          {typeof onToggleLabelsOnMap === 'function' && (
-            <button
-              onClick={onToggleLabelsOnMap}
-              title={showLabelsOnMap ? 'Hide SOTA callsigns on map' : 'Show SOTA callsigns on map'}
-              style={{
-                background: showLabelsOnMap ? 'rgba(255, 170, 0, 0.22)' : 'rgba(100, 100, 100, 0.3)',
-                border: `1px solid ${showLabelsOnMap ? '#ffaa00' : '#666'}`,
-                color: showLabelsOnMap ? '#ffaa00' : '#888',
-                padding: '1px 6px',
-                borderRadius: '3px',
-                fontSize: '9px',
-                fontFamily: 'JetBrains Mono',
-                cursor: 'pointer',
-              }}
-            >
-              ⊞ Calls {showLabelsOnMap ? 'ON' : 'OFF'}
-            </button>
-          )}
-        </div>
-      </div>
-
-      <div style={{ flex: 1, overflowY: 'auto' }}>
-        {loading ? (
-          <div style={{ display: 'flex', justifyContent: 'center', padding: '10px' }}>
-            <div className="loading-spinner" />
-          </div>
-        ) : data && data.length > 0 ? (
-          <div style={{ fontSize: '10px', fontFamily: 'JetBrains Mono, monospace' }}>
-            {data.map((spot, i) => (
-              <div
-                key={`${spot.call}-${spot.ref}-${i}`}
-                onClick={() => onSpotClick?.(spot)}
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: '62px 62px 58px 1fr',
-                  gap: '4px',
-                  padding: '3px 0',
-                  borderBottom: i < data.length - 1 ? '1px solid var(--border-color)' : 'none',
-                  cursor: 'pointer',
-                }}
-                onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.05)')}
-                onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-              >
-                <span
-                  style={{
-                    color: '#ff9632',
-                    fontWeight: '600',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  <CallsignLink call={spot.call} color="#ff9632" fontWeight="600" />
-                </span>
-                <span
-                  style={{
-                    color: 'var(--text-muted)',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                  }}
-                  title={
-                    spot.summit ? `${spot.ref} — ${spot.summit}${spot.points ? ` (${spot.points}pt)` : ''}` : spot.ref
-                  }
-                >
-                  {spot.ref}
-                </span>
-                <span style={{ color: 'var(--accent-cyan)', textAlign: 'right' }}>
-                  {(() => {
-                    if (!spot.freq) return '?';
-                    const freqVal = parseFloat(spot.freq);
-                    if (freqVal > 1000) {
-                      // It's in kHz, convert to MHz
-                      return (freqVal / 1000).toFixed(3);
-                    } else {
-                      // Already in MHz
-                      return freqVal.toFixed(3);
-                    }
-                  })()}
-                </span>
-                <span style={{ color: 'var(--text-muted)', textAlign: 'right', fontSize: '9px' }}>{spot.time}</span>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '10px', fontSize: '11px' }}>
-            No SOTA spots
-          </div>
-        )}
-      </div>
-    </div>
+    <ActivatePanel
+      name={'SOTA'}
+      shade={'#ff9632'}
+      data={data}
+      loading={loading}
+      lastUpdated={lastUpdated}
+      lastChecked={lastChecked}
+      showOnMap={showOnMap}
+      onToggleMap={onToggleMap}
+      showLabelsOnMap={showLabelsOnMap}
+      onToggleLabelsOnMap={onToggleLabelsOnMap}
+      onSpotClick={onSpotClick}
+      onHoverSpot={onHoverSpot}
+    />
   );
 };
 

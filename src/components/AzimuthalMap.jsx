@@ -6,7 +6,7 @@
  * Used when mapStyle === 'azimuthal' in WorldMap.
  */
 import { useRef, useEffect, useState, useCallback } from 'react';
-import { getBandColor } from '../utils/callsign.js';
+import { getBandColor, getBandFromFreq } from '../utils/callsign.js';
 import { calculateGridSquare } from '../utils/geo.js';
 
 // ── Projection Math ────────────────────────────────────────
@@ -60,6 +60,22 @@ function esc(str) {
   return String(str);
 }
 
+const normalizeBandKey = (band) => {
+  if (band == null) return null;
+  const raw = String(band).trim().toLowerCase();
+  if (!raw || raw === 'other') return null;
+  if (raw.endsWith('cm') || raw.endsWith('m')) return raw;
+  if (/^\d+(\.\d+)?$/.test(raw)) return `${raw}m`;
+  return raw;
+};
+
+const bandFromAnyFrequency = (freq) => {
+  if (freq == null || freq === '') return null;
+  const n = parseFloat(freq);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return normalizeBandKey(getBandFromFreq(n));
+};
+
 // ── Component ──────────────────────────────────────────────
 export default function AzimuthalMap({
   deLocation,
@@ -71,6 +87,7 @@ export default function AzimuthalMap({
   sotaSpots,
   dxPaths,
   dxFilters,
+  mapBandFilter,
   pskReporterSpots,
   wsjtxSpots,
   showDXPaths,
@@ -92,6 +109,16 @@ export default function AzimuthalMap({
   const [pan, setPan] = useState({ x: 0, y: 0 }); // pixel offset
   const dragRef = useRef(null);
   const [tooltip, setTooltip] = useState(null);
+
+  const selectedMapBands = Array.isArray(mapBandFilter)
+    ? new Set(mapBandFilter.map((b) => normalizeBandKey(b)).filter(Boolean))
+    : new Set();
+  const hasMapBandFilter = selectedMapBands.size > 0;
+  const bandPassesMapFilter = (band) => {
+    if (!hasMapBandFilter) return true;
+    const key = normalizeBandKey(band);
+    return !!key && selectedMapBands.has(key);
+  };
 
   const lat0 = deLocation?.lat || 0;
   const lon0 = deLocation?.lon || 0;
@@ -254,6 +281,9 @@ export default function AzimuthalMap({
     if (showDXPaths && dxPaths?.length > 0) {
       dxPaths.forEach((path) => {
         if (!path.dxLat || !path.dxLon) return;
+        const band = bandFromAnyFrequency(path.freq);
+        if (!bandPassesMapFilter(band)) return;
+
         const freq = parseFloat(path.freq);
         const color = getBandColor(freq);
         const isHovered = hoveredSpot?.call?.toUpperCase() === path.dxCall?.toUpperCase();
@@ -325,6 +355,9 @@ export default function AzimuthalMap({
         const lon = parseFloat(spot.lon);
         if (isNaN(lat) || isNaN(lon)) return;
         const freqMHz = spot.freqMHz || (spot.freq ? spot.freq / 1e6 : 0);
+        const band = normalizeBandKey(spot.band) || bandFromAnyFrequency(freqMHz || spot.freq);
+        if (!bandPassesMapFilter(band)) return;
+
         const color = getBandColor(parseFloat(freqMHz));
         const p = toCanvas(lat, lon);
 
@@ -359,6 +392,9 @@ export default function AzimuthalMap({
         const lat = parseFloat(spot.lat);
         const lon = parseFloat(spot.lon);
         if (isNaN(lat) || isNaN(lon)) return;
+        const band = normalizeBandKey(spot.band) || bandFromAnyFrequency(spot.dialFrequency || spot.freq);
+        if (!bandPassesMapFilter(band)) return;
+
         const p = toCanvas(lat, lon);
         const isEst = spot.gridSource === 'prefix';
 
@@ -389,6 +425,9 @@ export default function AzimuthalMap({
     if (showPOTA && potaSpots?.length > 0) {
       potaSpots.forEach((spot) => {
         if (!spot.lat || !spot.lon) return;
+        const band = normalizeBandKey(spot.band) || bandFromAnyFrequency(spot.freq);
+        if (!bandPassesMapFilter(band)) return;
+
         const p = toCanvas(spot.lat, spot.lon);
         // Green triangle
         ctx.beginPath();
@@ -408,6 +447,9 @@ export default function AzimuthalMap({
     if (showWWFF && wwffSpots?.length > 0) {
       wwffSpots.forEach((spot) => {
         if (!spot.lat || !spot.lon) return;
+        const band = normalizeBandKey(spot.band) || bandFromAnyFrequency(spot.freq);
+        if (!bandPassesMapFilter(band)) return;
+
         const p = toCanvas(spot.lat, spot.lon);
         // Light green inverted triangle
         ctx.beginPath();
@@ -427,6 +469,9 @@ export default function AzimuthalMap({
     if (showSOTA && sotaSpots?.length > 0) {
       sotaSpots.forEach((spot) => {
         if (!spot.lat || !spot.lon) return;
+        const band = normalizeBandKey(spot.band) || bandFromAnyFrequency(spot.freq);
+        if (!bandPassesMapFilter(band)) return;
+
         const p = toCanvas(spot.lat, spot.lon);
         // Orange diamond
         ctx.save();
@@ -505,6 +550,7 @@ export default function AzimuthalMap({
     dxLocation,
     dxPaths,
     dxFilters,
+    mapBandFilter,
     showDXPaths,
     hoveredSpot,
     potaSpots,

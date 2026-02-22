@@ -1,5 +1,6 @@
 services:
   openhamclock:
+    env_file: .env
     build: .
     container_name: openhamclock
     ports:

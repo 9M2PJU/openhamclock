@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { getBandColor } from '../../utils/callsign.js';
+import { getBandColor, getBandFromFreq } from '../../utils/callsign.js';
 import { getGreatCirclePoints, replicatePath, replicatePoint } from '../../utils/geo.js';
 
 export const metadata = {
@@ -13,7 +13,23 @@ export const metadata = {
   version: '1.0.0',
 };
 
-export function useLayer({ enabled = false, opacity = 0.7, map = null }) {
+const normalizeBandKey = (band) => {
+  if (band == null) return null;
+  const raw = String(band).trim().toLowerCase();
+  if (!raw || raw === 'other') return null;
+  if (raw.endsWith('cm') || raw.endsWith('m')) return raw;
+  if (/^\d+(\.\d+)?$/.test(raw)) return `${raw}m`;
+  return raw;
+};
+
+const bandFromAnyFrequency = (freq) => {
+  if (freq == null || freq === '') return null;
+  const n = parseFloat(freq);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return normalizeBandKey(getBandFromFreq(n));
+};
+
+export function useLayer({ enabled = false, opacity = 0.7, map = null, mapBandFilter }) {
   const [qsos, setQsos] = useState([]);
   const [deLocation, setDeLocation] = useState(null);
   const markersRef = useRef([]);
@@ -81,6 +97,11 @@ export function useLayer({ enabled = false, opacity = 0.7, map = null }) {
 
     if (!enabled || qsos.length === 0) return;
 
+    const selectedMapBands = Array.isArray(mapBandFilter)
+      ? new Set(mapBandFilter.map((b) => normalizeBandKey(b)).filter(Boolean))
+      : new Set();
+    const hasMapBandFilter = selectedMapBands.size > 0;
+
     const recent = qsos.slice(-120);
     const de = deLocation;
 
@@ -90,6 +111,9 @@ export function useLayer({ enabled = false, opacity = 0.7, map = null }) {
       if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
 
       const freqMHz = qso.freqMHz || qso.bandMHz || qso.band;
+      const band = normalizeBandKey(qso.band) || bandFromAnyFrequency(freqMHz || qso.freq_khz);
+      if (hasMapBandFilter && (!band || !selectedMapBands.has(band))) return;
+
       const bandColor = freqMHz ? getBandColor(parseFloat(freqMHz)) : '#22c55e';
       const lineOpacity = Math.max(0.15, Math.min(0.7, opacity * 0.35));
       const markerOpacity = Math.max(0.2, Math.min(0.9, opacity));
@@ -135,7 +159,7 @@ export function useLayer({ enabled = false, opacity = 0.7, map = null }) {
         markersRef.current.push(marker);
       });
     });
-  }, [qsos, enabled, opacity, map, deLocation]);
+  }, [qsos, enabled, opacity, map, deLocation, mapBandFilter]);
 
   return { layer: markersRef.current };
 }

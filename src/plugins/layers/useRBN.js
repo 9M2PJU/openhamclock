@@ -406,7 +406,23 @@ function freqToBand(freq) {
   return 'Other';
 }
 
-export function useLayer({ enabled = false, opacity = 0.7, map = null, callsign, lowMemoryMode = false }) {
+function normalizeBandKey(band) {
+  if (band == null) return null;
+  const raw = String(band).trim().toLowerCase();
+  if (!raw || raw === 'other') return null;
+  if (raw.endsWith('cm') || raw.endsWith('m')) return raw;
+  if (/^\d+(\.\d+)?$/.test(raw)) return `${raw}m`;
+  return raw;
+}
+
+export function useLayer({
+  enabled = false,
+  opacity = 0.7,
+  map = null,
+  callsign,
+  lowMemoryMode = false,
+  mapBandFilter,
+}) {
   const [spots, setSpots] = useState([]);
   const [selectedBand, setSelectedBand] = useState('all');
   const [timeWindow, setTimeWindow] = useState(lowMemoryMode ? 2 : 5); // minutes - shorter in low memory
@@ -533,13 +549,19 @@ export function useLayer({ enabled = false, opacity = 0.7, map = null, callsign,
     // Filter spots by band, SNR, and AGE
     const now = Date.now();
     const timeWindowMs = timeWindow * 60 * 1000; // Convert minutes to milliseconds
+    const selectedMapBands = Array.isArray(mapBandFilter)
+      ? new Set(mapBandFilter.map((b) => normalizeBandKey(b)).filter(Boolean))
+      : new Set();
+    const hasMapBandFilter = selectedMapBands.size > 0;
 
     const filteredSpots = spots.filter((spot) => {
       const band = freqToBand(spot.frequency || spot.freq || 0);
+      const normalizedBand = normalizeBandKey(spot.band || band);
       const snr = spot.snr || spot.db || 0;
 
       // Band filter
       if (selectedBand !== 'all' && selectedBand !== 'All' && band !== selectedBand) return false;
+      if (hasMapBandFilter && (!normalizedBand || !selectedMapBands.has(normalizedBand))) return false;
 
       // SNR filter
       if (snr < minSNR) return false;
@@ -630,7 +652,7 @@ export function useLayer({ enabled = false, opacity = 0.7, map = null, callsign,
       marker.addTo(map);
       layersRef.current.push(marker);
     });
-  }, [map, enabled, spots, selectedBand, minSNR, showPaths, opacity, callsign, timeWindow]);
+  }, [map, enabled, spots, selectedBand, minSNR, showPaths, opacity, callsign, timeWindow, mapBandFilter]);
 
   // Create control panel
   useEffect(() => {

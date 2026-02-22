@@ -30,6 +30,7 @@ import {
   useSolarIndices,
   usePSKReporter,
   useWSJTX,
+  useAPRS,
 } from './hooks';
 
 import useAppConfig from './hooks/app/useAppConfig';
@@ -146,9 +147,10 @@ const App = () => {
     togglePSKReporter,
     toggleWSJTX,
     toggleDXNews,
+    toggleAPRS,
   } = useMapLayers();
 
-  const { dxFilters, setDxFilters, pskFilters, setPskFilters } = useFilters();
+  const { dxFilters, setDxFilters, pskFilters, setPskFilters, mapBandFilter, setMapBandFilter } = useFilters();
 
   const { isFullscreen, handleFullscreenToggle } = useFullscreen();
   const scale = useResponsiveScale();
@@ -176,6 +178,7 @@ const App = () => {
     maxSpots: config.lowMemoryMode ? 50 : 500,
   });
   const wsjtx = useWSJTX();
+  const aprsData = useAPRS();
 
   const { satelliteFilters, setSatelliteFilters, filteredSatellites } = useSatellitesFilters(satellites.data);
 
@@ -195,7 +198,16 @@ const App = () => {
   } = useTimeState(config.location, dxLocation, config.timezone);
 
   const filteredPskSpots = useMemo(() => {
-    const allSpots = [...(pskReporter.txReports || []), ...(pskReporter.rxReports || [])];
+    // Apply direction filter: 'tx' = only my transmissions, 'rx' = only what I hear, default = both
+    const dir = pskFilters?.direction;
+    let allSpots;
+    if (dir === 'tx') {
+      allSpots = [...(pskReporter.txReports || [])];
+    } else if (dir === 'rx') {
+      allSpots = [...(pskReporter.rxReports || [])];
+    } else {
+      allSpots = [...(pskReporter.txReports || []), ...(pskReporter.rxReports || [])];
+    }
     if (!pskFilters?.bands?.length && !pskFilters?.grids?.length && !pskFilters?.modes?.length) {
       return allSpots;
     }
@@ -297,10 +309,13 @@ const App = () => {
     satellites,
     pskReporter,
     wsjtx,
+    aprsData,
     filteredPskSpots,
     wsjtxMapSpots,
     dxFilters,
     setDxFilters,
+    mapBandFilter,
+    setMapBandFilter,
     pskFilters,
     setPskFilters,
     mapLayers,
@@ -313,6 +328,7 @@ const App = () => {
     togglePSKReporter,
     toggleWSJTX,
     toggleDXNews,
+    toggleAPRS,
     hoveredSpot,
     setHoveredSpot,
     filteredSatellites,

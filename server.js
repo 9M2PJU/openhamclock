@@ -514,6 +514,44 @@ function logWarn(...args) {
 
 // Rate-limited error logging - prevents log spam when services are down
 const errorLogState = {};
+
+// Global log rate limiter — safety net for Railway/cloud log pipelines
+// Token bucket: allows bursts of 20, refills at 10 tokens/sec, drops excess silently
+const _logBucket = { tokens: 20, max: 20, rate: 10, lastRefill: Date.now(), dropped: 0 };
+function _logAllowed() {
+  const now = Date.now();
+  const elapsed = (now - _logBucket.lastRefill) / 1000;
+  _logBucket.tokens = Math.min(_logBucket.max, _logBucket.tokens + elapsed * _logBucket.rate);
+  _logBucket.lastRefill = now;
+  if (_logBucket.tokens >= 1) {
+    _logBucket.tokens--;
+    return true;
+  }
+  _logBucket.dropped++;
+  return false;
+}
+// Periodically report dropped messages (every 60s, if any were dropped)
+setInterval(() => {
+  if (_logBucket.dropped > 0) {
+    const d = _logBucket.dropped;
+    _logBucket.dropped = 0;
+    process.stderr.write(`[Log Throttle] Suppressed ${d} log messages in last 60s to stay within rate limits\n`);
+  }
+}, 60000);
+
+// Wrap console methods with rate limiter (preserves original for startup banner)
+const _origLog = console.log.bind(console);
+const _origWarn = console.warn.bind(console);
+const _origError = console.error.bind(console);
+console.log = (...args) => {
+  if (_logAllowed()) _origLog(...args);
+};
+console.warn = (...args) => {
+  if (_logAllowed()) _origWarn(...args);
+};
+console.error = (...args) => {
+  if (_logAllowed()) _origError(...args);
+};
 const ERROR_LOG_INTERVAL = 5 * 60 * 1000; // Only log same error once per 5 minutes
 
 function logErrorOnce(category, message) {
@@ -1467,7 +1505,7 @@ setInterval(
       spotBufferTotal: [...pskMqtt.spotBuffer.values()].reduce((n, b) => n + b.length, 0),
     };
     console.log(
-      `[Memory] RSS=${mb(mem.rss)}MB Heap=${mb(mem.heapUsed)}/${mb(mem.heapTotal)}MB External=${mb(mem.external)}MB | MQTT: ${mqttStats.sseClients} SSE clients, ${mqttStats.subscribedCalls} calls, ${mqttStats.recentSpotsTotal} recent spots (${mqttStats.recentSpotsEntries} entries), ${mqttStats.spotBufferTotal} buffered | GeoIP=${geoIPCache.size} CallLookup=${callsignLookupCache?.size || 0} LocCache=${callsignLocationCache?.size || 0} MySpots=${mySpotsCache.size} AllTimeIPs=${allTimeIPSet.size} RBN=${rbnSpotsByDX?.size || 0} RBNapi=${rbnApiCaches?.size || 0}`,
+      `[Memory] RSS=${mb(mem.rss)}MB Heap=${mb(mem.heapUsed)}/${mb(mem.heapTotal)}MB External=${mb(mem.external)}MB | MQTT: ${mqttStats.sseClients} SSE clients, ${mqttStats.subscribedCalls} calls, ${mqttStats.recentSpotsTotal} recent spots (${mqttStats.recentSpotsEntries} entries), ${mqttStats.spotBufferTotal} buffered | GeoIP=${geoIPCache.size} CallLookup=${callsignLookupCache?.size || 0} LocCache=${callsignLocationCache?.size || 0} MySpots=${mySpotsCache.size} AllTimeIPs=${allTimeIPSet.size} RBN=${rbnSpotsByDX?.size || 0} RBNapi=${rbnApiCaches?.size || 0} DXcustom=${customDxSessions.size} DXpaths=${dxSpotPathsCacheByKey.size} PropHeatmap=${Object.keys(PROP_HEATMAP_CACHE).length}`,
     );
   },
   15 * 60 * 1000,
@@ -1587,18 +1625,56 @@ async function hasDirtyWorkingTree() {
   return status.stdout.trim().length > 0;
 }
 
-function runUpdateScript() {
+function spawnPromise(cmd, args, options = {}) {
   return new Promise((resolve, reject) => {
-    const scriptPath = path.join(__dirname, 'scripts', 'update.sh');
-    const child = spawn('bash', [scriptPath, '--auto'], {
-      cwd: __dirname,
-      stdio: 'inherit',
-    });
+    const child = spawn(cmd, args, { cwd: __dirname, stdio: 'inherit', ...options });
+    child.on('error', reject);
     child.on('exit', (code) => {
       if (code === 0) return resolve();
-      reject(new Error(`update.sh exited with code ${code}`));
+      reject(new Error(`${cmd} ${args.join(' ')} exited with code ${code}`));
     });
   });
+}
+
+async function runUpdateScript() {
+  const isWin = process.platform === 'win32';
+
+  // On Linux/macOS, use the full-featured bash script (handles Pi kiosk patches, etc.)
+  if (!isWin) {
+    const scriptPath = path.join(__dirname, 'scripts', 'update.sh');
+    return spawnPromise('bash', [scriptPath, '--auto']);
+  }
+
+  // On Windows, run update steps directly (bash is not available natively)
+  logInfo('[Auto Update] Running cross-platform update (Windows)');
+
+  const branch = await getDefaultBranch();
+  const npmCmd = isWin ? 'npm.cmd' : 'npm';
+
+  // 1. Pull latest (with fallback to hard reset)
+  try {
+    await spawnPromise('git', ['pull', 'origin', branch]);
+  } catch {
+    logWarn('[Auto Update] git pull failed — falling back to hard reset');
+    await execFilePromise('git', ['fetch', 'origin', '--prune'], { cwd: __dirname });
+    await execFilePromise('git', ['reset', '--hard', `origin/${branch}`], { cwd: __dirname });
+  }
+
+  // 2. Install dependencies
+  logInfo('[Auto Update] Installing dependencies...');
+  await spawnPromise(npmCmd, ['install', '--include=dev']);
+
+  // 3. Clean old build to prevent stale chunks
+  const distPath = path.join(__dirname, 'dist');
+  if (fs.existsSync(distPath)) {
+    fs.rmSync(distPath, { recursive: true, force: true });
+  }
+
+  // 4. Rebuild frontend
+  logInfo('[Auto Update] Building frontend...');
+  await spawnPromise(npmCmd, ['run', 'build']);
+
+  logInfo('[Auto Update] Windows update complete');
 }
 
 async function autoUpdateTick(trigger = 'interval', force = false) {
@@ -1930,18 +2006,27 @@ app.get('/api/solar-indices', async (req, res) => {
 // NASA Dial-A-Moon — proxies photorealistic moon image from NASA SVS
 // Image changes hourly, cached for 1 hour to avoid hammering NASA
 let moonImageCache = { buffer: null, contentType: null, timestamp: 0 };
+let moonImageNegativeCache = 0; // Timestamp of last failed fetch — prevents retry storm
 const MOON_CACHE_TTL = 60 * 60 * 1000; // 1 hour
+const MOON_NEGATIVE_CACHE_TTL = 5 * 60 * 1000; // 5 min backoff on failure
 
 app.get('/api/moon-image', async (req, res) => {
   try {
     // Return cached image if fresh
-    if (
-      moonImageCache.buffer &&
-      Date.now() - moonImageCache.timestamp < MOON_CACHE_TTL
-    ) {
+    if (moonImageCache.buffer && Date.now() - moonImageCache.timestamp < MOON_CACHE_TTL) {
       res.set('Content-Type', moonImageCache.contentType);
       res.set('Cache-Control', 'public, max-age=3600');
       return res.send(moonImageCache.buffer);
+    }
+
+    // If NASA recently failed, return stale cache or 503 without retrying
+    if (Date.now() - moonImageNegativeCache < MOON_NEGATIVE_CACHE_TTL) {
+      if (moonImageCache.buffer) {
+        res.set('Content-Type', moonImageCache.contentType);
+        res.set('Cache-Control', 'public, max-age=300');
+        return res.send(moonImageCache.buffer);
+      }
+      return res.status(503).json({ error: 'Moon image temporarily unavailable' });
     }
 
     // Build UTC timestamp for Dial-A-Moon API (rounds to nearest hour)
@@ -1970,6 +2055,7 @@ app.get('/api/moon-image', async (req, res) => {
     res.set('Cache-Control', 'public, max-age=3600');
     res.send(buffer);
   } catch (error) {
+    moonImageNegativeCache = Date.now(); // Backoff for 5 min
     logErrorOnce('Moon Image', error.message);
     // Return stale cache on error
     if (moonImageCache.buffer) {
@@ -2729,7 +2815,41 @@ const CUSTOM_DX_RETENTION_MS = 30 * 60 * 1000;
 const CUSTOM_DX_MAX_SPOTS = 500;
 const CUSTOM_DX_RECONNECT_DELAY_MS = 10000;
 const CUSTOM_DX_KEEPALIVE_MS = 30000;
+const CUSTOM_DX_IDLE_TIMEOUT = 15 * 60 * 1000; // Reap sessions idle for 15 minutes
 const customDxSessions = new Map();
+
+// Reap idle custom DX sessions every 5 minutes to prevent unbounded growth
+setInterval(
+  () => {
+    const now = Date.now();
+    let reaped = 0;
+    for (const [key, session] of customDxSessions) {
+      if (now - session.lastUsedAt > CUSTOM_DX_IDLE_TIMEOUT) {
+        // Tear down timers
+        if (session.reconnectTimer) {
+          clearTimeout(session.reconnectTimer);
+          session.reconnectTimer = null;
+        }
+        if (session.keepAliveTimer) {
+          clearInterval(session.keepAliveTimer);
+          session.keepAliveTimer = null;
+        }
+        if (session.cleanupTimer) {
+          clearInterval(session.cleanupTimer);
+          session.cleanupTimer = null;
+        }
+        // Close TCP socket
+        try {
+          session.client?.destroy();
+        } catch {}
+        customDxSessions.delete(key);
+        reaped++;
+      }
+    }
+    if (reaped > 0) console.log(`[DX Custom] Reaped ${reaped} idle sessions, ${customDxSessions.size} remaining`);
+  },
+  5 * 60 * 1000,
+);
 
 function buildCustomSessionKey(node, loginCallsign) {
   return `${node.host}:${node.port}:${loginCallsign}`;
@@ -3235,6 +3355,34 @@ app.get('/api/dxcluster/sources', (req, res) => {
 const dxSpotPathsCacheByKey = new Map();
 const DXPATHS_CACHE_TTL = 25000; // 25 seconds cache (just under 30s poll interval to maximize cache hits)
 const DXPATHS_RETENTION = 30 * 60 * 1000; // 30 minute spot retention
+const DXPATHS_MAX_KEYS = 100; // Hard cap on cache keys
+
+// Periodic cleanup: purge stale dxSpotPaths entries every 5 minutes
+setInterval(
+  () => {
+    const now = Date.now();
+    let purged = 0;
+    for (const [key, cache] of dxSpotPathsCacheByKey) {
+      // Remove entries that haven't been refreshed in 10 minutes
+      if (cache.timestamp && now - cache.timestamp > 10 * 60 * 1000) {
+        dxSpotPathsCacheByKey.delete(key);
+        purged++;
+      }
+    }
+    // Hard cap: evict oldest if over limit
+    if (dxSpotPathsCacheByKey.size > DXPATHS_MAX_KEYS) {
+      const sorted = [...dxSpotPathsCacheByKey.entries()].sort((a, b) => (a[1].timestamp || 0) - (b[1].timestamp || 0));
+      const toRemove = sorted.slice(0, dxSpotPathsCacheByKey.size - DXPATHS_MAX_KEYS);
+      for (const [key] of toRemove) {
+        dxSpotPathsCacheByKey.delete(key);
+        purged++;
+      }
+    }
+    if (purged > 0)
+      console.log(`[Cache] DX Paths: purged ${purged} stale entries, ${dxSpotPathsCacheByKey.size} remaining`);
+  },
+  5 * 60 * 1000,
+);
 
 function getDxPathsCache(cacheKey) {
   if (!dxSpotPathsCacheByKey.has(cacheKey)) {
@@ -5979,13 +6127,26 @@ function pskMqttConnect() {
           lon: receiverLoc?.lon,
           direction: 'tx',
         };
+        // Dedup: skip if same sender+receiver+band+freq already in buffer or recent
+        const spotKey = `${sc}|${rc}|${spot.band}|${freq}`;
         if (!pskMqtt.spotBuffer.has(scUpper)) pskMqtt.spotBuffer.set(scUpper, []);
-        pskMqtt.spotBuffer.get(scUpper).push(txSpot);
+        const scBuf = pskMqtt.spotBuffer.get(scUpper);
+        const isDupBuf = scBuf.some((s) => `${s.sender}|${s.receiver}|${s.band}|${s.freq}` === spotKey);
+        if (!isDupBuf) {
+          scBuf.push(txSpot);
+        }
         // Also add to recent spots (capped at insert time to prevent unbounded growth)
         if (!pskMqtt.recentSpots.has(scUpper)) pskMqtt.recentSpots.set(scUpper, []);
         const scRecent = pskMqtt.recentSpots.get(scUpper);
-        scRecent.push(txSpot);
-        if (scRecent.length > 250) pskMqtt.recentSpots.set(scUpper, scRecent.slice(-200));
+        const isDupRecent = scRecent.some(
+          (s) =>
+            `${s.sender}|${s.receiver}|${s.band}|${s.freq}` === spotKey &&
+            Math.abs(s.timestamp - spot.timestamp) < 30000,
+        );
+        if (!isDupRecent) {
+          scRecent.push(txSpot);
+          if (scRecent.length > 250) pskMqtt.recentSpots.set(scUpper, scRecent.slice(-200));
+        }
       }
 
       // Buffer for RX subscribers (rc is the callsign being tracked)
@@ -5997,12 +6158,25 @@ function pskMqttConnect() {
           lon: senderLoc?.lon,
           direction: 'rx',
         };
+        // Dedup: skip if same sender+receiver+band+freq already in buffer or recent
+        const rxSpotKey = `${sc}|${rc}|${spot.band}|${freq}`;
         if (!pskMqtt.spotBuffer.has(rcUpper)) pskMqtt.spotBuffer.set(rcUpper, []);
-        pskMqtt.spotBuffer.get(rcUpper).push(rxSpot);
+        const rcBuf = pskMqtt.spotBuffer.get(rcUpper);
+        const isDupRxBuf = rcBuf.some((s) => `${s.sender}|${s.receiver}|${s.band}|${s.freq}` === rxSpotKey);
+        if (!isDupRxBuf) {
+          rcBuf.push(rxSpot);
+        }
         if (!pskMqtt.recentSpots.has(rcUpper)) pskMqtt.recentSpots.set(rcUpper, []);
         const rcRecent = pskMqtt.recentSpots.get(rcUpper);
-        rcRecent.push(rxSpot);
-        if (rcRecent.length > 250) pskMqtt.recentSpots.set(rcUpper, rcRecent.slice(-200));
+        const isDupRxRecent = rcRecent.some(
+          (s) =>
+            `${s.sender}|${s.receiver}|${s.band}|${s.freq}` === rxSpotKey &&
+            Math.abs(s.timestamp - spot.timestamp) < 30000,
+        );
+        if (!isDupRxRecent) {
+          rcRecent.push(rxSpot);
+          if (rcRecent.length > 250) pskMqtt.recentSpots.set(rcUpper, rcRecent.slice(-200));
+        }
       }
     } catch {
       pskMqtt.stats.messagesDropped++;
@@ -6105,7 +6279,7 @@ pskMqtt.flushInterval = setInterval(() => {
     }
 
     // Clear the buffer after flushing
-    pskMqtt.spotBuffer.set(call, []);
+    pskMqtt.spotBuffer.delete(call);
   }
 }, 15000); // 15-second batch interval
 
@@ -6195,7 +6369,7 @@ app.get('/api/pskreporter/stream/:callsign', (req, res) => {
     }
   }
 
-  console.log(
+  logInfo(
     `[PSK-MQTT] SSE client connected for ${callsign} (${pskMqtt.subscribers.get(callsign).size} clients, ${pskMqtt.subscribedCalls.size} callsigns total)`,
   );
 
@@ -6215,7 +6389,7 @@ app.get('/api/pskreporter/stream/:callsign', (req, res) => {
     const clients = pskMqtt.subscribers.get(callsign);
     if (clients) {
       clients.delete(res);
-      console.log(`[PSK-MQTT] SSE client disconnected for ${callsign} (${clients.size} remaining)`);
+      logInfo(`[PSK-MQTT] SSE client disconnected for ${callsign} (${clients.size} remaining)`);
 
       // If no more clients for this callsign, unsubscribe after a grace period
       if (clients.size === 0) {
@@ -6476,16 +6650,25 @@ setInterval(() => {
 async function enrichSpotWithLocation(spot) {
   const skimmerCall = spot.callsign;
 
-  // Check cache first
+  // Check cache first (includes negative cache entries)
   if (callsignLocationCache.has(skimmerCall)) {
     const location = callsignLocationCache.get(skimmerCall);
-    return {
-      ...spot,
-      grid: location.grid,
-      skimmerLat: location.lat,
-      skimmerLon: location.lon,
-      skimmerCountry: location.country,
-    };
+    // Negative cache entry — skip lookup unless expired
+    if (location._failed) {
+      if (location._expires && Date.now() > location._expires) {
+        callsignLocationCache.delete(skimmerCall); // Expired, allow retry
+      } else {
+        return spot;
+      }
+    } else {
+      return {
+        ...spot,
+        grid: location.grid,
+        skimmerLat: location.lat,
+        skimmerLon: location.lon,
+        skimmerCountry: location.country,
+      };
+    }
   }
 
   // Lookup location (don't block on failures)
@@ -6499,7 +6682,7 @@ async function enrichSpotWithLocation(spot) {
       const returnedCall = (locationData.callsign || '').toUpperCase();
       const requestedBase = extractBaseCallsign(skimmerCall);
       if (returnedCall && returnedCall !== requestedBase && returnedCall !== skimmerCall.toUpperCase()) {
-        console.warn(`[RBN] Callsign mismatch! Requested: ${skimmerCall}, Got: ${returnedCall} — discarding`);
+        logDebug(`[RBN] Callsign mismatch! Requested: ${skimmerCall}, Got: ${returnedCall} — discarding`);
         return spot;
       }
 
@@ -6520,7 +6703,7 @@ async function enrichSpotWithLocation(spot) {
             if (dist > 5000) {
               // Location is > 5000 km from where the callsign prefix says it should be
               // This is almost certainly wrong data — use prefix estimate instead
-              console.warn(
+              logDebug(
                 `[RBN] Location sanity check FAILED for ${skimmerCall}: lookup=${locationData.lat.toFixed(1)},${locationData.lon.toFixed(1)} vs prefix=${prefixCoords.lat.toFixed(1)},${prefixCoords.lon.toFixed(1)} (${Math.round(dist)} km apart) — using prefix`,
               );
               const grid = latLonToGrid(prefixCoords.lat, prefixCoords.lon);
@@ -6566,7 +6749,8 @@ async function enrichSpotWithLocation(spot) {
       }
     }
   } catch (err) {
-    // Silent fail
+    // Cache the failure for 10 min to prevent retry storm when QRZ/HamQTH is down
+    cacheCallsignLocation(skimmerCall, { _failed: true, _expires: Date.now() + 10 * 60 * 1000 });
   }
 
   return spot;
@@ -6613,7 +6797,7 @@ app.get('/api/rbn/spots', async (req, res) => {
     enrichedSpots.push(await enrichSpotWithLocation(spot));
   }
 
-  console.log(
+  logDebug(
     `[RBN] Returning ${enrichedSpots.length} spots for ${callsign} (last ${minutes} min, ${rbnSpotsByDX.size} DX stations tracked)`,
   );
 
@@ -6661,7 +6845,7 @@ app.get('/api/rbn/location/:callsign', async (req, res) => {
       return res.json(result);
     }
   } catch (err) {
-    console.warn(`[RBN] Failed to lookup ${callsign}: ${err.message}`);
+    logErrorOnce('RBN', `Failed to lookup ${callsign}: ${err.message}`);
   }
 
   res.status(404).json({ error: 'Location not found' });
@@ -6669,7 +6853,7 @@ app.get('/api/rbn/location/:callsign', async (req, res) => {
 
 // Legacy endpoint for compatibility (deprecated)
 app.get('/api/rbn', async (req, res) => {
-  console.log('[RBN] Warning: Using deprecated /api/rbn endpoint, use /api/rbn/spots instead');
+  logWarn('[RBN] Warning: Using deprecated /api/rbn endpoint, use /api/rbn/spots instead');
 
   const callsign = (req.query.callsign || '').toUpperCase().trim();
   const minutes = parseInt(req.query.minutes) || 30;
@@ -6973,7 +7157,7 @@ app.get('/api/wspr/heatmap', async (req, res) => {
           source: 'pskreporter',
           format: 'raw',
         };
-        console.log(`[WSPR Heatmap] Returning ${spots.length} raw spots (${minutes}min, band: ${band})`);
+        logDebug(`[WSPR Heatmap] Returning ${spots.length} raw spots (${minutes}min, band: ${band})`);
       } else {
         const aggregated = aggregateWSPRByGrid(spots);
         result = {
@@ -6984,7 +7168,7 @@ app.get('/api/wspr/heatmap', async (req, res) => {
           source: 'pskreporter',
           format: 'aggregated',
         };
-        console.log(
+        logDebug(
           `[WSPR Heatmap] Aggregated ${spots.length} spots → ${aggregated.uniqueGrids} grids, ${aggregated.paths.length} paths (${minutes}min, band: ${band})`,
         );
       }
@@ -7362,93 +7546,163 @@ const HAM_SATELLITES = {
 };
 
 let tleCache = { data: null, timestamp: 0 };
-const TLE_CACHE_DURATION = 6 * 60 * 60 * 1000; // 6 hours
+const TLE_CACHE_DURATION = 12 * 60 * 60 * 1000; // 12 hours — TLEs don't change that fast
+const TLE_STALE_SERVE_LIMIT = 48 * 60 * 60 * 1000; // Serve stale cache up to 48h while retrying
+let tleNegativeCache = 0; // Timestamp of last total failure
+const TLE_NEGATIVE_TTL = 30 * 60 * 1000; // 30 min backoff after all sources fail
+
+// TLE data sources in priority order — automatic failover
+const TLE_SOURCES = {
+  celestrak: {
+    name: 'CelesTrak',
+    fetchGroups: async (groups, signal) => {
+      const tleData = {};
+      for (const group of groups) {
+        try {
+          const res = await fetch(`https://celestrak.org/NORAD/elements/gp.php?GROUP=${group}&FORMAT=tle`, {
+            headers: { 'User-Agent': `OpenHamClock/${APP_VERSION}` },
+            signal,
+          });
+          if (res.ok) parseTleText(await res.text(), tleData, group);
+          else if (res.status === 429 || res.status === 403)
+            throw new Error(`CelesTrak returned ${res.status} (rate limited or banned)`);
+        } catch (e) {
+          if (e.message?.includes('rate limited') || e.message?.includes('banned')) throw e; // Bubble up to trigger failover
+          logDebug(`[Satellites] CelesTrak group ${group} failed: ${e.message}`);
+        }
+      }
+      return tleData;
+    },
+  },
+  celestrak_legacy: {
+    name: 'CelesTrak (legacy)',
+    fetchGroups: async (groups, signal) => {
+      const tleData = {};
+      // Legacy domain uses different URL format
+      const legacyMap = { amateur: 'amateur', weather: 'weather', goes: 'goes' };
+      for (const group of groups) {
+        try {
+          const res = await fetch(`https://celestrak.com/NORAD/elements/${legacyMap[group] || group}.txt`, {
+            headers: { 'User-Agent': `OpenHamClock/${APP_VERSION}` },
+            signal,
+          });
+          if (res.ok) parseTleText(await res.text(), tleData, group);
+        } catch (e) {
+          logDebug(`[Satellites] CelesTrak legacy group ${group} failed: ${e.message}`);
+        }
+      }
+      return tleData;
+    },
+  },
+  amsat: {
+    name: 'AMSAT',
+    fetchGroups: async (_groups, signal) => {
+      // AMSAT provides a single combined file for amateur satellites
+      const tleData = {};
+      try {
+        const res = await fetch('https://www.amsat.org/tle/current/nasabare.txt', {
+          headers: { 'User-Agent': `OpenHamClock/${APP_VERSION}` },
+          signal,
+        });
+        if (res.ok) parseTleText(await res.text(), tleData, 'amateur');
+      } catch (e) {
+        logDebug(`[Satellites] AMSAT TLE failed: ${e.message}`);
+      }
+      return tleData;
+    },
+  },
+};
+
+// Configurable source order via env var: TLE_SOURCES=celestrak,amsat,celestrak_legacy
+const TLE_SOURCE_ORDER = (process.env.TLE_SOURCES || 'celestrak,celestrak_legacy,amsat')
+  .split(',')
+  .map((s) => s.trim())
+  .filter((s) => TLE_SOURCES[s]);
+
+function parseTleText(text, tleData, group) {
+  const lines = text.trim().split('\n');
+  for (let i = 0; i < lines.length - 2; i += 3) {
+    const name = lines[i]?.trim();
+    const line1 = lines[i + 1]?.trim();
+    const line2 = lines[i + 2]?.trim();
+    if (name && line1 && line1.startsWith('1 ')) {
+      const noradId = parseInt(line1.substring(2, 7));
+      const alreadyExists = Object.values(tleData).some((sat) => sat.norad === noradId);
+      if (alreadyExists) continue;
+      const key = name.replace(/[^A-Z0-9\-]/g, '_').toUpperCase();
+      const hamSat = Object.values(HAM_SATELLITES).find((s) => s.norad === noradId);
+      if (hamSat) {
+        tleData[key] = { ...hamSat, tle1: line1, tle2: line2 };
+      } else {
+        tleData[key] = {
+          norad: noradId,
+          name,
+          color: '#cccccc',
+          priority: group === 'amateur' ? 3 : 4,
+          mode: 'Unknown',
+          tle1: line1,
+          tle2: line2,
+        };
+      }
+    }
+  }
+}
+
 app.get('/api/satellites/tle', async (req, res) => {
   try {
     const now = Date.now();
 
-    // Return memory cache if fresh (6-hour window)
+    // Return memory cache if fresh
     if (tleCache.data && now - tleCache.timestamp < TLE_CACHE_DURATION) {
       return res.json(tleCache.data);
     }
 
-    logDebug('[Satellites] Fetching fresh TLE data from multiple groups...');
-    const tleData = {};
+    // If all sources recently failed, serve stale cache or empty
+    if (now - tleNegativeCache < TLE_NEGATIVE_TTL) {
+      if (tleCache.data && now - tleCache.timestamp < TLE_STALE_SERVE_LIMIT) {
+        res.set('X-TLE-Stale', 'true');
+        return res.json(tleCache.data);
+      }
+      return res.json(tleCache.data || {});
+    }
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 15000);
+    const timeout = setTimeout(() => controller.abort(), 20000);
 
-    // This list tells the server to look in all three CelesTrak folders
     const groups = ['amateur', 'weather', 'goes'];
+    let tleData = {};
+    let sourceUsed = null;
 
-    for (const group of groups) {
+    // Try each source in order until one succeeds with meaningful data
+    for (const sourceKey of TLE_SOURCE_ORDER) {
+      const source = TLE_SOURCES[sourceKey];
       try {
-        const response = await fetch(`https://celestrak.org/NORAD/elements/gp.php?GROUP=${group}&FORMAT=tle`, {
-          headers: { 'User-Agent': 'OpenHamClock/3.3' },
-          signal: controller.signal,
-        });
-
-        if (response.ok) {
-          const text = await response.text();
-          const lines = text.trim().split('\n');
-          // Parse 3 lines per satellite: Name, Line 1, Line 2
-          for (let i = 0; i < lines.length - 2; i += 3) {
-            const name = lines[i]?.trim();
-            const line1 = lines[i + 1]?.trim();
-            const line2 = lines[i + 2]?.trim();
-            if (name && line1 && line1.startsWith('1 ')) {
-              const noradId = parseInt(line1.substring(2, 7));
-
-              // Skip if this NORAD ID already exists (prevent duplicates)
-              const alreadyExists = Object.values(tleData).some((sat) => sat.norad === noradId);
-              if (alreadyExists) continue;
-
-              // Create a sanitized key from the satellite name
-              const key = name.replace(/[^A-Z0-9\-]/g, '_').toUpperCase();
-
-              // Check if we have metadata in HAM_SATELLITES
-              const hamSat = Object.values(HAM_SATELLITES).find((s) => s.norad === noradId);
-
-              if (hamSat) {
-                // Use defined metadata from HAM_SATELLITES
-                tleData[key] = { ...hamSat, tle1: line1, tle2: line2 };
-              } else {
-                // Include all satellites with default metadata
-                tleData[key] = {
-                  norad: noradId,
-                  name: name,
-                  color: '#cccccc',
-                  priority: group === 'amateur' ? 3 : 4,
-                  mode: 'Unknown',
-                  tle1: line1,
-                  tle2: line2,
-                };
-              }
-            }
-          }
+        tleData = await source.fetchGroups(groups, controller.signal);
+        if (Object.keys(tleData).length >= 5) {
+          sourceUsed = source.name;
+          break; // Got enough data
         }
+        logDebug(
+          `[Satellites] ${source.name} returned only ${Object.keys(tleData).length} satellites, trying next source...`,
+        );
       } catch (e) {
-        logDebug(`[Satellites] Failed to fetch group: ${group}`);
+        logWarn(`[Satellites] ${source.name} failed: ${e.message}`);
       }
     }
+
     clearTimeout(timeout);
 
-    // Check if ISS (NORAD 25544) was already added with any key
+    // ISS fallback — try CelesTrak direct if ISS not found
     const issExists = Object.values(tleData).some((sat) => sat.norad === 25544);
-
-    // Fallback for ISS if it wasn't found in the groups above
     if (!issExists) {
       try {
-        const issRes = await fetch('https://celestrak.org/NORAD/elements/gp.php?CATNR=25544&FORMAT=tle');
+        const issRes = await fetch('https://celestrak.org/NORAD/elements/gp.php?CATNR=25544&FORMAT=tle', {
+          signal: AbortSignal.timeout(5000),
+        });
         if (issRes.ok) {
-          const issText = await issRes.text();
-          const issLines = issText.trim().split('\n');
+          const issLines = (await issRes.text()).trim().split('\n');
           if (issLines.length >= 3) {
-            tleData['ISS'] = {
-              ...HAM_SATELLITES['ISS'],
-              tle1: issLines[1].trim(),
-              tle2: issLines[2].trim(),
-            };
+            tleData['ISS'] = { ...HAM_SATELLITES['ISS'], tle1: issLines[1].trim(), tle2: issLines[2].trim() };
           }
         }
       } catch (e) {
@@ -7456,7 +7710,19 @@ app.get('/api/satellites/tle', async (req, res) => {
       }
     }
 
-    tleCache = { data: tleData, timestamp: now };
+    if (Object.keys(tleData).length > 0) {
+      tleCache = { data: tleData, timestamp: now };
+      if (sourceUsed) logInfo(`[Satellites] Loaded ${Object.keys(tleData).length} satellites from ${sourceUsed}`);
+    } else {
+      // All sources failed — set negative cache to avoid hammering
+      tleNegativeCache = now;
+      logWarn('[Satellites] All TLE sources failed, backing off for 30 min');
+      // Serve stale if available
+      if (tleCache.data && now - tleCache.timestamp < TLE_STALE_SERVE_LIMIT) {
+        res.set('X-TLE-Stale', 'true');
+        return res.json(tleCache.data);
+      }
+    }
 
     res.json(tleData);
   } catch (error) {
@@ -8194,6 +8460,38 @@ app.get('/api/propagation', async (req, res) => {
 // Used by VOACAP Heatmap map layer plugin
 const PROP_HEATMAP_CACHE = {};
 const PROP_HEATMAP_TTL = 5 * 60 * 1000; // 5 minutes
+const PROP_HEATMAP_MAX_ENTRIES = 200; // Hard cap on cache entries
+
+// Periodic cleanup: purge expired heatmap cache entries every 10 minutes
+setInterval(
+  () => {
+    const now = Date.now();
+    const keys = Object.keys(PROP_HEATMAP_CACHE);
+    let purged = 0;
+    for (const key of keys) {
+      if (now - PROP_HEATMAP_CACHE[key].ts > PROP_HEATMAP_TTL * 2) {
+        delete PROP_HEATMAP_CACHE[key];
+        purged++;
+      }
+    }
+    // If still over cap, evict oldest
+    const remaining = Object.keys(PROP_HEATMAP_CACHE);
+    if (remaining.length > PROP_HEATMAP_MAX_ENTRIES) {
+      remaining
+        .sort((a, b) => PROP_HEATMAP_CACHE[a].ts - PROP_HEATMAP_CACHE[b].ts)
+        .slice(0, remaining.length - PROP_HEATMAP_MAX_ENTRIES)
+        .forEach((key) => {
+          delete PROP_HEATMAP_CACHE[key];
+          purged++;
+        });
+    }
+    if (purged > 0)
+      console.log(
+        `[Cache] PropHeatmap: purged ${purged} stale entries, ${Object.keys(PROP_HEATMAP_CACHE).length} remaining`,
+      );
+  },
+  10 * 60 * 1000,
+);
 
 app.get('/api/propagation/heatmap', async (req, res) => {
   const deLat = parseFloat(req.query.deLat) || 0;
@@ -10120,6 +10418,246 @@ app.get('/api/update/status', (req, res) => {
 });
 
 // ============================================
+// APRS-IS INTEGRATION
+// ============================================
+// Connects to APRS-IS network for real-time position tracking.
+// Read-only connection (passcode -1). Positions cached in memory.
+// Enable via APRS_ENABLED=true in .env
+
+const APRS_ENABLED = process.env.APRS_ENABLED === 'true';
+const APRS_HOST = process.env.APRS_HOST || 'rotate.aprs2.net';
+const APRS_PORT = parseInt(process.env.APRS_PORT || '14580');
+const APRS_FILTER = process.env.APRS_FILTER || ''; // e.g. 'r/40/-75/500' for 500km around lat/lon
+const APRS_MAX_AGE_MINUTES = parseInt(process.env.APRS_MAX_AGE_MINUTES || '60');
+const APRS_MAX_STATIONS = 500;
+
+// In-memory station cache: callsign → { call, lat, lon, symbol, comment, speed, course, altitude, timestamp, raw }
+const aprsStations = new Map();
+let aprsSocket = null;
+let aprsReconnectTimer = null;
+let aprsConnected = false;
+let aprsBuffer = '';
+
+// Parse APRS uncompressed latitude: DDMM.MMN
+function parseAprsLat(s) {
+  if (!s || s.length < 8) return NaN;
+  const deg = parseInt(s.substring(0, 2));
+  const min = parseFloat(s.substring(2, 7));
+  const hemi = s.charAt(7);
+  const lat = deg + min / 60;
+  return hemi === 'S' ? -lat : lat;
+}
+
+// Parse APRS uncompressed longitude: DDDMM.MMW
+function parseAprsLon(s) {
+  if (!s || s.length < 9) return NaN;
+  const deg = parseInt(s.substring(0, 3));
+  const min = parseFloat(s.substring(3, 8));
+  const hemi = s.charAt(8);
+  const lon = deg + min / 60;
+  return hemi === 'W' ? -lon : lon;
+}
+
+// Parse a raw APRS packet into a position object (or null if not a position packet)
+function parseAprsPacket(line) {
+  try {
+    // Format: CALLSIGN>PATH:payload
+    const headerEnd = line.indexOf(':');
+    if (headerEnd < 0) return null;
+
+    const header = line.substring(0, headerEnd);
+    const payload = line.substring(headerEnd + 1);
+    const callsign = header.split('>')[0].split('-')[0].trim(); // Strip SSID for grouping
+    const ssid = header.split('>')[0].trim(); // Keep full SSID for display
+
+    if (!callsign || callsign.length < 3) return null;
+
+    // Position data type identifiers
+    const dataType = payload.charAt(0);
+    let lat, lon, symbolTable, symbolCode, comment, rest;
+
+    if (dataType === '!' || dataType === '=') {
+      // Position without timestamp: !DDMM.MMN/DDDMM.MMW$...
+      lat = parseAprsLat(payload.substring(1, 9));
+      symbolTable = payload.charAt(9);
+      lon = parseAprsLon(payload.substring(10, 19));
+      symbolCode = payload.charAt(19);
+      comment = payload.substring(20).trim();
+    } else if (dataType === '/' || dataType === '@') {
+      // Position with timestamp: /HHMMSSh DDMM.MMN/DDDMM.MMW$...
+      lat = parseAprsLat(payload.substring(8, 16));
+      symbolTable = payload.charAt(16);
+      lon = parseAprsLon(payload.substring(17, 26));
+      symbolCode = payload.charAt(26);
+      comment = payload.substring(27).trim();
+    } else if (dataType === ';') {
+      // Object: ;NAME_____*HHMMSSh DDMM.MMN/DDDMM.MMW$...
+      const objPayload = payload.substring(11);
+      const ts = objPayload.charAt(0) === '*' ? 8 : 0;
+      rest = objPayload.substring(ts);
+      if (rest.length >= 19) {
+        lat = parseAprsLat(rest.substring(0, 8));
+        symbolTable = rest.charAt(8);
+        lon = parseAprsLon(rest.substring(9, 18));
+        symbolCode = rest.charAt(18);
+        comment = rest.substring(19).trim();
+      }
+    } else {
+      return null; // Not a position packet
+    }
+
+    if (isNaN(lat) || isNaN(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) return null;
+
+    // Parse optional speed/course/altitude from comment
+    let speed = null,
+      course = null,
+      altitude = null;
+    const csMatch = comment?.match(/^(\d{3})\/(\d{3})/);
+    if (csMatch) {
+      course = parseInt(csMatch[1]);
+      speed = parseInt(csMatch[2]); // knots
+    }
+    const altMatch = comment?.match(/\/A=(\d{6})/);
+    if (altMatch) {
+      altitude = parseInt(altMatch[1]); // feet
+    }
+
+    return {
+      call: callsign,
+      ssid,
+      lat,
+      lon,
+      symbol: `${symbolTable}${symbolCode}`,
+      comment: comment || '',
+      speed,
+      course,
+      altitude,
+      timestamp: Date.now(),
+      raw: line,
+    };
+  } catch (e) {
+    return null;
+  }
+}
+
+function connectAprsIS() {
+  if (!APRS_ENABLED || aprsSocket) return;
+
+  const loginCallsign = CONFIG.callsign || 'N0CALL';
+  logInfo(`[APRS-IS] Connecting to ${APRS_HOST}:${APRS_PORT} as ${loginCallsign} (read-only)...`);
+
+  aprsSocket = new net.Socket();
+  aprsSocket.setTimeout(120000); // 2 min timeout
+
+  aprsSocket.connect(APRS_PORT, APRS_HOST, () => {
+    aprsConnected = true;
+    aprsBuffer = '';
+    logInfo('[APRS-IS] Connected, sending login...');
+
+    // Read-only login (passcode -1)
+    aprsSocket.write(`user ${loginCallsign} pass -1 vers OpenHamClock ${APP_VERSION}`);
+    if (APRS_FILTER) {
+      aprsSocket.write(` filter ${APRS_FILTER}`);
+    }
+    aprsSocket.write('\r\n');
+  });
+
+  aprsSocket.on('data', (data) => {
+    aprsBuffer += data.toString();
+    const lines = aprsBuffer.split('\n');
+    aprsBuffer = lines.pop(); // Keep incomplete last line
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue; // Server comment
+
+      const station = parseAprsPacket(trimmed);
+      if (station) {
+        aprsStations.set(station.ssid, station);
+
+        // Prune if over limit
+        if (aprsStations.size > APRS_MAX_STATIONS * 1.2) {
+          const cutoff = Date.now() - APRS_MAX_AGE_MINUTES * 60000;
+          for (const [key, val] of aprsStations) {
+            if (val.timestamp < cutoff) aprsStations.delete(key);
+          }
+          // Hard cap if still too many
+          if (aprsStations.size > APRS_MAX_STATIONS) {
+            const sorted = [...aprsStations.entries()].sort((a, b) => b[1].timestamp - a[1].timestamp);
+            aprsStations.clear();
+            for (const [k, v] of sorted.slice(0, APRS_MAX_STATIONS)) {
+              aprsStations.set(k, v);
+            }
+          }
+        }
+      }
+    }
+  });
+
+  aprsSocket.on('error', (err) => {
+    logErrorOnce('APRS-IS', err.message);
+  });
+
+  aprsSocket.on('close', () => {
+    aprsConnected = false;
+    aprsSocket = null;
+    logInfo('[APRS-IS] Disconnected, reconnecting in 30s...');
+    clearTimeout(aprsReconnectTimer);
+    aprsReconnectTimer = setTimeout(connectAprsIS, 30000);
+  });
+
+  aprsSocket.on('timeout', () => {
+    logWarn('[APRS-IS] Socket timeout, reconnecting...');
+    try {
+      aprsSocket.destroy();
+    } catch (e) {}
+  });
+}
+
+// Periodic cleanup of old stations
+setInterval(() => {
+  if (!APRS_ENABLED) return;
+  const cutoff = Date.now() - APRS_MAX_AGE_MINUTES * 60000;
+  for (const [key, val] of aprsStations) {
+    if (val.timestamp < cutoff) aprsStations.delete(key);
+  }
+}, 60000);
+
+// Start APRS-IS connection if enabled
+if (APRS_ENABLED) {
+  connectAprsIS();
+}
+
+// REST endpoint: GET /api/aprs/stations
+app.get('/api/aprs/stations', (req, res) => {
+  const cutoff = Date.now() - APRS_MAX_AGE_MINUTES * 60000;
+  const stations = [];
+  for (const [, station] of aprsStations) {
+    if (station.timestamp >= cutoff) {
+      stations.push({
+        call: station.call,
+        ssid: station.ssid,
+        lat: station.lat,
+        lon: station.lon,
+        symbol: station.symbol,
+        comment: station.comment,
+        speed: station.speed,
+        course: station.course,
+        altitude: station.altitude,
+        age: Math.floor((Date.now() - station.timestamp) / 60000),
+        timestamp: station.timestamp,
+      });
+    }
+  }
+  res.json({
+    connected: aprsConnected,
+    enabled: APRS_ENABLED,
+    count: stations.length,
+    stations: stations.sort((a, b) => b.timestamp - a.timestamp),
+  });
+});
+
+// ============================================
 // WSJT-X UDP LISTENER
 // ============================================
 // Receives decoded messages from WSJT-X, JTDX, etc.
@@ -10595,7 +11133,7 @@ function handleWSJTXMessage(msg, state) {
       const parsed = parseDecodeMessage(msg.message);
 
       const decode = {
-        id: `${msg.id}-${msg.timestamp}-${msg.deltaFreq}`,
+        id: `${msg.id}-${(msg.time?.formatted || '').replace(/[^0-9]/g, '')}-${msg.deltaFreq}-${(msg.message || '').replace(/\s+/g, '')}`,
         clientId: msg.id,
         isNew: msg.isNew,
         time: msg.time?.formatted || '',
@@ -10694,17 +11232,20 @@ function handleWSJTXMessage(msg, state) {
         }
       }
 
-      // Only keep new decodes (not replays)
+      // Only keep new decodes (not replays), deduplicate by content-based ID
       if (msg.isNew) {
-        state.decodes.push(decode);
+        const isDup = state.decodes.some((d) => d.id === decode.id);
+        if (!isDup) {
+          state.decodes.push(decode);
 
-        // Trim old decodes
-        const cutoff = Date.now() - WSJTX_MAX_AGE;
-        while (
-          state.decodes.length > WSJTX_MAX_DECODES ||
-          (state.decodes.length > 0 && state.decodes[0].timestamp < cutoff)
-        ) {
-          state.decodes.shift();
+          // Trim old decodes
+          const cutoff = Date.now() - WSJTX_MAX_AGE;
+          while (
+            state.decodes.length > WSJTX_MAX_DECODES ||
+            (state.decodes.length > 0 && state.decodes[0].timestamp < cutoff)
+          ) {
+            state.decodes.shift();
+          }
         }
       }
       break;
@@ -10739,9 +11280,19 @@ function handleWSJTXMessage(msg, state) {
           qso.lon = coords.longitude;
         }
       }
-      state.qsos.push(qso);
-      // Keep last 50 QSOs
-      if (state.qsos.length > 50) state.qsos.shift();
+      // Deduplicate: skip if same call + freq + mode within 60 seconds
+      const isDupQso = state.qsos.some(
+        (q) =>
+          q.dxCall === qso.dxCall &&
+          q.frequency === qso.frequency &&
+          q.mode === qso.mode &&
+          Math.abs(q.timestamp - qso.timestamp) < 60000,
+      );
+      if (!isDupQso) {
+        state.qsos.push(qso);
+        // Keep last 50 QSOs
+        if (state.qsos.length > 50) state.qsos.shift();
+      }
       break;
     }
 

@@ -66,9 +66,10 @@ COPY --from=builder /app/public ./public
 # Create local data directory as fallback
 RUN mkdir -p /app/data
 
-# Expose ports (3000 = web, 2237 = WSJT-X UDP)
+# Expose ports (3000 = web, 2237 = WSJT-X UDP, 12060 = N1MM/DXLog)
 EXPOSE 3000
 EXPOSE 2237/udp
+EXPOSE 12060
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \

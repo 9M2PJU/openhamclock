@@ -673,7 +673,7 @@ const PSKReporterPanel = ({
                 ) : (
                   [...wsjtxQsos].reverse().map((q, i) => (
                     <div
-                      key={i}
+                      key={`${q.dxCall}-${q.frequency}-${q.mode}-${q.timestamp || i}`}
                       style={{
                         display: 'flex',
                         gap: '5px',
