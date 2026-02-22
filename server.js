@@ -8406,7 +8406,7 @@ app.get('/api/propagation', async (req, res) => {
     // Calculate MUF and LUF
     const currentMuf =
       hybridResult?.muf || calculateMUF(distance, midLat, midLon, currentHour, sfi, ssn, effectiveIonoData);
-    const currentLuf = calculateLUF(distance, midLat, currentHour, sfi, kIndex);
+    const currentLuf = calculateLUF(distance, midLat, midLon, currentHour, sfi, kIndex);
 
     // Build ionospheric response
     let ionosphericResponse;
@@ -8624,82 +8624,98 @@ app.get('/api/propagation/heatmap', async (req, res) => {
 
 // Calculate MUF using real ionosonde data or model
 function calculateMUF(distance, midLat, midLon, hour, sfi, ssn, ionoData) {
+  // Local solar time at the path midpoint (not UTC)
+  const localHour = (hour + midLon / 15 + 24) % 24;
+
   // If we have real MUF(3000) data, scale it for actual distance
   if (ionoData?.mufd) {
-    // MUF scales with distance: MUF(d) ≈ MUF(3000) * sqrt(3000/d) for d < 3000km
-    // For d > 3000km, MUF(d) ≈ MUF(3000) * (1 + 0.1 * log(d/3000))
-    if (distance < 3000) {
+    if (distance < 3500) {
+      // Single hop: MUF increases with distance (lower takeoff angle)
       return ionoData.mufd * Math.sqrt(distance / 3000);
     } else {
-      return ionoData.mufd * (1 + 0.15 * Math.log10(distance / 3000));
+      // Multi-hop: effective MUF limited by weakest hop — decreases with hops
+      const hops = Math.ceil(distance / 3500);
+      return ionoData.mufd * Math.pow(0.93, hops - 1);
     }
   }
 
   // If we have foF2, calculate MUF using M(3000)F2 factor
   if (ionoData?.foF2) {
-    const M = ionoData.md || 3.0; // M(3000)F2 factor, typically 2.5-3.5
+    const M = ionoData.md || 3.0;
     const muf3000 = ionoData.foF2 * M;
 
-    // Scale for actual distance
-    if (distance < 3000) {
+    if (distance < 3500) {
       return muf3000 * Math.sqrt(distance / 3000);
     } else {
-      return muf3000 * (1 + 0.15 * Math.log10(distance / 3000));
+      const hops = Math.ceil(distance / 3500);
+      return muf3000 * Math.pow(0.93, hops - 1);
     }
   }
 
   // Fallback: Estimate foF2 from solar indices
-  // foF2 ≈ 0.9 * sqrt(SSN + 15) * diurnal_factor
-  const hourFactor = 1 + 0.4 * Math.cos(((hour - 14) * Math.PI) / 12); // Peak at 14:00 local
-  const latFactor = 1 - Math.abs(midLat) / 150; // Higher latitudes = lower foF2
+  // foF2 peaks around 14:00 LOCAL solar time, drops to ~1/3 at night
+  const hourFactor = 1 + 0.4 * Math.cos(((localHour - 14) * Math.PI) / 12);
+  const latFactor = 1 - Math.abs(midLat) / 150;
   const foF2_est = 0.9 * Math.sqrt(ssn + 15) * hourFactor * latFactor;
 
-  // Standard M(3000)F2 factor
   const M = 3.0;
   const muf3000 = foF2_est * M;
 
-  // Scale for distance
-  if (distance < 3000) {
+  if (distance < 3500) {
     return muf3000 * Math.sqrt(distance / 3000);
   } else {
-    return muf3000 * (1 + 0.15 * Math.log10(distance / 3000));
+    // Multi-hop: each additional hop reduces effective MUF by ~7%
+    const hops = Math.ceil(distance / 3500);
+    return muf3000 * Math.pow(0.93, hops - 1);
   }
 }
 
 // Calculate LUF (Lowest Usable Frequency) based on D-layer absorption
-function calculateLUF(distance, midLat, hour, sfi, kIndex) {
+function calculateLUF(distance, midLat, midLon, hour, sfi, kIndex) {
   // LUF increases with:
   // - Higher solar flux (more D-layer ionization)
-  // - Daytime (D-layer forms during day)
-  // - Shorter paths (higher elevation angles = more time in D-layer)
+  // - Daytime (D-layer forms during day, dissipates at night)
+  // - More hops (each hop passes through D-layer again)
   // - Geomagnetic activity
 
-  // Local solar time at midpoint (approximate)
-  const localHour = hour; // Would need proper calculation with midLon
+  // Local solar time at the path midpoint
+  const localHour = (hour + midLon / 15 + 24) % 24;
 
-  // Day/night factor: D-layer absorption is much higher during daytime
-  let dayFactor = 0.3; // Night
-  if (localHour >= 6 && localHour <= 18) {
-    // Daytime - peaks around noon
-    dayFactor = 0.5 + 0.5 * Math.cos(((localHour - 12) * Math.PI) / 6);
+  // Day/night factor: D-layer absorption is dramatically higher during daytime
+  // D-layer essentially disappears at night, making low bands usable
+  let dayFactor;
+  if (localHour >= 7 && localHour <= 17) {
+    // Full daytime — strong D-layer absorption, peaks at local noon
+    dayFactor = 0.7 + 0.3 * Math.cos(((localHour - 12) * Math.PI) / 5);
+  } else if (localHour >= 5 && localHour < 7) {
+    // Sunrise transition — D-layer building
+    dayFactor = 0.15 + 0.55 * ((localHour - 5) / 2);
+  } else if (localHour > 17 && localHour <= 19) {
+    // Sunset transition — D-layer decaying
+    dayFactor = 0.15 + 0.55 * ((19 - localHour) / 2);
+  } else {
+    // Night — minimal D-layer, low bands open
+    dayFactor = 0.15;
   }
 
-  // Solar flux factor: higher SFI = more absorption
-  const sfiFactor = 1 + (sfi - 70) / 200;
+  // Solar flux factor: higher SFI = stronger D-layer = more absorption
+  const sfiFactor = 1 + (sfi - 70) / 150;
 
-  // Distance factor: shorter paths have higher LUF (higher angles)
-  const distFactor = Math.max(0.5, 1 - distance / 10000);
+  // Multi-hop penalty: each hop traverses the D-layer, compounding absorption
+  // This is the key factor that makes 160m/80m much harder on long daytime paths
+  const hops = Math.ceil(distance / 3500);
+  const hopFactor = 1 + (hops - 1) * 0.5; // 50% increase per additional hop
 
-  // Latitude factor: polar paths have more absorption
-  const latFactor = 1 + (Math.abs(midLat) / 90) * 0.5;
+  // Latitude factor: polar/auroral paths have increased absorption
+  const latFactor = 1 + (Math.abs(midLat) / 90) * 0.4;
 
-  // K-index: geomagnetic storms increase absorption
-  const kFactor = 1 + kIndex * 0.1;
+  // K-index: geomagnetic storms increase D-layer absorption
+  const kFactor = 1 + kIndex * 0.15;
 
-  // Base LUF is around 2 MHz for long night paths
-  const baseLuf = 2.0;
+  // Base LUF: ~3 MHz for a single-hop night path with low solar flux
+  const baseLuf = 3.0;
 
-  return baseLuf * dayFactor * sfiFactor * distFactor * latFactor * kFactor;
+  return baseLuf * dayFactor * sfiFactor * hopFactor * latFactor * kFactor;
 }
 
 // Mode decode advantage in dB relative to SSB (higher = can decode weaker signals)
@@ -8767,7 +8783,7 @@ function calculateEnhancedReliability(
   }
 
   const muf = calculateMUF(distance, midLat, midLon, hour, sfi, ssn, hourIonoData);
-  const luf = calculateLUF(distance, midLat, hour, sfi, kIndex);
+  const luf = calculateLUF(distance, midLat, midLon, hour, sfi, kIndex);
 
   // Apply signal margin from mode + power to MUF/LUF boundaries.
   // Positive margin (e.g. FT8 or high power) widens the usable window:
@@ -8865,11 +8881,33 @@ function calculateEnhancedReliability(
   if (freq >= 28 && sfi < 120) reliability *= Math.sqrt(sfi / 120);
   if (freq >= 50 && sfi < 150) reliability *= Math.pow(sfi / 150, 1.5);
 
-  // Low bands work better at night
+  // Low bands work better at night due to D-layer dissipation
   const localHour = (hour + midLon / 15 + 24) % 24;
   const isNight = localHour < 6 || localHour > 18;
-  if (freq <= 7 && isNight) reliability *= 1.1;
-  if (freq <= 3.5 && !isNight) reliability *= 0.7;
+  const isTwilight = (localHour >= 5 && localHour < 7) || (localHour > 17 && localHour <= 19);
+
+  if (freq <= 2) {
+    // 160m: almost exclusively a nighttime DX band
+    if (isNight) {
+      reliability *= 1.15;
+    } else if (isTwilight) {
+      reliability *= 0.4; // Gray-line openings possible
+    } else {
+      reliability *= 0.08; // Daytime 160m DX is essentially dead
+    }
+  } else if (freq <= 4) {
+    // 80m: primarily nighttime, some gray-line, very limited daytime DX
+    if (isNight) {
+      reliability *= 1.1;
+    } else if (isTwilight) {
+      reliability *= 0.6;
+    } else {
+      reliability *= 0.25;
+    }
+  } else if (freq <= 7.5) {
+    // 40m: usable day and night, but better at night for DX
+    if (isNight) reliability *= 1.1;
+  }
 
   return Math.min(99, Math.max(0, reliability));
 }
