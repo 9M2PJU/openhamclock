@@ -139,84 +139,18 @@
     ];
 
     const styles = `
-        #hfj-calc-container {
-            position: fixed;
-            top: 60px;
-            right: 20px;
-            width: 300px;
-            background: var(--bg-panel, rgba(17, 24, 32, 0.95));
-            border: 1px solid var(--border-color, rgba(255, 180, 50, 0.3));
-            border-radius: 8px;
-            color: var(--text-primary, #f0f4f8);
-            font-family: 'JetBrains Mono', monospace, sans-serif;
-            z-index: 9999;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
-            display: none;
-            flex-direction: column;
-            backdrop-filter: blur(5px);
-        }
-        #hfj-calc-header {
-            padding: 10px;
-            background: rgba(255, 180, 50, 0.1);
-            border-bottom: 1px solid var(--border-color, rgba(255, 180, 50, 0.2));
-            cursor: move;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            border-radius: 8px 8px 0 0;
-        }
-        #hfj-calc-header h3 {
-            margin: 0;
-            font-size: 14px;
-            color: var(--accent-cyan, #00ddff);
-        }
-        #hfj-calc-content {
-            padding: 12px;
-            font-size: 13px;
-        }
-        #hfj-calc-input {
-            width: 100%;
-            padding: 8px;
-            background: var(--bg-secondary, #111820);
-            border: 1px solid var(--border-color, rgba(255, 180, 50, 0.2));
-            color: var(--text-primary, #f0f4f8);
-            border-radius: 4px;
-            margin-bottom: 12px;
-            box-sizing: border-box;
-            outline: none;
-        }
-        #hfj-calc-input:focus {
-            border-color: var(--accent-amber, #ffb432);
-        }
-        .hfj-row {
-            display: flex;
-            justify-content: space-between;
-            margin-bottom: 4px;
-        }
-        .hfj-label { color: var(--text-secondary, #a0b0c0); }
-        .hfj-value { font-weight: bold; }
-        .hfj-accent-cyan { color: var(--accent-cyan, #00ddff); }
-        .hfj-accent-green { color: var(--accent-green, #00ff88); }
-        .hfj-accent-amber { color: var(--accent-amber, #ffb432); }
-        .hfj-accent-purple { color: var(--accent-purple, #aa66ff); }
-        .hfj-accent-red { color: var(--accent-red, #ff4466); }
-        
-        .hfj-bar-bg {
-            width: 100%;
-            height: 6px;
-            background: var(--bg-tertiary, #1a2332);
-            border-radius: 3px;
-            margin: 4px 0 10px 0;
-            overflow: hidden;
-        }
-        .hfj-bar-fill {
-            height: 100%;
-            transition: width 0.3s ease;
-        }
-        #hfj-toggle-btn {
+        #ohc-addon-drawer {
             position: fixed;
             bottom: 20px;
             right: 20px;
+            display: flex;
+            flex-direction: row-reverse;
+            align-items: center;
+            gap: 10px;
+            z-index: 10000;
+            pointer-events: none;
+        }
+        .ohc-addon-icon {
             width: 45px;
             height: 45px;
             background: var(--bg-panel, rgba(17, 24, 32, 0.95));
@@ -225,44 +159,63 @@
             color: var(--accent-cyan, #00ddff);
             font-size: 20px;
             cursor: pointer;
-            z-index: 10000;
             display: flex;
             justify-content: center;
             align-items: center;
             box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+            pointer-events: auto;
+            transition: all 0.3s ease;
         }
-        #hfj-toggle-btn:hover {
-            background: var(--bg-tertiary, #1a2332);
-            border-color: var(--accent-amber, #ffb432);
-        }
-    `;
+        .ohc-addon-icon:hover { border-color: var(--accent-amber, #ffb432); transform: scale(1.1); }
+        
+        #ohc-addon-launcher { background: var(--bg-tertiary, #1a2332); color: var(--accent-amber); }
+        .ohc-addon-item { display: none; } /* Hidden by default */
 
+        #hfj-calc-container {
+...
     function init() {
         if (!document.body) return;
 
-        const styleSheet = document.createElement("style");
-        styleSheet.innerText = styles;
-        document.head.appendChild(styleSheet);
+        // Add Shared Styles
+        if (!document.getElementById("ohc-addon-styles")) {
+            const styleSheet = document.createElement("style");
+            styleSheet.id = "ohc-addon-styles";
+            styleSheet.innerText = styles;
+            document.head.appendChild(styleSheet);
+        }
 
+        // Get or Create Drawer
+        let drawer = document.getElementById("ohc-addon-drawer");
+        if (!drawer) {
+            drawer = document.createElement("div");
+            drawer.id = "ohc-addon-drawer";
+            
+            const launcher = document.createElement("div");
+            launcher.id = "ohc-addon-launcher";
+            launcher.className = "ohc-addon-icon";
+            launcher.innerHTML = "🧩";
+            launcher.title = "AddOns";
+            launcher.onclick = () => {
+                const items = document.querySelectorAll(".ohc-addon-item");
+                const isHidden = items[0]?.style.display !== "flex";
+                items.forEach(el => el.style.display = isHidden ? "flex" : "none");
+                launcher.style.transform = isHidden ? "rotate(90deg)" : "rotate(0deg)";
+            };
+            
+            drawer.appendChild(launcher);
+            document.body.appendChild(drawer);
+        }
+
+        // Add HFJ Icon to Drawer
         const toggleBtn = document.createElement("div");
         toggleBtn.id = "hfj-toggle-btn";
+        toggleBtn.className = "ohc-addon-icon ohc-addon-item";
         toggleBtn.innerHTML = "📡";
         toggleBtn.title = t('title');
-        document.body.appendChild(toggleBtn);
+        drawer.appendChild(toggleBtn);
 
-        const container = document.createElement("div");
-        container.id = "hfj-calc-container";
-        container.innerHTML = `
-            <div id="hfj-calc-header">
-                <h3>${t('title')}</h3>
-                <span id="hfj-close" style="cursor:pointer; color:var(--text-muted);">×</span>
-            </div>
-            <div id="hfj-calc-content">
-                <input type="text" id="hfj-calc-input" placeholder="${t('placeholder')}">
-                <div id="hfj-results"></div>
-            </div>
-        `;
-        document.body.appendChild(container);
+        // Add Container
+...
 
         const input = document.getElementById("hfj-calc-input");
         const results = document.getElementById("hfj-results");

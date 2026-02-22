@@ -78,89 +78,19 @@
     const t = (key) => translations[lang][key] || translations['en'][key] || key;
 
     const styles = `
-        #aprs-news-container {
+        #ohc-addon-drawer {
             position: fixed;
-            top: 100px;
+            bottom: 20px;
             right: 20px;
-            width: 320px;
-            max-height: 500px;
-            background: var(--bg-panel, rgba(17, 24, 32, 0.95));
-            border: 1px solid var(--border-color, rgba(255, 180, 50, 0.3));
-            border-radius: 8px;
-            color: var(--text-primary, #f0f4f8);
-            font-family: 'JetBrains Mono', monospace, sans-serif;
-            z-index: 9998;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
-            display: none;
-            flex-direction: column;
-            backdrop-filter: blur(5px);
-        }
-        #aprs-news-header {
-            padding: 10px;
-            background: rgba(0, 221, 255, 0.1);
-            border-bottom: 1px solid var(--border-color, rgba(255, 180, 50, 0.2));
-            cursor: move;
             display: flex;
-            justify-content: space-between;
+            flex-direction: row-reverse;
             align-items: center;
-            border-radius: 8px 8px 0 0;
+            gap: 10px;
+            z-index: 10000;
+            pointer-events: none;
         }
-        #aprs-news-header h3 {
-            margin: 0;
-            font-size: 14px;
-            color: var(--accent-cyan, #00ddff);
-        }
-        .aprs-icon-btn {
-            cursor: pointer;
-            color: var(--text-muted);
-            margin-left: 10px;
-            font-size: 14px;
-            transition: color 0.2s;
-        }
-        .aprs-icon-btn:hover { color: var(--text-primary); }
-        #aprs-news-content {
-            padding: 0;
-            overflow-y: auto;
-            flex-grow: 1;
-        }
-        .aprs-msg-entry {
-            padding: 10px;
-            border-bottom: 1px solid var(--border-color, rgba(255, 255, 255, 0.05));
-            font-size: 12px;
-        }
-        .aprs-msg-entry:last-child { border-bottom: none; }
-        .aprs-msg-meta {
-            display: flex;
-            justify-content: space-between;
-            margin-bottom: 4px;
-            font-size: 10px;
-            color: var(--text-muted);
-        }
-        .aprs-msg-call { color: var(--accent-green, #00ff88); font-weight: bold; }
-        .aprs-msg-text { color: var(--text-primary); line-height: 1.4; word-break: break-word; }
-        
-        #aprs-news-settings {
-            padding: 10px;
-            background: rgba(0,0,0,0.3);
-            border-top: 1px solid var(--border-color, rgba(255, 180, 50, 0.1));
-            font-size: 11px;
-            display: none;
-        }
-        .aprs-input {
-            width: 100%;
-            padding: 6px;
-            background: var(--bg-secondary, #111820);
-            border: 1px solid var(--border-color, rgba(255, 180, 50, 0.2));
-            color: var(--text-primary);
-            border-radius: 4px;
-            margin-bottom: 6px;
-            box-sizing: border-box;
-            outline: none;
-        }
-        #aprs-toggle-btn {
-            position: fixed;
-            bottom: 75px;
-            right: 20px;
+        .ohc-addon-icon {
+            position: relative;
             width: 45px;
             height: 45px;
             background: var(--bg-panel, rgba(17, 24, 32, 0.95));
@@ -169,82 +99,64 @@
             color: var(--accent-cyan, #00ddff);
             font-size: 20px;
             cursor: pointer;
-            z-index: 10000;
             display: flex;
             justify-content: center;
             align-items: center;
             box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+            pointer-events: auto;
+            transition: all 0.3s ease;
         }
-        #aprs-toggle-btn:hover {
-            border-color: var(--accent-amber, #ffb432);
-        }
-        .aprs-badge {
-            position: absolute;
-            top: -2px;
-            right: -2px;
-            background: var(--accent-red, #ff4466);
-            color: white;
-            font-size: 10px;
-            width: 18px;
-            height: 18px;
-            border-radius: 50%;
-            display: none;
-            justify-content: center;
-            align-items: center;
-            border: 2px solid var(--bg-panel);
-        }
-    `;
+        .ohc-addon-icon:hover { border-color: var(--accent-amber, #ffb432); transform: scale(1.1); }
+        
+        #ohc-addon-launcher { background: var(--bg-tertiary, #1a2332); color: var(--accent-amber); }
+        .ohc-addon-item { display: none; } /* Hidden by default */
 
-    let callsign = 'N0CALL';
-    let apiKey = localStorage.getItem(STORAGE_API_KEY) || '';
-    let lastMsgId = localStorage.getItem('ohc_aprs_last_msgid') || '0';
-
-    function getCallsign() {
-        try {
-            const config = JSON.parse(localStorage.getItem('openhamclock_config'));
-            if (config && config.callsign && config.callsign !== 'N0CALL') {
-                return config.callsign;
-            }
-        } catch(e) {}
-        return 'N0CALL';
-    }
-
+        #aprs-news-container {
+...
     function init() {
         if (!document.body) return;
         callsign = getCallsign();
 
-        const styleSheet = document.createElement("style");
-        styleSheet.innerText = styles;
-        document.head.appendChild(styleSheet);
+        // Add Shared Styles
+        if (!document.getElementById("ohc-addon-styles")) {
+            const styleSheet = document.createElement("style");
+            styleSheet.id = "ohc-addon-styles";
+            styleSheet.innerText = styles;
+            document.head.appendChild(styleSheet);
+        }
 
+        // Get or Create Drawer
+        let drawer = document.getElementById("ohc-addon-drawer");
+        if (!drawer) {
+            drawer = document.createElement("div");
+            drawer.id = "ohc-addon-drawer";
+            
+            const launcher = document.createElement("div");
+            launcher.id = "ohc-addon-launcher";
+            launcher.className = "ohc-addon-icon";
+            launcher.innerHTML = "🧩";
+            launcher.title = "AddOns";
+            launcher.onclick = () => {
+                const items = document.querySelectorAll(".ohc-addon-item");
+                const isHidden = items[0]?.style.display !== "flex";
+                items.forEach(el => el.style.display = isHidden ? "flex" : "none");
+                launcher.style.transform = isHidden ? "rotate(90deg)" : "rotate(0deg)";
+            };
+            
+            drawer.appendChild(launcher);
+            document.body.appendChild(drawer);
+        }
+
+        // Add APRS Icon to Drawer
         const toggleBtn = document.createElement("div");
         toggleBtn.id = "aprs-toggle-btn";
+        toggleBtn.className = "ohc-addon-icon ohc-addon-item";
         toggleBtn.innerHTML = `📩<div id="aprs-news-badge" class="aprs-badge"></div>`;
         toggleBtn.title = t('title');
-        document.body.appendChild(toggleBtn);
+        drawer.appendChild(toggleBtn);
 
-        const container = document.createElement("div");
-        container.id = "aprs-news-container";
-        container.innerHTML = `
-            <div id="aprs-news-header">
-                <h3>${t('title')}</h3>
-                <div style="display:flex; align-items:center;">
-                    <span id="aprs-settings-toggle" class="aprs-icon-btn" title="Settings">🔧</span>
-                    <span id="aprs-close" class="aprs-icon-btn" style="font-size: 20px; margin-top: -2px;">×</span>
-                </div>
-            </div>
-            <div id="aprs-news-content">
-                <div style="padding: 20px; text-align: center; color: var(--text-muted);">${t('setup_required')}</div>
-            </div>
-            <div id="aprs-news-settings">
-                <input type="password" id="aprs-apikey-input" class="aprs-input" placeholder="${t('placeholder_apikey')}" value="${apiKey}">
-                <div style="display:flex; justify-content: space-between; align-items: center;">
-                    <span id="aprs-status" style="color: var(--text-muted); font-size: 9px;"></span>
-                    <button id="aprs-save-btn" style="padding: 4px 8px; cursor: pointer; background: var(--bg-tertiary); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 4px;">${t('save')}</button>
-                </div>
-            </div>
-        `;
-        document.body.appendChild(container);
+        // Add Container
+...
 
         const closeBtn = document.getElementById("aprs-close");
         const settingsBtn = document.getElementById("aprs-settings-toggle");
