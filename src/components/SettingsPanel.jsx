@@ -19,6 +19,7 @@ import {
 } from '../utils/profiles.js';
 
 import useLocalInstall from '../hooks/app/useLocalInstall.js';
+import { emojiToIso2 } from '../utils/countryFlags';
 
 export const SettingsPanel = ({
   isOpen,
@@ -1763,7 +1764,20 @@ export const SettingsPanel = ({
                       textAlign: 'center',
                     }}
                   >
-                    {lang.flag} {lang.name}
+                    {(() => {
+                      const iso = emojiToIso2(lang.flag);
+                      return iso ? (
+                        <img
+                          src={`https://flagcdn.com/w20/${iso}.png`}
+                          alt=""
+                          style={{ height: '0.9em', verticalAlign: 'middle', borderRadius: '1px', marginRight: '4px' }}
+                          crossOrigin="anonymous"
+                        />
+                      ) : (
+                        <span style={{ marginRight: '4px' }}>{lang.flag}</span>
+                      );
+                    })()}
+                    {lang.name}
                   </button>
                 ))}
               </div>

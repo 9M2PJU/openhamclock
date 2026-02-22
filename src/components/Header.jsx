@@ -8,7 +8,7 @@ import { IconGear, IconExpand, IconShrink } from './Icons.jsx';
 import DonateButton from './DonateButton.jsx';
 import { QRZToggle } from './CallsignLink.jsx';
 import { ctyLookup, isCtyLoaded } from '../utils/ctyLookup';
-import { getFlagForEntity } from '../utils/countryFlags';
+import { getFlagUrl } from '../utils/countryFlags';
 
 export const Header = ({
   config,
@@ -83,11 +83,21 @@ export const Header = ({
         </span>
         {(() => {
           const info = isCtyLoaded() ? ctyLookup(config.callsign) : null;
-          const flag = info ? getFlagForEntity(info.entity) : null;
-          return flag ? (
-            <span style={{ fontSize: callsignSize }} title={info.entity}>
-              {flag}
-            </span>
+          const flagUrl = info ? getFlagUrl(info.entity) : null;
+          return flagUrl ? (
+            <img
+              src={flagUrl}
+              alt={info.entity}
+              title={info.entity}
+              style={{
+                height: '1em',
+                verticalAlign: 'middle',
+                borderRadius: '2px',
+                objectFit: 'contain',
+              }}
+              crossOrigin="anonymous"
+              loading="eager"
+            />
           ) : null;
         })()}
         {config.version && !isMobile && (
