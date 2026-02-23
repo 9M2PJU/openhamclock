@@ -64,13 +64,9 @@ export default function ModernLayout(props) {
     propagation,
     dxClusterData,
     potaSpots,
-    filteredPotaSpots,
     wwffSpots,
-    filteredWwffSpots,
     sotaSpots,
-    filteredSotaSpots,
     wwbotaSpots,
-    filteredWwbotaSpots,
     mySpots,
     dxpeditions,
     contests,
@@ -85,27 +81,16 @@ export default function ModernLayout(props) {
     pskFilters,
     setShowDXFilters,
     setShowPSKFilters,
-    potaFilters,
-    setShowPotaFilters,
-    sotaFilters,
-    setShowSotaFilters,
-    wwffFilters,
-    setShowWwffFilters,
-    wwbotaFilters,
-    setShowWwbotaFilters,
     mapLayers,
     toggleDXPaths,
     toggleDXLabels,
     togglePOTA,
-    togglePOTALabels,
     toggleWWFF,
-    toggleWWFFLabels,
     toggleSOTA,
-    toggleSOTALabels,
     toggleWWBOTA,
-    toggleWWBOTALabels,
     toggleSatellites,
     togglePSKReporter,
+    togglePSKPaths,
     toggleWSJTX,
     hoveredSpot,
     setHoveredSpot,
@@ -134,10 +119,10 @@ export default function ModernLayout(props) {
         dxLocation={dxLocation}
         onDXChange={handleDXChange}
         dxLocked={dxLocked}
-        potaSpots={filteredPotaSpots ? filteredPotaSpots : potaSpots.data}
-        wwffSpots={filteredWwffSpots ? filteredWwffSpots : wwffSpots.data}
-        sotaSpots={filteredSotaSpots ? filteredSotaSpots : sotaSpots.data}
-        wwbotaSpots={filteredWwbotaSpots ? filteredWwbotaSpots : wwbotaSpots.data}
+        potaSpots={potaSpots.data}
+        wwffSpots={wwffSpots.data}
+        sotaSpots={sotaSpots.data}
+        wwbotaSpots={wwbotaSpots.data}
         mySpots={mySpots.data}
         dxPaths={dxClusterData.paths}
         dxFilters={dxFilters}
@@ -149,14 +134,12 @@ export default function ModernLayout(props) {
         showDXLabels={mapLayers.showDXLabels}
         onToggleDXLabels={toggleDXLabels}
         showPOTA={mapLayers.showPOTA}
-        showPOTALabels={mapLayers.showPOTALabels}
         showWWFF={mapLayers.showWWFF}
-        showWWFFLabels={mapLayers.showWWFFLabels}
         showSOTA={mapLayers.showSOTA}
-        showSOTALabels={mapLayers.showSOTALabels}
         showWWBOTA={mapLayers.showWWBOTA}
         showSatellites={mapLayers.showSatellites}
         showPSKReporter={mapLayers.showPSKReporter}
+        showPSKPaths={mapLayers.showPSKPaths}
         wsjtxSpots={wsjtxMapSpots}
         showWSJTX={mapLayers.showWSJTX}
         showDXNews={mapLayers.showDXNews}
@@ -299,6 +282,8 @@ export default function ModernLayout(props) {
       pskReporter={pskReporter}
       showOnMap={mapLayers.showPSKReporter}
       onToggleMap={togglePSKReporter}
+      showPaths={mapLayers.showPSKPaths}
+      onTogglePaths={togglePSKPaths}
       filters={pskFilters}
       onOpenFilters={() => setShowPSKFilters(true)}
       onShowOnMap={(r) => {
@@ -327,48 +312,28 @@ export default function ModernLayout(props) {
       potaLastChecked={potaSpots.lastChecked}
       showPOTA={mapLayers.showPOTA}
       onTogglePOTA={togglePOTA}
-      showPOTALabels={mapLayers.showPOTALabels}
-      togglePOTALabels={togglePOTALabels}
-      onPOTASpotClick={handleParkSpotClick}
-      potaFilters={potaFilters}
-      setShowPotaFilters={setShowPotaFilters}
-      filteredPotaSpots={filteredPotaSpots}
       sotaData={sotaSpots.data}
       sotaLoading={sotaSpots.loading}
       sotaLastUpdated={sotaSpots.lastUpdated}
       sotaLastChecked={sotaSpots.lastChecked}
       showSOTA={mapLayers.showSOTA}
       onToggleSOTA={toggleSOTA}
-      showSOTALabels={mapLayers.showSOTALabels}
-      toggleSOTALabels={toggleSOTALabels}
-      onSOTASpotClick={handleParkSpotClick}
-      sotaFilters={sotaFilters}
-      setShowSotaFilters={setShowSotaFilters}
-      filteredSotaSpots={filteredSotaSpots}
       wwffData={wwffSpots.data}
       wwffLoading={wwffSpots.loading}
       wwffLastUpdated={wwffSpots.lastUpdated}
       wwffLastChecked={wwffSpots.lastChecked}
       showWWFF={mapLayers.showWWFF}
       onToggleWWFF={toggleWWFF}
-      showWWFFLabels={mapLayers.showWWFFLabels}
-      toggleWWFFLabels={toggleWWFFLabels}
-      onWWFFSpotClick={handleParkSpotClick}
-      wwffFilters={wwffFilters}
-      setShowWwffFilters={setShowWwffFilters}
-      filteredWwffSpots={filteredWwffSpots}
       wwbotaData={wwbotaSpots.data}
       wwbotaLoading={wwbotaSpots.loading}
       wwbotaLastUpdated={wwbotaSpots.lastUpdated}
       wwbotaConnected={wwbotaSpots.connected}
       showWWBOTA={mapLayers.showWWBOTA}
       onToggleWWBOTA={toggleWWBOTA}
-      showWWBOTALabels={mapLayers.showWWBOTALabels}
-      toggleWWBOTALabels={toggleWWBOTALabels}
+      onPOTASpotClick={handleParkSpotClick}
+      onWWFFSpotClick={handleParkSpotClick}
+      onSOTASpotClick={handleParkSpotClick}
       onWWBOTASpotClick={handleParkSpotClick}
-      wwbotaFilters={wwbotaFilters}
-      setShowWwbotaFilters={setShowWwbotaFilters}
-      filteredWwbotaSpots={filteredWwbotaSpots}
     />
   );
 

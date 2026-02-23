@@ -30,7 +30,11 @@ export default function ClassicLayout(props) {
     handleToggleDxLock,
     deGrid,
     dxGrid,
+    deSunTimes,
+    dxSunTimes,
     tempUnit,
+    setTempUnit,
+    showDxWeather,
     localWeather,
     spaceWeather,
     solarIndices,
@@ -40,6 +44,7 @@ export default function ClassicLayout(props) {
     sotaSpots,
     wwbotaSpots,
     mySpots,
+    satellites,
     filteredSatellites,
     mapLayers,
     dxFilters,
@@ -55,6 +60,12 @@ export default function ClassicLayout(props) {
   const mapLegendBands = ['160', '80', '40', '30', '20', '17', '15', '12', '10', '8', '6', '4'];
 
   const { tuneTo } = useRig();
+
+  // Handler for POTA/WWFF/SOTA spot clicks
+  const handleParkSpotClick = (spot) => {
+    // tuneTo() in RigContext handles spot objects and all frequency conversions
+    tuneTo(spot);
+  };
 
   return config.layout === 'classic' ? (
     <div
@@ -163,7 +174,7 @@ export default function ClassicLayout(props) {
                   fontFamily: 'Orbitron, monospace',
                 }}
               >
-                {solarIndices?.data?.ssn?.current ?? '--'}
+                {solarIndices?.data?.ssn?.current || '--'}
               </div>
             </div>
             <div
@@ -428,6 +439,7 @@ export default function ClassicLayout(props) {
             showWWBOTA={mapLayers.showWWBOTA}
             showSatellites={mapLayers.showSatellites}
             showPSKReporter={mapLayers.showPSKReporter}
+            showPSKPaths={mapLayers.showPSKPaths}
             wsjtxSpots={wsjtxMapSpots}
             showWSJTX={mapLayers.showWSJTX}
             showDXNews={mapLayers.showDXNews}
@@ -647,7 +659,7 @@ export default function ClassicLayout(props) {
           <span>
             <span style={{ color: 'var(--text-muted)' }}>{t('app.solar.ssnShort')} </span>
             <span style={{ color: 'var(--accent-cyan)', fontWeight: '700' }}>
-              {solarIndices?.data?.ssn?.current ?? '--'}
+              {solarIndices?.data?.ssn?.current || '--'}
             </span>
           </span>
           {bandConditions?.extras?.aIndex && (
@@ -748,6 +760,7 @@ export default function ClassicLayout(props) {
             showWWBOTA={mapLayers.showWWBOTA}
             showSatellites={mapLayers.showSatellites}
             showPSKReporter={mapLayers.showPSKReporter}
+            showPSKPaths={mapLayers.showPSKPaths}
             wsjtxSpots={wsjtxMapSpots}
             showWSJTX={mapLayers.showWSJTX}
             showDXNews={mapLayers.showDXNews}
@@ -1209,7 +1222,7 @@ export default function ClassicLayout(props) {
           <span>
             <span style={{ color: 'var(--text-muted)' }}>{t('app.solar.ssnShort')} </span>
             <span style={{ color: 'var(--accent-cyan)', fontWeight: '700' }}>
-              {solarIndices?.data?.ssn?.current ?? '--'}
+              {solarIndices?.data?.ssn?.current || '--'}
             </span>
           </span>
           {bandConditions?.extras?.aIndex && (
@@ -1375,6 +1388,7 @@ export default function ClassicLayout(props) {
             showWWBOTA={mapLayers.showWWBOTA}
             showSatellites={mapLayers.showSatellites}
             showPSKReporter={mapLayers.showPSKReporter}
+            showPSKPaths={mapLayers.showPSKPaths}
             wsjtxSpots={wsjtxMapSpots}
             showWSJTX={mapLayers.showWSJTX}
             showDXNews={mapLayers.showDXNews}
