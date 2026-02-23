@@ -2,7 +2,7 @@
  * SettingsPanel Component
  * Full settings modal with map layer controls
  */
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { calculateGridSquare } from '../utils/geo.js';
 import { useTranslation, Trans } from 'react-i18next';
 import { LANGUAGES } from '../lang/i18n.js';
@@ -57,7 +57,7 @@ export const SettingsPanel = ({
   const [propPower, setPropPower] = useState(config?.propagation?.power || 100);
   const [rigEnabled, setRigEnabled] = useState(config?.rigControl?.enabled || false);
   const [rigHost, setRigHost] = useState(config?.rigControl?.host || 'http://localhost');
-  const [rigPort, setRigPort] = useState(config?.rigControl?.port || 5555);
+  const [rigPort, setRigPort] = useState(normalizeRigPort(config?.rigControl?.port));
   const [tuneEnabled, setTuneEnabled] = useState(config?.rigControl?.tuneEnabled || false);
   const [autoMode, setAutoMode] = useState(config?.rigControl?.autoMode !== false);
   const [satelliteSearch, setSatelliteSearch] = useState('');
@@ -151,7 +151,7 @@ export const SettingsPanel = ({
       setPropPower(config.propagation?.power || 100);
       setRigEnabled(config.rigControl?.enabled || false);
       setRigHost(config.rigControl?.host || 'http://localhost');
-      setRigPort(config.rigControl?.port || 5555);
+      setRigPort(normalizeRigPort(config.rigControl?.port));
       setTuneEnabled(config.rigControl?.tuneEnabled || false);
       setAutoMode(config.rigControl?.autoMode !== false);
       if (config.location?.lat && config.location?.lon) {
@@ -352,6 +352,17 @@ export const SettingsPanel = ({
   };
 
   const handleSave = () => {
+    const rigPortValue = String(rigPort ?? '').trim();
+    let nextRigPort = 5555;
+    if (rigPortValue === '0') {
+      nextRigPort = 0;
+    } else {
+      const parsedRigPort = parseInt(rigPortValue, 10);
+      if (Number.isFinite(parsedRigPort) && parsedRigPort > 0) {
+        nextRigPort = parsedRigPort;
+      }
+    }
+
     onSave({
       ...config,
       callsign: callsign.toUpperCase(),
@@ -369,7 +380,13 @@ export const SettingsPanel = ({
       units,
       propagation: { mode: propMode, power: parseFloat(propPower) || 100 },
 
-      rigControl: { enabled: rigEnabled, host: rigHost, port: parseInt(rigPort) || 5555, tuneEnabled, autoMode },
+      rigControl: {
+        enabled: rigEnabled,
+        host: rigHost,
+        port: nextRigPort,
+        tuneEnabled,
+        autoMode,
+      },
     });
     onClose();
   };
@@ -3810,3 +3827,8 @@ export const SettingsPanel = ({
 };
 
 export default SettingsPanel;
+const normalizeRigPort = (value) => {
+  if (value === 0 || value === '0') return 0;
+  const parsed = parseInt(String(value ?? '').trim(), 10);
+  return Number.isFinite(parsed) ? parsed : 5555;
+};

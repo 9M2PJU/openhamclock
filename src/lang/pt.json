@@ -292,7 +292,7 @@
   "station.settings.rigControl.autoMode.hint": "Switch to CW/SSB/Data based on band plan when tuning",
   "station.settings.rigControl.enabled": "Ativar integração Hamlib",
   "station.settings.rigControl.host": "Host do Daemon",
-  "station.settings.rigControl.port": "Porta do Daemon",
+  "station.settings.rigControl.port": "Porta do Daemon (0 = no port)",
   "station.settings.rigControl.title": "📻 Controlo de Rádio",
   "station.settings.rigControl.tuneEnabled": "Clique para sintonizar",
   "station.settings.rigControl.tuneEnabled.hint": "Clicar em spots sintoniza o rádio",

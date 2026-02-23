@@ -292,7 +292,7 @@
   "station.settings.rigControl.autoMode.hint": "Switch to CW/SSB/Data based on band plan when tuning",
   "station.settings.rigControl.enabled": "Activer l'intégration Hamlib",
   "station.settings.rigControl.host": "Hôte du démon",
-  "station.settings.rigControl.port": "Port du démon",
+  "station.settings.rigControl.port": "Port du démon (0 = no port)",
   "station.settings.rigControl.title": "📻 Contrôle Radio",
   "station.settings.rigControl.tuneEnabled": "Cliquer pour accorder",
   "station.settings.rigControl.tuneEnabled.hint": "Cliquer sur un spot règle la radio",
