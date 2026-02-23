@@ -292,7 +292,7 @@
   "station.settings.rigControl.autoMode.hint": "Switch to CW/SSB/Data based on band plan when tuning",
   "station.settings.rigControl.enabled": "Hamlib統合を有効化",
   "station.settings.rigControl.host": "デーモンホスト",
-  "station.settings.rigControl.port": "デーモンポート",
+  "station.settings.rigControl.port": "デーモンポート (0 = no port)",
   "station.settings.rigControl.title": "📻 無線機制御",
   "station.settings.rigControl.tuneEnabled": "クリック同調",
   "station.settings.rigControl.tuneEnabled.hint": "スポットをクリックして無線機を同調",

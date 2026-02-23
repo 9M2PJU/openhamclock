@@ -292,7 +292,7 @@
   "station.settings.rigControl.autoMode.hint": "Tukar ke CW/SSB/Data berdasarkan pelan jalur semasa menala",
   "station.settings.rigControl.enabled": "Dayakan integrasi Hamlib",
   "station.settings.rigControl.host": "Hos Rig Daemon",
-  "station.settings.rigControl.port": "Port Rig Daemon",
+  "station.settings.rigControl.port": "Port Rig Daemon (0 = no port)",
   "station.settings.rigControl.title": "📻 Kawalan Rig",
   "station.settings.rigControl.tuneEnabled": "Klik-untuk-tala",
   "station.settings.rigControl.tuneEnabled.hint": "Benarkan klik bintik untuk tala rig",

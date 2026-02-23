@@ -316,7 +316,7 @@
   "station.settings.rigControl.title": "📻 Управление трансивером",
   "station.settings.rigControl.enabled": "Включить интеграцию с Hamlib",
   "station.settings.rigControl.host": "Хост демона Rig",
-  "station.settings.rigControl.port": "Порт демона Rig",
+  "station.settings.rigControl.port": "Порт демона Rig (0 = no port)",
   "station.settings.rigControl.tuneEnabled": "Настройка по клику",
   "station.settings.rigControl.tuneEnabled.hint": "Перестраивать трансивер при нажатии на спот",
   "station.settings.rigControl.autoMode": "Авто-режим",

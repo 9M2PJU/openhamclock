@@ -292,7 +292,7 @@
   "station.settings.rigControl.autoMode.hint": "Switch to CW/SSB/Data based on band plan when tuning",
   "station.settings.rigControl.enabled": "Hamlib 통합 활성화",
   "station.settings.rigControl.host": "데몬 호스트",
-  "station.settings.rigControl.port": "데몬 포트",
+  "station.settings.rigControl.port": "데몬 포트 (0 = no port)",
   "station.settings.rigControl.title": "📻 무전기 제어",
   "station.settings.rigControl.tuneEnabled": "클릭 튜닝",
   "station.settings.rigControl.tuneEnabled.hint": "스팟을 클릭하여 무전기 주파수 동조",

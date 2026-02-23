@@ -303,7 +303,7 @@
   "station.settings.rigControl.autoMode.hint": "Canvia a CW/SSB/Dades segons el pla de banda en sintonitzar",
   "station.settings.rigControl.enabled": "Habilitar integració Hamlib",
   "station.settings.rigControl.host": "Host del dimoni",
-  "station.settings.rigControl.port": "Port del dimoni",
+  "station.settings.rigControl.port": "Port del dimoni (0 = no port)",
   "station.settings.rigControl.title": "📻 Control de ràdio",
   "station.settings.rigControl.tuneEnabled": "Clica per sintonitzar",
   "station.settings.rigControl.tuneEnabled.hint": "Fer clic als spots sintonitza la ràdio",
@@ -415,4 +415,3 @@
   "weather.wind.WNW": "ONO",
   "weather.wind.WSW": "OSO"
 }
-

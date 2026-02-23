@@ -298,7 +298,7 @@
   "station.settings.rigControl.title": "📻 电台控制 (Rig Control)",
   "station.settings.rigControl.enabled": "启用 Hamlib 集成",
   "station.settings.rigControl.host": "电台守护进程地址",
-  "station.settings.rigControl.port": "电台守护进程端口",
+  "station.settings.rigControl.port": "电台守护进程端口 (0 = no port)",
   "station.settings.rigControl.tuneEnabled": "点击即调谐",
   "station.settings.rigControl.tuneEnabled.hint": "允许通过点击监测点来改变电台频率",
   "station.settings.rigControl.autoMode": "自动设置模式",

@@ -316,7 +316,7 @@
   "station.settings.rigControl.title": "📻 რადიოს მართვა",
   "station.settings.rigControl.enabled": "Hamlib ინტეგრაციის ჩართვა",
   "station.settings.rigControl.host": "Rig Daemon ჰოსტი",
-  "station.settings.rigControl.port": "Rig Daemon პორტი",
+  "station.settings.rigControl.port": "Rig Daemon პორტი (0 = no port)",
   "station.settings.rigControl.tuneEnabled": "დაწკაპუნებით მოწყობა",
   "station.settings.rigControl.tuneEnabled.hint": "სპოტზე დაწკაპუნებით რადიოს გადაწყობა",
   "station.settings.rigControl.autoMode": "ავტო-რეჟიმი",

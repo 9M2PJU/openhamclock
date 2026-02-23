@@ -292,7 +292,7 @@
   "station.settings.rigControl.autoMode.hint": "Switch to CW/SSB/Data based on band plan when tuning",
   "station.settings.rigControl.enabled": "Hamlib-integratie inschakelen",
   "station.settings.rigControl.host": "Daemon Host",
-  "station.settings.rigControl.port": "Daemon Poort",
+  "station.settings.rigControl.port": "Daemon Poort (0 = no port)",
   "station.settings.rigControl.title": "📻 Rig Besturing",
   "station.settings.rigControl.tuneEnabled": "Klik-om-te-stemmen",
   "station.settings.rigControl.tuneEnabled.hint": "Klik op spots om de radio af te stemmen",

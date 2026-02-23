@@ -292,7 +292,7 @@
   "station.settings.rigControl.autoMode.hint": "Switch to CW/SSB/Data based on band plan when tuning",
   "station.settings.rigControl.enabled": "Omogoči Hamlib integracijo",
   "station.settings.rigControl.host": "Cilj Demona",
-  "station.settings.rigControl.port": "Vrata Demona",
+  "station.settings.rigControl.port": "Vrata Demona (0 = no port)",
   "station.settings.rigControl.title": "📻 Nadzor Postaje",
   "station.settings.rigControl.tuneEnabled": "Klik-za-uglasitev",
   "station.settings.rigControl.tuneEnabled.hint": "Klik na spot uglasi postajo",
