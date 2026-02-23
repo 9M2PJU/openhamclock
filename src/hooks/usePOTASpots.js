@@ -6,6 +6,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useVisibilityRefresh } from './useVisibilityRefresh';
 import { apiFetch } from '../utils/apiFetch';
 import { WGS84ToMaidenhead } from '@hamset/maidenhead-locator';
+import { getBandFromFreq } from '../utils/callsign';
 
 // Convert grid square to lat/lon
 function gridToLatLon(grid) {
@@ -123,6 +124,7 @@ export const usePOTASpots = () => {
                 call: s.activator,
                 ref: s.reference,
                 freq: freqMhz ? freqMhz.toString() : s.frequency, // Convert to MHz string
+                band: getBandFromFreq(s.frequency),
                 mode: s.mode,
                 name: s.name || s.locationDesc,
                 locationDesc: s.locationDesc,

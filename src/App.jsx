@@ -45,6 +45,7 @@ import useLocalInstall from './hooks/app/useLocalInstall';
 import useVersionCheck from './hooks/app/useVersionCheck';
 import WhatsNew from './components/WhatsNew.jsx';
 import { initCtyLookup } from './utils/ctyLookup.js';
+import ActivateFilterManager from './components/ActivateFilterManager.jsx';
 
 // Load DXCC entity database on app startup (non-blocking)
 initCtyLookup();
@@ -58,6 +59,9 @@ const App = () => {
   const [showSettings, setShowSettings] = useState(false);
   const [showDXFilters, setShowDXFilters] = useState(false);
   const [showPSKFilters, setShowPSKFilters] = useState(false);
+  const [showPotaFilters, setShowPotaFilters] = useState(false);
+  const [showSotaFilters, setShowSotaFilters] = useState(false);
+  const [showWwffFilters, setShowWwffFilters] = useState(false);
   const [layoutResetKey, setLayoutResetKey] = useState(0);
   const [, setBandColorChangeVersion] = useState(0);
   const [tempUnit, setTempUnit] = useState(() => {
@@ -141,8 +145,11 @@ const App = () => {
     toggleDXPaths,
     toggleDXLabels,
     togglePOTA,
+    togglePOTALabels,
     toggleWWFF,
+    toggleWWFFLabels,
     toggleSOTA,
+    toggleSOTALabels,
     toggleSatellites,
     togglePSKReporter,
     toggleWSJTX,
@@ -150,7 +157,13 @@ const App = () => {
     toggleAPRS,
   } = useMapLayers();
 
-  const { dxFilters, setDxFilters, pskFilters, setPskFilters, mapBandFilter, setMapBandFilter } = useFilters();
+  const { dxFilters, setDxFilters,
+    pskFilters, setPskFilters,
+    mapBandFilter, setMapBandFilter,
+    potaFilters, setPotaFilters,
+    sotaFilters, setSotaFilters,
+    wwffFilters, setWwffFilters,
+  } = useFilters();
 
   const { isFullscreen, handleFullscreenToggle } = useFullscreen();
   const scale = useResponsiveScale();
@@ -224,6 +237,34 @@ const App = () => {
     });
   }, [pskReporter.txReports, pskReporter.rxReports, pskFilters]);
 
+  function ActivateFilter(spots, filters) {
+    // console.log('[ActivateFilters] filters is ',filters);
+    if (!filters?.bands?.length && !filters?.grids?.length && !filters?.modes?.length) {
+      return spots.data;
+    }
+    return spots.data.filter((spot) => {
+      if (filters?.bands?.length && !filters.bands.includes(spot.band)) return false;
+      if (filters?.modes?.length && !filters.modes.includes(spot.mode)) return false;
+      if (filters?.grids?.length) {
+        const gridPrefix = spot.grid.substring(0,2).toUpperCase();
+        if (!filters.grids.includes(gridPrefix)) return false;
+      }
+      return true;
+    });
+  }
+
+  const filteredPotaSpots = useMemo(()=> {
+    return ActivateFilter(potaSpots, potaFilters);
+  }, [potaSpots, potaFilters]);
+
+  const filteredWwffSpots = useMemo(() => {
+    return ActivateFilter(wwffSpots, wwffFilters);
+  }, [wwffSpots, wwffFilters]);
+
+  const filteredSotaSpots = useMemo(() => {
+    return ActivateFilter(sotaSpots, sotaFilters);
+  }, [sotaSpots, sotaFilters]);
+
   const wsjtxMapSpots = useMemo(() => {
     // Apply same age filter as panel (stored in localStorage)
     let ageMinutes = 30;
@@ -280,6 +321,9 @@ const App = () => {
     setShowSettings,
     setShowDXFilters,
     setShowPSKFilters,
+    setShowPotaFilters,
+    setShowSotaFilters,
+    setShowWwffFilters,
     handleUpdateClick,
     updateInProgress,
     isLocalInstall,
@@ -301,8 +345,11 @@ const App = () => {
     propagation,
     dxClusterData,
     potaSpots,
+    filteredPotaSpots,
     wwffSpots,
+    filteredWwffSpots,
     sotaSpots,
+    filteredSotaSpots,
     mySpots,
     dxpeditions,
     contests,
@@ -318,12 +365,21 @@ const App = () => {
     setMapBandFilter,
     pskFilters,
     setPskFilters,
+    potaFilters,
+    setPotaFilters,
+    sotaFilters,
+    setSotaFilters,
+    wwffFilters,
+    setWwffFilters,
     mapLayers,
     toggleDXPaths,
     toggleDXLabels,
     togglePOTA,
+    togglePOTALabels,
     toggleWWFF,
+    toggleWWFFLabels,
     toggleSOTA,
+    toggleSOTALabels,
     toggleSatellites,
     togglePSKReporter,
     toggleWSJTX,
@@ -384,6 +440,27 @@ const App = () => {
         onFilterChange={setPskFilters}
         isOpen={showPSKFilters}
         onClose={() => setShowPSKFilters(false)}
+      />
+      <ActivateFilterManager
+        name='POTA'
+        filters={potaFilters}
+        onFilterChange={setPotaFilters}
+        isOpen={showPotaFilters}
+        onClose={() => setShowPotaFilters(false)}
+      />
+      <ActivateFilterManager
+        name='SOTA'
+        filters={sotaFilters}
+        onFilterChange={setSotaFilters}
+        isOpen={showSotaFilters}
+        onClose={() => setShowSotaFilters(false)}
+      />
+      <ActivateFilterManager
+        name='WWFF'
+        filters={wwffFilters}
+        onFilterChange={setWwffFilters}
+        isOpen={showWwffFilters}
+        onClose={() => setShowWwffFilters(false)}
       />
       <WhatsNew />
     </div>

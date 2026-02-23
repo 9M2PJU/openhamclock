@@ -17,21 +17,36 @@ export const PotaSotaPanel = ({
   potaLastChecked,
   showPOTA,
   onTogglePOTA,
+  showPOTALabels,
+  togglePOTALabels,
   wwffData,
   wwffLoading,
   wwffLastUpdated,
   wwffLastChecked,
   showWWFF,
   onToggleWWFF,
+  showWWFFLabels,
+  toggleWWFFLabels,
   sotaData,
   sotaLoading,
   sotaLastUpdated,
   sotaLastChecked,
   showSOTA,
   onToggleSOTA,
+  showSOTALabels,
+  toggleSOTALabels,
   onPOTASpotClick,
   onWWFFSpotClick,
   onSOTASpotClick,
+  potaFilters,
+  setShowPotaFilters,
+  filteredPotaSpots,
+  sotaFilters,
+  setShowSotaFilters,
+  filteredSotaSpots,
+  wwffFilters,
+  setShowWwffFilters,
+  filteredWwffSpots,
 }) => {
   const [activeTab, setActiveTab] = useState(() => {
     try {
@@ -113,6 +128,11 @@ export const PotaSotaPanel = ({
             showOnMap={showPOTA}
             onToggleMap={onTogglePOTA}
             onSpotClick={onPOTASpotClick}
+            showLabelsOnMap={showPOTALabels}
+            onToggleLabelsOnMap={togglePOTALabels}
+            filters={potaFilters}
+            onOpenFilters={setShowPotaFilters}
+            filteredData={filteredPotaSpots}
           />
         ) : activeTab === 'sota' ? (
           <SOTAPanel
@@ -123,6 +143,11 @@ export const PotaSotaPanel = ({
             showOnMap={showSOTA}
             onToggleMap={onToggleSOTA}
             onSpotClick={onSOTASpotClick}
+            showLabelsOnMap={showSOTALabels}
+            onToggleLabelsOnMap={toggleSOTALabels}
+            filters={sotaFilters}
+            onOpenFilters={setShowSotaFilters}
+            filteredData={filteredSotaSpots}
           />
         ) : (
           <WWFFPanel
@@ -133,6 +158,11 @@ export const PotaSotaPanel = ({
             showOnMap={showWWFF}
             onToggleMap={onToggleWWFF}
             onSpotClick={onWWFFSpotClick}
+            showLabelsOnMap={showWWFFLabels}
+            onToggleLabelsOnMap={toggleWWFFLabels}
+            filters={wwffFilters}
+            onOpenFilters={setShowWwffFilters}
+            filteredData={filteredWwffSpots}
           />
         )}
       </div>

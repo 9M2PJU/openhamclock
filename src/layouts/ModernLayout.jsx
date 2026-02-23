@@ -65,8 +65,11 @@ export default function ModernLayout(props) {
     propagation,
     dxClusterData,
     potaSpots,
+    filteredPotaSpots,
     wwffSpots,
+    filteredWwffSpots,
     sotaSpots,
+    filteredSotaSpots,
     mySpots,
     dxpeditions,
     contests,
@@ -82,12 +85,21 @@ export default function ModernLayout(props) {
     pskFilters,
     setShowDXFilters,
     setShowPSKFilters,
+    potaFilters,
+    setShowPotaFilters,
+    sotaFilters,
+    setShowSotaFilters,
+    wwffFilters,
+    setShowWwffFilters,
     mapLayers,
     toggleDXPaths,
     toggleDXLabels,
     togglePOTA,
+    togglePOTALabels,
     toggleWWFF,
+    toggleWWFFLabels,
     toggleSOTA,
+    toggleSOTALabels,
     toggleSatellites,
     togglePSKReporter,
     toggleWSJTX,
@@ -126,9 +138,9 @@ export default function ModernLayout(props) {
         dxLocation={dxLocation}
         onDXChange={handleDXChange}
         dxLocked={dxLocked}
-        potaSpots={potaSpots.data}
-        wwffSpots={wwffSpots.data}
-        sotaSpots={sotaSpots.data}
+        potaSpots={filteredPotaSpots ? filteredPotaSpots : potaSpots.data}
+        wwffSpots={filteredWwffSpots ? filteredWwffSpots : wwffSpots.data}
+        sotaSpots={filteredSotaSpots ? filteredSotaSpots : sotaSpots.data}
         mySpots={mySpots.data}
         dxPaths={dxClusterData.paths}
         dxFilters={dxFilters}
@@ -140,8 +152,11 @@ export default function ModernLayout(props) {
         showDXLabels={mapLayers.showDXLabels}
         onToggleDXLabels={toggleDXLabels}
         showPOTA={mapLayers.showPOTA}
+        showPOTALabels={mapLayers.showPOTALabels}
         showWWFF={mapLayers.showWWFF}
+        showWWFFLabels={mapLayers.showWWFFLabels}
         showSOTA={mapLayers.showSOTA}
+        showSOTALabels={mapLayers.showSOTALabels}
         showSatellites={mapLayers.showSatellites}
         showPSKReporter={mapLayers.showPSKReporter}
         wsjtxSpots={wsjtxMapSpots}
@@ -321,21 +336,37 @@ export default function ModernLayout(props) {
       potaLastChecked={potaSpots.lastChecked}
       showPOTA={mapLayers.showPOTA}
       onTogglePOTA={togglePOTA}
+      showPOTALabels={mapLayers.showPOTALabels}
+      togglePOTALabels={togglePOTALabels}
       sotaData={sotaSpots.data}
       sotaLoading={sotaSpots.loading}
       sotaLastUpdated={sotaSpots.lastUpdated}
       sotaLastChecked={sotaSpots.lastChecked}
       showSOTA={mapLayers.showSOTA}
       onToggleSOTA={toggleSOTA}
+      showSOTALabels={mapLayers.showSOTALabels}
+      toggleSOTALabels={toggleSOTALabels}
       wwffData={wwffSpots.data}
       wwffLoading={wwffSpots.loading}
       wwffLastUpdated={wwffSpots.lastUpdated}
       wwffLastChecked={wwffSpots.lastChecked}
       showWWFF={mapLayers.showWWFF}
       onToggleWWFF={toggleWWFF}
+      showWWFFLabels={mapLayers.showWWFFLabels}
+      toggleWWFFLabels={toggleWWFFLabels}
       onPOTASpotClick={handleParkSpotClick}
       onWWFFSpotClick={handleParkSpotClick}
       onSOTASpotClick={handleParkSpotClick}
+      potaFilters={potaFilters}
+      setShowPotaFilters={setShowPotaFilters}
+      filteredPotaSpots={filteredPotaSpots}
+      
+      sotaFilters={sotaFilters}
+      setShowSotaFilters={setShowSotaFilters}
+      filteredSotaSpots={filteredSotaSpots}
+      wwffFilters={wwffFilters}
+      setShowWwffFilters={setShowWwffFilters}
+    
     />
   );
 
