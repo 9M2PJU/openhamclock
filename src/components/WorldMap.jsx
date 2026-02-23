@@ -1950,125 +1950,139 @@ export const WorldMap = ({
             color: mapUiHidden ? '#00ffcc' : '#aaa',
             padding: '6px 8px',
             borderRadius: '4px',
-            fontSize: '11px',
             minHeight: '30px',
             fontFamily: 'JetBrains Mono, monospace',
             cursor: 'pointer',
             lineHeight: 1,
           }}
         >
-          {mapUiHidden ? `👁 ${t('app.mapUi.show')}` : `🙈 ${t('app.mapUi.hide')}`}
+          {mapUiHidden ? '👁' : '🙈'}
         </button>
 
         {!mapUiHidden && mapStyle !== 'azimuthal' && (
           <div
             style={{
+              width: '52px',
               background: 'rgba(0, 0, 0, 0.8)',
               border: '1px solid #444',
               borderRadius: '6px',
-              padding: '8px',
+              padding: '10px',
               display: 'flex',
               flexDirection: 'column',
               gap: '5px',
-              minWidth: '160px',
             }}
           >
-            <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
-              <button
-                onClick={() => adjustMapZoom(0.25)}
-                disabled={mapLocked}
-                title="Zoom in"
-                style={{
-                  width: '30px',
-                  height: '30px',
-                  background: 'rgba(0, 0, 0, 0.65)',
-                  border: '1px solid #444',
-                  fontSize: '11px',
-                  borderRadius: '4px',
-                  color: '#ccc',
-                  cursor: mapLocked ? 'not-allowed' : 'pointer',
-                  opacity: mapLocked ? 0.45 : 1,
-                }}
-              >
-                +
-              </button>
-              <button
-                onClick={() => adjustMapZoom(-0.25)}
-                disabled={mapLocked}
-                title="Zoom out"
-                style={{
-                  width: '30px',
-                  height: '30px',
-                  background: 'rgba(0, 0, 0, 0.65)',
-                  border: '1px solid #444',
-                  fontSize: '11px',
-                  borderRadius: '4px',
-                  color: '#ccc',
-                  cursor: mapLocked ? 'not-allowed' : 'pointer',
-                  opacity: mapLocked ? 0.45 : 1,
-                }}
-              >
-                −
-              </button>
-              <button
-                onClick={() => setMapLocked((prev) => !prev)}
-                title={mapLocked ? t('app.mapControls.unlock') : t('app.mapControls.lock')}
-                style={{
-                  flex: 1,
-                  height: '30px',
-                  background: mapLocked ? 'rgba(255, 80, 80, 0.25)' : 'rgba(0, 0, 0, 0.65)',
-                  border: `1px solid ${mapLocked ? 'rgba(255, 80, 80, 0.7)' : '#444'}`,
-                  borderRadius: '4px',
-                  color: mapLocked ? '#ff5050' : '#ccc',
-                  fontFamily: 'JetBrains Mono, monospace',
-                  fontSize: '11px',
-                  cursor: 'pointer',
-                  lineHeight: 1,
-                }}
-              >
-                {mapLocked ? `🔒 ${t('app.mapControls.unlock')}` : `🔓 ${t('app.mapControls.lock')}`}
-              </button>
-            </div>
+            <button
+              onClick={() => setMapLocked((prev) => !prev)}
+              title={mapLocked ? t('app.mapControls.unlock') : t('app.mapControls.lock')}
+              style={{
+                width: '100%',
+                minHeight: '30px',
+                background: mapLocked ? 'rgba(255, 80, 80, 0.25)' : 'rgba(0, 0, 0, 0.65)',
+                border: `1px solid ${mapLocked ? 'rgba(255, 80, 80, 0.7)' : '#444'}`,
+                borderRadius: '4px',
+                color: mapLocked ? '#ff5050' : '#ccc',
+                fontFamily: 'JetBrains Mono, monospace',
+                cursor: 'pointer',
+                lineHeight: 1,
+                textAlign: 'center',
+                padding: '0 8px',
+              }}
+            >
+              {mapLocked ? '🔒' : '🔓'}
+            </button>
 
             {onToggleDXLabels && showDXPaths && Array.isArray(dxPaths) && dxPaths.length > 0 && (
               <button
                 onClick={onToggleDXLabels}
                 title={showDXLabels ? t('app.mapControls.calls.hide') : t('app.mapControls.calls.show')}
                 style={{
+                  width: '100%',
                   background: showDXLabels ? 'rgba(255, 170, 0, 0.2)' : 'rgba(0, 0, 0, 0.65)',
                   border: `1px solid ${showDXLabels ? '#ffaa00' : '#444'}`,
                   color: showDXLabels ? '#ffaa00' : '#888',
                   padding: '6px 8px',
                   borderRadius: '4px',
-                  fontSize: '11px',
                   fontFamily: 'JetBrains Mono, monospace',
                   cursor: 'pointer',
-                  textAlign: 'left',
+                  textAlign: 'center',
+                  minHeight: '30px',
                 }}
               >
-                ⊞ {showDXLabels ? t('app.mapControls.calls.hide') : t('app.mapControls.calls.show')}
+                ⊞
               </button>
             )}
+
+            <button
+              onClick={() => adjustMapZoom(0.25)}
+              disabled={mapLocked}
+              title="Zoom in"
+              style={{
+                width: '100%',
+                minHeight: '30px',
+                background: 'rgba(0, 0, 0, 0.65)',
+                border: '1px solid #444',
+                borderRadius: '4px',
+                color: '#ccc',
+                fontFamily: 'JetBrains Mono, monospace',
+                cursor: mapLocked ? 'not-allowed' : 'pointer',
+                opacity: mapLocked ? 0.45 : 1,
+                textAlign: 'center',
+                padding: '0 8px',
+              }}
+            >
+              +
+            </button>
+
+            <button
+              onClick={() => adjustMapZoom(-0.25)}
+              disabled={mapLocked}
+              title="Zoom out"
+              style={{
+                width: '100%',
+                minHeight: '30px',
+                background: 'rgba(0, 0, 0, 0.65)',
+                border: '1px solid #444',
+                borderRadius: '4px',
+                color: '#ccc',
+                fontFamily: 'JetBrains Mono, monospace',
+                cursor: mapLocked ? 'not-allowed' : 'pointer',
+                opacity: mapLocked ? 0.45 : 1,
+                textAlign: 'center',
+                padding: '0 8px',
+              }}
+            >
+              −
+            </button>
 
             <div
               title="Adjust night overlay darkness"
               style={{
                 display: 'flex',
+                flexDirection: 'column',
                 alignItems: 'center',
                 gap: '5px',
                 color: '#999',
-                fontSize: '10px',
+                fontSize: '14px',
                 fontFamily: 'JetBrains Mono, monospace',
+                textAlign: 'center',
               }}
             >
-              <span>🌙 {nightDarkness}%</span>
+              <span>{nightDarkness}%</span>
               <input
                 type="range"
                 min="0"
                 max="90"
                 value={nightDarkness}
                 onChange={(e) => setNightDarkness(parseInt(e.target.value, 10))}
-                style={{ cursor: 'pointer', flex: 1 }}
+                style={{
+                  cursor: 'pointer',
+                  width: '18px',
+                  margin: 0,
+                  writingMode: 'vertical-lr',
+                  WebkitAppearance: 'slider-vertical',
+                  transform: 'rotate(180deg)',
+                }}
               />
             </div>
           </div>
