@@ -81,8 +81,10 @@ export default function useFilters() {
   });
 
   useEffect(() => {
-    localStorage.setItem('openhamclock_wwffFilters', JSON.stringify(wwffFilters));
-    syncAllSettingsToServer();
+    try {
+      localStorage.setItem('openhamclock_wwffFilters', JSON.stringify(wwffFilters));
+      syncAllSettingsToServer();
+    } catch (e) {}
   }, [wwffFilters]);
 
   // WWBOTA Filters
@@ -96,9 +98,11 @@ export default function useFilters() {
   });
 
   useEffect(() => {
-    localStorage.setItem('openhamclock_wwbotaFilters', JSON.stringify(wwbotaFilters));
-    syncAllSettingsToServer();
-  }, [wwffFilters]);
+    try {
+      localStorage.setItem('openhamclock_wwbotaFilters', JSON.stringify(wwbotaFilters));
+      syncAllSettingsToServer();
+    } catch (e) {}
+  }, [wwbotaFilters]);
 
   const [mapBandFilter, setMapBandFilter] = useState(() => {
     try {

@@ -88,9 +88,13 @@ export const DockableApp = ({
   // Spots & data
   dxClusterData,
   potaSpots,
+  filteredPotaSpots,
   wwffSpots,
+  filteredWwffSpots,
   sotaSpots,
+  filteredSotaSpots,
   wwbotaSpots,
+  filteredWwbotaSpots,
   mySpots,
   dxpeditions,
   contests,
@@ -110,6 +114,14 @@ export const DockableApp = ({
   pskFilters,
   setShowDXFilters,
   setShowPSKFilters,
+  potaFilters,
+  setShowPotaFilters,
+  sotaFilters,
+  setShowSotaFilters,
+  wwffFilters,
+  setShowWwffFilters,
+  wwbotaFilters,
+  setShowWwbotaFilters,
 
   // Map layers
   mapLayers,
@@ -556,10 +568,10 @@ export const DockableApp = ({
         onDXChange={handleDXChange}
         dxLocked={dxLocked}
         onHoverSpot={setHoveredSpot}
-        potaSpots={potaSpots.data}
-        wwffSpots={wwffSpots.data}
-        sotaSpots={sotaSpots.data}
-        wwbotaSpots={wwbotaSpots.data}
+        potaSpots={filteredPotaSpots ? filteredPotaSpots : potaSpots.data}
+        wwffSpots={filteredWwffSpots ? filteredWwffSpots : wwffSpots.data}
+        sotaSpots={filteredSotaSpots ? filteredSotaSpots : sotaSpots.data}
+        wwbotaSpots={filteredWwbotaSpots ? filteredWwbotaSpots : wwbotaSpots.data}
         mySpots={mySpots.data}
         dxPaths={dxClusterData.paths}
         dxFilters={dxFilters}
@@ -767,6 +779,9 @@ export const DockableApp = ({
               showLabelsOnMap={mapLayersEff.showPOTALabels}
               onToggleLabelsOnMap={togglePOTALabelsEff}
               onSpotClick={handleSpotClick}
+              filters={potaFilters}
+              onOpenFilters={() => setShowPotaFilters(true)}
+              filteredData={filteredPotaSpots}
             />
           );
           break;
@@ -784,6 +799,9 @@ export const DockableApp = ({
               showLabelsOnMap={mapLayersEff.showWWFFLabels}
               onToggleLabelsOnMap={toggleWWFFLabelsEff}
               onSpotClick={handleSpotClick}
+              filters={wwffFilters}
+              onOpenFilters={() => setShowWwffFilters(true)}
+              filteredData={filteredWwffSpots}
             />
           );
           break;
@@ -801,6 +819,9 @@ export const DockableApp = ({
               showLabelsOnMap={mapLayersEff.showSOTALabels}
               onToggleLabelsOnMap={toggleSOTALabelsEff}
               onSpotClick={handleSpotClick}
+              filters={sotaFilters}
+              onOpenFilters={() => setShowSotaFilters(true)}
+              filteredData={filteredSotaSpots}
             />
           );
           break;
@@ -818,6 +839,9 @@ export const DockableApp = ({
               showLabelsOnMap={mapLayersEff.showWWBOTALabels}
               onToggleLabelsOnMap={toggleWWBOTALabelsEff}
               onSpotClick={handleSpotClick}
+              filters={wwbotaFilters}
+              onOpenFilters={() => setShowWwbotaFilters(true)}
+              filteredData={filteredWwbotaSpots}
             />
           );
           break;
