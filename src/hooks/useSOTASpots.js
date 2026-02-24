@@ -40,6 +40,8 @@ export const useSOTASpots = () => {
             setLastUpdated(Date.now());
           }
 
+          let entry = []; // To weed out duplicate entries. We only want the most recent (first) spot matching "callsign summit"
+
           // Map SOTA API response to our standard spot format
           const mapped = (Array.isArray(spots) ? spots : [])
             .filter((s) => {
@@ -53,6 +55,12 @@ export const useSOTASpots = () => {
                 const ageMs = Date.now() - new Date(ts).getTime();
                 if (ageMs > 60 * 60 * 1000) return false;
               }
+
+              // Check to see if we already have already seen a spot for key.
+              const key = `${s.activatorCallsign} ${s.associationCode}/${s.summitCode}`;
+              if (entry.includes(key)) return false;
+              else entry.push(key);
+
               return true;
             })
             .map((s) => {
