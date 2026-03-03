@@ -5,6 +5,7 @@
 import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { formatDistance } from '../utils/geo.js';
+import BandHealthPanel from './BandHealthPanel.jsx';
 
 export const PropagationPanel = ({
   propagation,
@@ -13,6 +14,8 @@ export const PropagationPanel = ({
   forcedMode,
   allUnits = { dist: 'imperial', temp: 'imperial', press: 'imperial' },
   propConfig = {},
+  dxSpots,
+  clusterFilters,
 }) => {
   const { t } = useTranslation();
   // Load view mode preference from localStorage
@@ -51,7 +54,7 @@ export const PropagationPanel = ({
 
   // Cycle through view modes
   const cycleViewMode = () => {
-    const modes = ['chart', 'bars', 'bands'];
+    const modes = ['chart', 'bars', 'bands', 'health'];
     const currentIdx = modes.indexOf(viewMode);
     const newMode = modes[(currentIdx + 1) % modes.length];
     setViewMode(newMode);
@@ -154,6 +157,7 @@ export const PropagationPanel = ({
     chart: t('propagation.view.chart'),
     bars: t('propagation.view.bars'),
     bands: t('propagation.view.bands'),
+    health: 'Band Health',
   };
 
   return (
@@ -164,8 +168,8 @@ export const PropagationPanel = ({
     >
       <div className="panel-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <span>
-          {viewMode === 'bands' ? t('band.conditions') : '⌇ VOACAP'}
-          {hasRealData && viewMode !== 'bands' && (
+          {viewMode === 'bands' ? t('band.conditions') : viewMode === 'health' ? '📶 Band Health' : '⌇ VOACAP'}
+          {hasRealData && viewMode !== 'bands' && viewMode !== 'health' && (
             <span style={{ color: '#00ff88', fontSize: '10px', marginLeft: '4px' }}>●</span>
           )}
         </span>
@@ -177,7 +181,7 @@ export const PropagationPanel = ({
       </div>
 
       {/* Mode & Power indicator */}
-      {(propConfig.mode || propConfig.power) && viewMode !== 'bands' && (
+      {(propConfig.mode || propConfig.power) && viewMode !== 'bands' && viewMode !== 'health' && (
         <div
           style={{
             display: 'flex',
@@ -347,6 +351,11 @@ export const PropagationPanel = ({
             {bandConditions?.extras?.source === 'N0NBH' ? 'Source: N0NBH / NOAA' : t('propagation.source.general')}
             {bandConditions?.extras?.updated && ` • ${bandConditions.extras.updated}`}
           </div>
+        </div>
+      ) : viewMode === 'health' ? (
+        /* Band Health View - Real-time DX cluster spot analysis */
+        <div onClick={(e) => e.stopPropagation()} style={{ cursor: 'default' }}>
+          <BandHealthPanel dxSpots={dxSpots} clusterFilters={clusterFilters} embedded />
         </div>
       ) : (
         <>

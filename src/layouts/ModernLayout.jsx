@@ -475,6 +475,8 @@ export default function ModernLayout(props) {
                 bandConditions={bandConditions}
                 allUnits={config.allUnits}
                 propConfig={config.propagation}
+                dxSpots={dxClusterData.spots}
+                clusterFilters={dxFilters}
               />,
               'prop',
             )}
@@ -532,6 +534,8 @@ export default function ModernLayout(props) {
                   bandConditions={bandConditions}
                   allUnits={config.allUnits}
                   propConfig={config.propagation}
+                  dxSpots={dxClusterData.spots}
+                  clusterFilters={dxFilters}
                 />
               )}
             </div>
@@ -605,6 +609,8 @@ export default function ModernLayout(props) {
               bandConditions={bandConditions}
               allUnits={config.allUnits}
               propConfig={config.propagation}
+              dxSpots={dxClusterData.spots}
+              clusterFilters={dxFilters}
             />
           )}
         </div>

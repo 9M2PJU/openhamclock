@@ -145,7 +145,7 @@ function spotToBand(spot) {
   return band && band !== 'other' ? band : null;
 }
 
-export default function BandHealthPanel({ dxSpots = [], clusterFilters = null }) {
+export default function BandHealthPanel({ dxSpots = [], clusterFilters = null, embedded = false }) {
   const [tip, setTip] = useState(null);
   const tipRef = useRef(null);
   const [tipSize, setTipSize] = useState({ w: 0, h: 0 });
@@ -405,10 +405,11 @@ export default function BandHealthPanel({ dxSpots = [], clusterFilters = null })
 
   return (
     <div
-      className="panel"
+      className={embedded ? undefined : 'panel'}
       style={{ padding: '8px 10px', height: '100%', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
     >
-      {/* Header */}
+      {/* Header — hidden when embedded inside PropagationPanel */}
+      {!embedded && (
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
         <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.04em' }}>HF BAND HEALTH</div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -421,6 +422,7 @@ export default function BandHealthPanel({ dxSpots = [], clusterFilters = null })
           </div>
         </div>
       </div>
+      )}
 
       {/* Controls */}
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
