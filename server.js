@@ -6304,8 +6304,8 @@ function unsubscribeCallsign(call) {
 // Verify against https://pskreporter.info/mqtt.html if spots stop arriving.
 function subscribeGrid(grid) {
   if (!pskMqtt.client || !pskMqtt.connected) return;
-  const txTopic = `pskr/filter/v2/+/+/+/+/${grid}/#`;  // senderGrid position (7)
-  const rxTopic = `pskr/filter/v2/+/+/+/+/+/${grid}/#`;   // receiverGrid position (8)
+  const txTopic = `pskr/filter/v2/+/+/+/+/${grid}/#`; // senderGrid position (7)
+  const rxTopic = `pskr/filter/v2/+/+/+/+/+/${grid}/#`; // receiverGrid position (8)
   pskMqtt.client.subscribe([txTopic, rxTopic], { qos: 0 }, (err) => {
     if (err) {
       if (err.message && err.message.includes('onnection closed')) return;
@@ -7743,7 +7743,9 @@ app.get('/api/satellites/tle', async (req, res) => {
     const foundNorads = new Set(Object.values(tleData).map((s) => s.norad));
     const missingSats = Object.entries(HAM_SATELLITES).filter(([, s]) => !foundNorads.has(s.norad));
     if (missingSats.length > 0 && missingSats.length <= 30) {
-      logDebug(`[Satellites] ${missingSats.length} sats missing from group files: ${missingSats.map(([k]) => k).join(', ')}`);
+      logDebug(
+        `[Satellites] ${missingSats.length} sats missing from group files: ${missingSats.map(([k]) => k).join(', ')}`,
+      );
       // Fetch in batches of 5 to avoid hammering upstream
       for (let i = 0; i < missingSats.length; i += 5) {
         const batch = missingSats.slice(i, i + 5);
@@ -7751,10 +7753,10 @@ app.get('/api/satellites/tle', async (req, res) => {
           batch.map(async ([key, sat]) => {
             // Try CelesTrak individual CATNR lookup first
             try {
-              const catRes = await fetch(
-                `https://celestrak.org/NORAD/elements/gp.php?CATNR=${sat.norad}&FORMAT=tle`,
-                { headers: { 'User-Agent': `OpenHamClock/${APP_VERSION}` }, signal: AbortSignal.timeout(5000) },
-              );
+              const catRes = await fetch(`https://celestrak.org/NORAD/elements/gp.php?CATNR=${sat.norad}&FORMAT=tle`, {
+                headers: { 'User-Agent': `OpenHamClock/${APP_VERSION}` },
+                signal: AbortSignal.timeout(5000),
+              });
               if (catRes.ok) {
                 const catText = await catRes.text();
                 const catLines = catText.trim().split('\n');
@@ -7764,7 +7766,9 @@ app.get('/api/satellites/tle', async (req, res) => {
                   logDebug(`[Satellites] Filled ${key} (NORAD ${sat.norad}) from CelesTrak CATNR`);
                   return key;
                 }
-                logDebug(`[Satellites] CelesTrak CATNR ${sat.norad} returned unexpected format: ${catLines.length} lines`);
+                logDebug(
+                  `[Satellites] CelesTrak CATNR ${sat.norad} returned unexpected format: ${catLines.length} lines`,
+                );
               }
             } catch (e) {
               logDebug(`[Satellites] CelesTrak CATNR ${sat.norad} failed: ${e.message}`);
@@ -7772,10 +7776,10 @@ app.get('/api/satellites/tle', async (req, res) => {
 
             // Fallback: SatNOGS TLE API
             try {
-              const satnogsRes = await fetch(
-                `https://db.satnogs.org/api/tle/?norad_cat_id=${sat.norad}&format=json`,
-                { headers: { 'User-Agent': `OpenHamClock/${APP_VERSION}` }, signal: AbortSignal.timeout(5000) },
-              );
+              const satnogsRes = await fetch(`https://db.satnogs.org/api/tle/?norad_cat_id=${sat.norad}&format=json`, {
+                headers: { 'User-Agent': `OpenHamClock/${APP_VERSION}` },
+                signal: AbortSignal.timeout(5000),
+              });
               if (satnogsRes.ok) {
                 const satnogsData = await satnogsRes.json();
                 const entry = Array.isArray(satnogsData) ? satnogsData[0] : satnogsData;
@@ -11370,7 +11374,7 @@ function handleWSJTXMessage(msg, state) {
         band: newBand,
         configName: msg.configName,
         txMessage: msg.txMessage,
-        bandChanged: bandChanged ? { from: prev.band, to: newBand, at: msg.timestamp } : (prev.bandChanged || null),
+        bandChanged: bandChanged ? { from: prev.band, to: newBand, at: msg.timestamp } : prev.bandChanged || null,
       };
 
       // Clear bandChanged flag after 10 seconds (client has had time to see it)

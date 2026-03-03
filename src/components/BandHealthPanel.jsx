@@ -410,18 +410,18 @@ export default function BandHealthPanel({ dxSpots = [], clusterFilters = null, e
     >
       {/* Header — hidden when embedded inside PropagationPanel */}
       {!embedded && (
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-        <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.04em' }}>HF BAND HEALTH</div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{updatedText ? `upd ${updatedText}` : ''}</div>
-          <div
-            style={{ cursor: 'help', userSelect: 'none' }}
-            title="HF Band Health shows real-world band usability based on recent DX Cluster spot activity. It uses a rolling time window and respects active DX Cluster filters."
-          >
-            ℹ️
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.04em' }}>HF BAND HEALTH</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{updatedText ? `upd ${updatedText}` : ''}</div>
+            <div
+              style={{ cursor: 'help', userSelect: 'none' }}
+              title="HF Band Health shows real-world band usability based on recent DX Cluster spot activity. It uses a rolling time window and respects active DX Cluster filters."
+            >
+              ℹ️
+            </div>
           </div>
         </div>
-      </div>
       )}
 
       {/* Controls */}

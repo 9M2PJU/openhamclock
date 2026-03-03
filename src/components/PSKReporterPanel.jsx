@@ -133,9 +133,7 @@ const PSKReporterPanel = ({
   // WSPR decodes filtered by age
   const filteredWspr = useMemo(() => {
     const ageCutoff = Date.now() - wsjtxAge * 60 * 1000;
-    return wsjtxWspr
-      .filter((d) => d.timestamp >= ageCutoff)
-      .reverse();
+    return wsjtxWspr.filter((d) => d.timestamp >= ageCutoff).reverse();
   }, [wsjtxWspr, wsjtxAge]);
 
   // Build unified filter options: All, CQ Only, then each available band
@@ -416,22 +414,28 @@ const PSKReporterPanel = ({
             <button
               onClick={() => setActiveTabPersist('tx')}
               style={subTabBtn(activeTab === 'tx', '#4ade80')}
-              title={filterMode === 'grid'
-                ? `Stations hearing signals from ${identifier?.substring(0, 4)}`
-                : t('pskReporterPanel.tabs.heardTooltip')}
+              title={
+                filterMode === 'grid'
+                  ? `Stations hearing signals from ${identifier?.substring(0, 4)}`
+                  : t('pskReporterPanel.tabs.heardTooltip')
+              }
             >
-              ▲ {filterMode === 'grid'
+              ▲{' '}
+              {filterMode === 'grid'
                 ? `Sent (${pskFilterCount > 0 ? filteredTx.length : txCount})`
                 : t('pskReporterPanel.tabs.heard', { count: pskFilterCount > 0 ? filteredTx.length : txCount })}
             </button>
             <button
               onClick={() => setActiveTabPersist('rx')}
               style={subTabBtn(activeTab === 'rx', '#60a5fa')}
-              title={filterMode === 'grid'
-                ? `Stations heard at ${identifier?.substring(0, 4)}`
-                : t('pskReporterPanel.tabs.hearingTooltip')}
+              title={
+                filterMode === 'grid'
+                  ? `Stations heard at ${identifier?.substring(0, 4)}`
+                  : t('pskReporterPanel.tabs.hearingTooltip')
+              }
             >
-              ▼ {filterMode === 'grid'
+              ▼{' '}
+              {filterMode === 'grid'
                 ? `Rcvd (${pskFilterCount > 0 ? filteredRx.length : rxCount})`
                 : t('pskReporterPanel.tabs.hearing', { count: pskFilterCount > 0 ? filteredRx.length : rxCount })}
             </button>
@@ -741,9 +745,7 @@ const PSKReporterPanel = ({
               <>
                 {filteredWspr.length === 0 ? (
                   <div style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '16px', fontSize: '11px' }}>
-                    {wsjtxWspr.length > 0
-                      ? 'No WSPR decodes in selected time window'
-                      : 'Waiting for WSPR decodes...'}
+                    {wsjtxWspr.length > 0 ? 'No WSPR decodes in selected time window' : 'Waiting for WSPR decodes...'}
                   </div>
                 ) : (
                   filteredWspr.map((d, i) => (
@@ -771,9 +773,7 @@ const PSKReporterPanel = ({
                         cursor: d.lat ? 'pointer' : 'default',
                       }}
                     >
-                      <span style={{ color: 'var(--text-muted)', minWidth: '42px', fontSize: '10px' }}>
-                        {d.time}
-                      </span>
+                      <span style={{ color: 'var(--text-muted)', minWidth: '42px', fontSize: '10px' }}>{d.time}</span>
                       <span
                         style={{
                           color: getSnrColor(d.snr),
@@ -784,21 +784,18 @@ const PSKReporterPanel = ({
                       >
                         {d.snr != null ? `${d.snr > 0 ? '+' : ''}${d.snr}` : ''}
                       </span>
-                      <span style={{ color: 'var(--text-muted)', minWidth: '28px', fontSize: '10px' }}>
-                        {d.dt}
-                      </span>
+                      <span style={{ color: 'var(--text-muted)', minWidth: '28px', fontSize: '10px' }}>{d.dt}</span>
                       <span style={{ color: '#22d3ee', fontWeight: '600', minWidth: '65px' }}>
                         <CallsignLink call={d.callsign} color="#22d3ee" fontWeight="600" />
                       </span>
-                      {d.grid && (
-                        <span style={{ color: '#a78bfa', fontSize: '10px', minWidth: '35px' }}>{d.grid}</span>
-                      )}
+                      {d.grid && <span style={{ color: '#a78bfa', fontSize: '10px', minWidth: '35px' }}>{d.grid}</span>}
                       <span style={{ color: 'var(--text-muted)', fontSize: '10px' }}>
                         {d.power != null ? `${d.power}dBm` : ''}
                       </span>
                       {d.drift != null && d.drift !== 0 && (
                         <span style={{ color: 'var(--text-muted)', fontSize: '9px', opacity: 0.7 }}>
-                          {d.drift > 0 ? '+' : ''}{d.drift}Hz
+                          {d.drift > 0 ? '+' : ''}
+                          {d.drift}Hz
                         </span>
                       )}
                     </div>

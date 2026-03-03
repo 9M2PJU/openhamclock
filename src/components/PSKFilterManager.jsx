@@ -226,8 +226,8 @@ export const PSKFilterManager = ({ filters, onFilterChange, isOpen, onClose, cal
             PSKReporter Data Source
           </span>
           <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
-            Choose whether to subscribe by your callsign or your grid square. Grid mode shows all
-            activity in your area — useful for assessing band conditions before transmitting.
+            Choose whether to subscribe by your callsign or your grid square. Grid mode shows all activity in your area
+            — useful for assessing band conditions before transmitting.
           </div>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -285,8 +285,8 @@ export const PSKFilterManager = ({ filters, onFilterChange, isOpen, onClose, cal
           >
             <strong style={{ color: 'var(--accent-cyan)' }}>📡 Grid Mode Active</strong>
             <div style={{ marginTop: '4px' }}>
-              Receiving all PSKReporter spots for grid <strong>{grid4}</strong>. This will show more spots
-              than callsign mode since it includes all stations in your grid area.
+              Receiving all PSKReporter spots for grid <strong>{grid4}</strong>. This will show more spots than callsign
+              mode since it includes all stations in your grid area.
             </div>
           </div>
         )}
@@ -303,8 +303,12 @@ export const PSKFilterManager = ({ filters, onFilterChange, isOpen, onClose, cal
         >
           <strong style={{ color: 'var(--text-secondary)' }}>How it works:</strong>
           <div style={{ marginTop: '6px', lineHeight: '1.5' }}>
-            <div>• <strong>Callsign mode:</strong> Who hears <em>me</em>, and who <em>I</em> hear</div>
-            <div>• <strong>Grid mode:</strong> Who hears <em>my grid</em>, and who <em>my grid</em> hears</div>
+            <div>
+              • <strong>Callsign mode:</strong> Who hears <em>me</em>, and who <em>I</em> hear
+            </div>
+            <div>
+              • <strong>Grid mode:</strong> Who hears <em>my grid</em>, and who <em>my grid</em> hears
+            </div>
             <div style={{ marginTop: '4px', opacity: 0.8 }}>
               Grid mode matches PSKReporter&apos;s &ldquo;sent/received by my grid&rdquo; option.
             </div>

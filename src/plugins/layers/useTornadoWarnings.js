@@ -30,13 +30,53 @@ const TORNADO_EVENTS = [
 
 // Color and style config per alert type
 const ALERT_STYLES = {
-  'Tornado Emergency': { color: '#8B0000', fill: '#8B0000', weight: 3, fillOpacity: 0.35, icon: '‼️', size: 28, zOffset: 10200 },
-  'Tornado Warning':   { color: '#FF0000', fill: '#FF0000', weight: 3, fillOpacity: 0.25, icon: '🌪️', size: 24, zOffset: 10100 },
-  'Tornado Watch':     { color: '#FFAA00', fill: '#FFAA00', weight: 2, fillOpacity: 0.15, icon: '👁️', size: 20, zOffset: 10000 },
-  'Severe Thunderstorm Warning': { color: '#FF8C00', fill: '#FF8C00', weight: 2, fillOpacity: 0.20, icon: '⛈️', size: 20, zOffset: 9900 },
+  'Tornado Emergency': {
+    color: '#8B0000',
+    fill: '#8B0000',
+    weight: 3,
+    fillOpacity: 0.35,
+    icon: '‼️',
+    size: 28,
+    zOffset: 10200,
+  },
+  'Tornado Warning': {
+    color: '#FF0000',
+    fill: '#FF0000',
+    weight: 3,
+    fillOpacity: 0.25,
+    icon: '🌪️',
+    size: 24,
+    zOffset: 10100,
+  },
+  'Tornado Watch': {
+    color: '#FFAA00',
+    fill: '#FFAA00',
+    weight: 2,
+    fillOpacity: 0.15,
+    icon: '👁️',
+    size: 20,
+    zOffset: 10000,
+  },
+  'Severe Thunderstorm Warning': {
+    color: '#FF8C00',
+    fill: '#FF8C00',
+    weight: 2,
+    fillOpacity: 0.2,
+    icon: '⛈️',
+    size: 20,
+    zOffset: 9900,
+  },
 };
 
-const DEFAULT_STYLE = { color: '#FF6600', fill: '#FF6600', weight: 2, fillOpacity: 0.15, icon: '⚠️', size: 18, zOffset: 9800 };
+const DEFAULT_STYLE = {
+  color: '#FF6600',
+  fill: '#FF6600',
+  weight: 2,
+  fillOpacity: 0.15,
+  icon: '⚠️',
+  size: 18,
+  zOffset: 9800,
+};
 
 function getAlertStyle(eventName) {
   return ALERT_STYLES[eventName] || DEFAULT_STYLE;
@@ -45,7 +85,8 @@ function getAlertStyle(eventName) {
 // Calculate centroid of a polygon ring [[lon,lat], ...]
 function polygonCentroid(ring) {
   if (!ring || ring.length === 0) return null;
-  let latSum = 0, lonSum = 0;
+  let latSum = 0,
+    lonSum = 0;
   for (const [lon, lat] of ring) {
     latSum += lat;
     lonSum += lon;
@@ -70,16 +111,13 @@ export function useLayer({ enabled = false, opacity = 0.7, map = null, lowMemory
       try {
         // Fetch active tornado-related alerts
         // NWS API returns GeoJSON FeatureCollection
-        const eventParam = TORNADO_EVENTS.map(e => encodeURIComponent(e)).join(',');
-        const response = await fetch(
-          `https://api.weather.gov/alerts/active?event=${eventParam}&limit=${MAX_ALERTS}`,
-          {
-            headers: {
-              'User-Agent': 'OpenHamClock (https://github.com/accius/openhamclock)',
-              Accept: 'application/geo+json',
-            },
-          }
-        );
+        const eventParam = TORNADO_EVENTS.map((e) => encodeURIComponent(e)).join(',');
+        const response = await fetch(`https://api.weather.gov/alerts/active?event=${eventParam}&limit=${MAX_ALERTS}`, {
+          headers: {
+            'User-Agent': 'OpenHamClock (https://github.com/accius/openhamclock)',
+            Accept: 'application/geo+json',
+          },
+        });
         if (!response.ok) throw new Error(`NWS API: ${response.status}`);
         const data = await response.json();
         const alerts = (data.features || []).slice(0, MAX_ALERTS);
@@ -100,7 +138,9 @@ export function useLayer({ enabled = false, opacity = 0.7, map = null, lowMemory
 
     // Clear previous layers
     layerItems.forEach((item) => {
-      try { map.removeLayer(item); } catch (e) {}
+      try {
+        map.removeLayer(item);
+      } catch (e) {}
     });
     setLayerItems([]);
 
@@ -139,9 +179,7 @@ export function useLayer({ enabled = false, opacity = 0.7, map = null, lowMemory
 
         polygonCoords.forEach((polyRings) => {
           // Convert GeoJSON [lon, lat] to Leaflet [lat, lon]
-          const latLngRings = polyRings.map((ring) =>
-            ring.map(([lon, lat]) => [lat, lon])
-          );
+          const latLngRings = polyRings.map((ring) => ring.map(([lon, lat]) => [lat, lon]));
 
           const polygon = L.polygon(latLngRings, {
             color: style.color,
@@ -198,9 +236,14 @@ export function useLayer({ enabled = false, opacity = 0.7, map = null, lowMemory
       const expires = props.expires ? new Date(props.expires) : null;
       const now = Date.now();
       const expiresIn = expires ? Math.max(0, Math.floor((expires.getTime() - now) / 60000)) : null;
-      const expiresStr = expiresIn !== null
-        ? expiresIn <= 0 ? 'Expired' : expiresIn < 60 ? `${expiresIn} min` : `${Math.floor(expiresIn / 60)}h ${expiresIn % 60}m`
-        : 'Unknown';
+      const expiresStr =
+        expiresIn !== null
+          ? expiresIn <= 0
+            ? 'Expired'
+            : expiresIn < 60
+              ? `${expiresIn} min`
+              : `${Math.floor(expiresIn / 60)}h ${expiresIn % 60}m`
+          : 'Unknown';
 
       // Areas affected
       const areas = props.areaDesc || 'Unknown area';
@@ -244,7 +287,9 @@ export function useLayer({ enabled = false, opacity = 0.7, map = null, lowMemory
 
     return () => {
       newItems.forEach((item) => {
-        try { map.removeLayer(item); } catch (e) {}
+        try {
+          map.removeLayer(item);
+        } catch (e) {}
       });
     };
   }, [enabled, alertData, map, opacity]);

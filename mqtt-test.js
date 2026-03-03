@@ -2,7 +2,7 @@ const mqtt = require('mqtt');
 const c = mqtt.connect('wss://mqtt.pskreporter.info:1886/mqtt', {
   clientId: 'topic_test_' + Math.random().toString(16).substr(2, 6),
   clean: true,
-  protocolVersion: 4
+  protocolVersion: 4,
 });
 c.on('connect', () => {
   console.log('Connected - subscribing...');
@@ -19,4 +19,7 @@ c.on('message', (topic, msg) => {
   console.log('  [8] receiverGrid?:', parts[8]);
   console.log('---');
 });
-setTimeout(() => { console.log('Timeout - no spots in 2 min'); c.end(); }, 120000);
+setTimeout(() => {
+  console.log('Timeout - no spots in 2 min');
+  c.end();
+}, 120000);

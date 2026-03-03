@@ -79,11 +79,11 @@ TCI (Transceiver Control Interface) is a WebSocket-based protocol used by modern
 
 ### Supported SDR applications
 
-| Application  | Radios                | TCI Default Port |
-| ------------ | --------------------- | ---------------- |
-| **Thetis**   | Hermes Lite 2, ANAN   | 40001            |
-| **ExpertSDR**| SunSDR2, SunSDR2 Pro  | 40001            |
-| **SmartSDR** | Flex (via TCI bridge) | varies           |
+| Application   | Radios                | TCI Default Port |
+| ------------- | --------------------- | ---------------- |
+| **Thetis**    | Hermes Lite 2, ANAN   | 40001            |
+| **ExpertSDR** | SunSDR2, SunSDR2 Pro  | 40001            |
+| **SmartSDR**  | Flex (via TCI bridge) | varies           |
 
 ### 1. Enable TCI in your SDR application
 
@@ -172,13 +172,13 @@ To re-run the wizard: `rig-listener --wizard`
 
 ## Supported Radios
 
-| Type         | Models                                                            | Protocol           |
-| ------------ | ----------------------------------------------------------------- | ------------------ |
-| **Yaesu**    | FT-991A, FT-891, FT-710, FT-DX10, FT-DX101, FT-450D, FT-817/818 | CAT (serial)       |
-| **Kenwood**  | TS-590, TS-890, TS-480, TS-2000                                   | Kenwood (serial)   |
-| **Elecraft** | K3, K4, KX3, KX2                                                  | Kenwood (serial)   |
-| **Icom**     | IC-7300, IC-7610, IC-705, IC-9700, IC-7100                        | CI-V (serial)      |
-| **TCI/SDR**  | Hermes Lite 2, ANAN, SunSDR, ExpertSDR, Flex (via bridge)         | TCI (WebSocket)    |
+| Type         | Models                                                          | Protocol         |
+| ------------ | --------------------------------------------------------------- | ---------------- |
+| **Yaesu**    | FT-991A, FT-891, FT-710, FT-DX10, FT-DX101, FT-450D, FT-817/818 | CAT (serial)     |
+| **Kenwood**  | TS-590, TS-890, TS-480, TS-2000                                 | Kenwood (serial) |
+| **Elecraft** | K3, K4, KX3, KX2                                                | Kenwood (serial) |
+| **Icom**     | IC-7300, IC-7610, IC-705, IC-9700, IC-7100                      | CI-V (serial)    |
+| **TCI/SDR**  | Hermes Lite 2, ANAN, SunSDR, ExpertSDR, Flex (via bridge)       | TCI (WebSocket)  |
 
 ## Radio Configuration
 
