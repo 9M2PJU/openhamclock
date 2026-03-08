@@ -498,9 +498,13 @@ Live decoded FT8, FT4, JT65, JT9, and WSPR messages from WSJT-X, JTDX, or any co
 2. In WSJT-X: set the UDP Server address to your OpenHamClock machine's IP (e.g., `192.168.1.100`) and port `2237`.
 3. Make sure UDP port 2237 is not blocked by a firewall.
 
-**Network setup (WSJT-X using Multicast:)**
+**Network setup (WSJT-X using Multicast):**
+
+While the above configuration works just fine in a majority of cases, if you are running more than one multicast listener on a host (e.g. OpenHamClock and something like GridTracker2), then OpenHamClock needs to configure itself properly as a multicast listener.
 
 Uncomment the WSJTX_MULTICAST_ADDRESS line in `.env`, and make sure that the multicast address there matches what you have set in WSJT-X. e.g. `224.0.0.1`
+
+You will need to restart OpenHamCLock after this change.
 
 **Cloud setup (OpenHamClock on a remote server):**
 
