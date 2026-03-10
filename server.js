@@ -94,10 +94,15 @@ const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 const HOST = process.env.HOST || '0.0.0.0';
 
-// Trust first proxy (Railway, Docker, nginx, etc.) so rate limiting
-// uses X-Forwarded-For (real client IP) instead of the proxy's IP.
-// Without this, ALL users behind a reverse proxy share one rate limit bucket.
-app.set('trust proxy', 1);
+// Trust proxy setting — controls whether X-Forwarded-For headers are trusted.
+// Railway/Docker/nginx deployments need this for correct client IP detection.
+// Pi/local installs should NOT trust proxy headers since clients can forge them,
+// bypassing rate limiting by sending a different X-Forwarded-For with each request.
+// Default: trust proxy if running on Railway (PORT env is always set), otherwise don't.
+const TRUST_PROXY = process.env.TRUST_PROXY !== undefined
+  ? (process.env.TRUST_PROXY === 'true' || process.env.TRUST_PROXY === '1' ? 1 : false)
+  : (process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID) ? 1 : false;
+app.set('trust proxy', TRUST_PROXY);
 
 // Security: API key for write operations (set in .env to protect POST endpoints)
 // If not set, write endpoints are open (backward-compatible for local installs)
@@ -351,12 +356,6 @@ const CONFIG = {
   dxClusterPort: parseInt(process.env.DX_CLUSTER_PORT) || jsonConfig.dxCluster?.port || 7300,
   // Login callsign for DX cluster telnet. If unset, falls back to CALLSIGN-56.
   dxClusterCallsign: process.env.DX_CLUSTER_CALLSIGN || jsonConfig.dxCluster?.callsign || '',
-  dxClusterSpotterLat: Number.isFinite(parseFloat(process.env.DX_CLUSTER_SPOTTER_LAT))
-    ? parseFloat(process.env.DX_CLUSTER_SPOTTER_LAT)
-    : null,
-  dxClusterSpotterLon: Number.isFinite(parseFloat(process.env.DX_CLUSTER_SPOTTER_LON))
-    ? parseFloat(process.env.DX_CLUSTER_SPOTTER_LON)
-    : null,
 
   // API keys (don't expose to frontend)
   _openWeatherApiKey: process.env.OPENWEATHER_API_KEY || '',
@@ -414,11 +413,36 @@ app.use((req, res, next) => {
   next();
 });
 
-// CORS — restrict to same origin by default; allow override via env
-const CORS_ORIGINS = process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(',').map((s) => s.trim()) : true; // true = reflect request origin (same as before for local installs)
+// CORS — explicit origin allowlist to prevent malicious websites from accessing the API.
+// origin: true (the old default) reflects any requesting origin, which allows any website
+// the user visits to silently read their callsign, coordinates, QSO data, and (without
+// API_WRITE_KEY) write settings, move their rotator, or restart the server.
+const CORS_ORIGINS = process.env.CORS_ORIGINS
+  ? process.env.CORS_ORIGINS.split(',').map((s) => s.trim())
+  : null; // null = no extra origins, only defaults below
+
+const defaultOrigins = [
+  `http://localhost:${PORT}`,
+  `http://127.0.0.1:${PORT}`,
+  'http://localhost:3000',
+  'http://127.0.0.1:3000',
+  'http://localhost:5173',  // Vite dev server
+  'http://127.0.0.1:5173',
+  'https://openhamclock.com',
+  'https://www.openhamclock.com',
+  'https://openhamclock.app',
+  'https://www.openhamclock.app',
+];
+const allowedOrigins = new Set([...defaultOrigins, ...(CORS_ORIGINS || [])]);
+
 app.use(
   cors({
-    origin: CORS_ORIGINS,
+    origin: (requestOrigin, callback) => {
+      // Allow requests with no Origin header (curl, Postman, server-to-server, same-origin)
+      if (!requestOrigin) return callback(null, true);
+      if (allowedOrigins.has(requestOrigin)) return callback(null, true);
+      callback(new Error('CORS: origin not allowed'));
+    },
     methods: ['GET', 'POST'],
     maxAge: 86400,
   }),
@@ -1453,8 +1477,9 @@ app.use((req, res, next) => {
   rolloverVisitorStats();
 
   // Track concurrent sessions for ALL requests (not just countable routes)
-  const sessionIp =
-    req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip || req.connection?.remoteAddress || 'unknown';
+  // Use req.ip which respects the trust proxy setting, not manual x-forwarded-for parsing
+  // which is trivially spoofable on installs without a reverse proxy.
+  const sessionIp = req.ip || req.connection?.remoteAddress || 'unknown';
   if (req.path !== '/api/health' && !req.path.startsWith('/assets/')) {
     sessionTracker.touch(sessionIp, req.headers['user-agent']);
   }
@@ -1462,8 +1487,7 @@ app.use((req, res, next) => {
   // Only count meaningful "visits" — initial page load or config fetch
   const countableRoutes = ['/', '/index.html', '/api/config'];
   if (countableRoutes.includes(req.path)) {
-    const ip =
-      req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip || req.connection?.remoteAddress || 'unknown';
+    const ip = req.ip || req.connection?.remoteAddress || 'unknown';
 
     // Track today's visitors
     const isNewToday = !todayIPSet.has(ip);
@@ -3683,16 +3707,15 @@ async function validateCustomHost(host) {
   // Reject obvious localhost strings before DNS
   if (/^localhost$/i.test(host)) return { ok: false, reason: 'localhost not allowed' };
 
-  // Resolve hostname to IP addresses
+  // Resolve hostname to IPv4 addresses ONLY.
+  // We intentionally do not fall back to resolve6 because IPv6 has many equivalent
+  // representations for private addresses (e.g. ::ffff:7f00:1 = 127.0.0.1 in hex form)
+  // that bypass string-based checks. DX cluster telnet servers are IPv4.
   let addresses;
   try {
     addresses = await dns.promises.resolve4(host);
   } catch {
-    try {
-      addresses = await dns.promises.resolve6(host);
-    } catch {
-      return { ok: false, reason: 'Host could not be resolved' };
-    }
+    return { ok: false, reason: 'Host could not be resolved (IPv4 required for custom DX clusters)' };
   }
 
   // Check every resolved address — block if any resolve to private/reserved
@@ -4093,16 +4116,6 @@ app.get('/api/dxcluster/paths', async (req, res) => {
           if (spotterLoc && spotterLoc.grid) {
             spotterGridSquare = spotterLoc.grid;
           }
-        }
-
-        // Optional fixed spotter location override from environment
-        if (CONFIG.dxClusterSpotterLat !== null && CONFIG.dxClusterSpotterLon !== null) {
-          spotterLoc = {
-            lat: CONFIG.dxClusterSpotterLat,
-            lon: CONFIG.dxClusterSpotterLon,
-            country: spotterLoc?.country || '',
-            source: 'env-fixed',
-          };
         }
 
         // Keep spots even when coordinates are missing so the list view can still show them.
@@ -6680,7 +6693,9 @@ const MAX_SSE_PER_IP = parseInt(process.env.MAX_SSE_PER_IP || '10', 10);
 const sseConnectionsByIP = new Map();
 
 app.get('/api/pskreporter/stream/:identifier', (req, res) => {
-  const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip;
+  // Use req.ip which respects the trust proxy setting, consistent with express-rate-limit.
+  // Manual x-forwarded-for parsing is trivially spoofable on installs without a reverse proxy.
+  const ip = req.ip || req.connection?.remoteAddress || 'unknown';
   const current = sseConnectionsByIP.get(ip) || 0;
   if (current >= MAX_SSE_PER_IP) {
     return res.status(429).json({ error: 'Too many open SSE connections from this IP' });
@@ -10584,7 +10599,11 @@ app.get('/api/health', (req, res) => {
             lastSaved: visitorStats.lastSaved,
           }
         : { enabled: !!STATS_FILE },
-      sessions: sessionTracker.getStats(),
+      // SECURITY: Session details include partially anonymized IPs — only expose to authenticated requests.
+      // Unauthenticated requests get aggregate counts only.
+      sessions: isAuthed
+        ? sessionTracker.getStats()
+        : { concurrent: sessionTracker.activeSessions.size, peakConcurrent: sessionTracker.peakConcurrent },
       visitors: {
         today: {
           date: visitorStats.today,
