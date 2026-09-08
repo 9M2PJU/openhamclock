@@ -83,4 +83,8 @@ if [ "$OPEN_BROWSER" = true ]; then
 fi
 
 cd "$SNAP/usr/lib/openhamclock" || exit 1
-exec "$SNAP/usr/bin/node" server.js "$@"
+NODE_EXEC="$SNAP/bin/node"
+if [ ! -x "$NODE_EXEC" ]; then
+    NODE_EXEC="$SNAP/usr/bin/node"
+fi
+exec "$NODE_EXEC" server.js "$@"

@@ -46,11 +46,21 @@ apps:
 parts:
   node:
     plugin: nil
-    stage-packages:
-      - nodejs
-      - npm
+    build-packages:
       - curl
+      - tar
+      - xz-utils
       - ca-certificates
+    override-build: |
+      case "${CRAFT_TARGET_ARCH:-amd64}" in
+        amd64) NODE_ARCH="x64" ;;
+        arm64) NODE_ARCH="arm64" ;;
+        armhf) NODE_ARCH="armv7l" ;;
+        *) NODE_ARCH="x64" ;;
+      esac
+      NODE_VER="v22.14.0"
+      mkdir -p "$SNAPCRAFT_PART_INSTALL"
+      curl -fsSL "https://nodejs.org/dist/${NODE_VER}/node-${NODE_VER}-linux-${NODE_ARCH}.tar.xz" | tar -xJ --strip-components=1 -C "$SNAPCRAFT_PART_INSTALL"
 
   openhamclock:
     after: [node]
@@ -58,15 +68,11 @@ parts:
     source: .
     source-type: local
     override-build: |
-      export PATH="$SNAPCRAFT_STAGE/usr/bin:$PATH"
+      export PATH="$SNAPCRAFT_STAGE/bin:$PATH"
 
-      # Install all dependencies needed for the build
+      # Install all dependencies and build frontend
       npm ci --no-audit --no-fund || npm install --no-audit --no-fund
-
-      # Fetch WASM module and build Vite frontend into dist/
       npm run build
-
-      # Prune devDependencies to keep package size minimal
       npm prune --omit=dev --no-audit --no-fund
 
       # Install application tree to /usr/lib/openhamclock
