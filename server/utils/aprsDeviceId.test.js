@@ -30,7 +30,7 @@ describe('identifyTocall', () => {
 
   it('drops the upstream "Unknown" placeholders instead of showing them', () => {
     expect(identifyTocall('APRS')).toBeNull(); // vendor Unknown / model Unknown
-    expect(identifyTocall('API123')).toEqual({ vendor: 'Icom', class: 'dstar' }); // model "unknown" dropped
+    expect(identifyTocall('API123')).toEqual({ vendor: 'Icom', class: 'dstar', shown: 'D-Star' }); // model "unknown" dropped
     expect(identifyTocall('APZ001')).toMatchObject({ model: 'Experimental' });
     expect(identifyTocall('APZ001').vendor).toBeUndefined();
   });
