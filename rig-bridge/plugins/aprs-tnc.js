@@ -27,9 +27,6 @@
  */
 
 const net = require('net');
-const http = require('http');
-const https = require('https');
-const { URL } = require('url');
 const { parseAprsPacket } = require('../lib/aprs-parser');
 const {
   decodeKissFrame,
@@ -141,36 +138,6 @@ const descriptor = {
           fn(packet);
         } catch (e) {}
       }
-    }
-
-    // Forward a batch of packets to the local OHC server's /api/aprs/local.
-    // Fire-and-forget — errors are silently ignored so a down OHC server
-    // never stalls the TNC receive loop.
-    function forwardToLocal(packets) {
-      if (cfg.localForward === false) return;
-      const ohcUrl = (cfg.ohcUrl || 'http://localhost:8080').replace(/\/$/, '');
-      let parsed;
-      try {
-        parsed = new URL(`${ohcUrl}/api/aprs/local`);
-      } catch (e) {
-        return;
-      }
-      const body = JSON.stringify({ packets });
-      const mod = parsed.protocol === 'https:' ? https : http;
-      const req = mod.request(
-        {
-          hostname: parsed.hostname,
-          port: parsed.port || (parsed.protocol === 'https:' ? 443 : 80),
-          path: parsed.pathname,
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
-        },
-        () => {},
-      );
-      req.on('error', () => {}); // swallow errors
-      req.setTimeout(3000, () => req.destroy());
-      req.write(body);
-      req.end();
     }
 
     // Format latitude for APRS: DDMM.MMN
