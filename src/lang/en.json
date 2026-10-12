@@ -105,6 +105,7 @@
   "app.uptime": "Up {{uptime}} • {{version}}",
   "aprsPanel.clear": "Clear",
   "aprsPanel.clearTitle": "Remove every APRS station from the map and list. Stations reappear only when a new beacon is heard.",
+  "aprsPanel.deviceTitle": "Device",
   "aprsPanel.disabled.filterAfter": "to limit APRS-IS to 500 km radius around your station.",
   "aprsPanel.disabled.filterBefore": "Optional: Set",
   "aprsPanel.disabled.internetAfter": "to your .env file and restart the server.",

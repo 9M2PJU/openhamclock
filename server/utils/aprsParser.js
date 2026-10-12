@@ -225,7 +225,7 @@ function parseResourceTokens(comment) {
  * @param {string} line  "SRC>DEST,PATH:payload"
  * @returns {{ call, ssid, lat, lon, symbol, comment, tokens, cleanComment,
  *             speed, course, altitude, raw, packetType, positionAmbiguity,
- *             objectName?, itemName?, thirdPartyVia? } | null}
+ *             destination, objectName?, itemName?, thirdPartyVia? } | null}
  */
 function parseAprsPacket(line) {
   try {
@@ -327,6 +327,7 @@ function parseAprsPacket(line) {
       call: callsign,
       ssid,
       ...(name ? { sender: src } : {}),
+      destination,
       lat,
       lon,
       symbol: `${symbolTable}${symbolCode}`,

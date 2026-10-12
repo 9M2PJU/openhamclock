@@ -17,6 +17,7 @@ import {
   APRS_SORT_KEYS,
 } from '../utils/aprsSort.js';
 import { APRS_SELECT_EVENT, APRS_SELECT_HIGHLIGHT_MS } from '../utils/aprsSelect.js';
+import { formatAprsDevice } from '../utils/aprsDevice.js';
 
 const APRSPanel = ({
   aprsData,
@@ -736,7 +737,7 @@ const APRSPanel = ({
                       </span>
                     )}
                   </div>
-                  {station.comment && (
+                  {(station.device || station.comment) && (
                     <div
                       style={{
                         color: 'var(--text-muted)',
@@ -747,6 +748,12 @@ const APRSPanel = ({
                         maxWidth: '180px',
                       }}
                     >
+                      {station.device && (
+                        <span style={{ color: 'var(--text-secondary)' }} title={t('aprsPanel.deviceTitle')}>
+                          {formatAprsDevice(station.device)}
+                          {station.comment ? ' · ' : ''}
+                        </span>
+                      )}
                       {station.comment}
                     </div>
                   )}
@@ -837,6 +844,11 @@ const APRSPanel = ({
                   </span>
                 )}
                 {s.altitude != null && <span>Altitude: {s.altitude} ft</span>}
+                {s.device && (
+                  <span>
+                    {t('aprsPanel.deviceTitle')}: {formatAprsDevice(s.device)}
+                  </span>
+                )}
                 {s.symbol && <span>Symbol: {s.symbol}</span>}
               </div>
             </div>

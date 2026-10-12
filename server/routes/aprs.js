@@ -6,6 +6,7 @@
 const net = require('net');
 
 const { parseAprsPacket: parseAprsPosition, parseResourceTokens } = require('../utils/aprsParser');
+const { identifyDevice } = require('../utils/aprsDeviceId');
 
 module.exports = function (app, ctx) {
   const { CONFIG, APP_VERSION, logDebug, logInfo, logWarn, logErrorOnce } = ctx;
@@ -200,7 +201,16 @@ module.exports = function (app, ctx) {
    */
   function parseAprsPacket(line) {
     const station = parseAprsPosition(line);
-    return station ? { ...station, timestamp: Date.now() } : null;
+    if (!station) return null;
+    // Radio/software identification (#1202): tocall for ordinary packets,
+    // Mic-E type bytes for Mic-E — which are also stripped from the comment
+    // so the panel no longer shows them as stray punctuation.
+    const { device, comment } = identifyDevice(station);
+    if (comment !== station.comment) {
+      const { tokens, cleanComment } = parseResourceTokens(comment);
+      Object.assign(station, { comment, tokens, cleanComment });
+    }
+    return { ...station, device, timestamp: Date.now() };
   }
 
   function connectAprsIS() {
@@ -353,6 +363,7 @@ module.exports = function (app, ctx) {
           speed: station.speed,
           course: station.course,
           altitude: station.altitude,
+          device: station.device ?? null,
           age: Math.floor((Date.now() - station.timestamp) / 60000),
           timestamp: station.timestamp,
           source: station.source ?? null,

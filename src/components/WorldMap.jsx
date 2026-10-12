@@ -26,6 +26,7 @@ import {
 import { createTerminator } from '../utils/terminator.js';
 import { getAprsSymbolIcon } from '../utils/aprs-symbols.js';
 import { requestAprsSelect } from '../utils/aprsSelect.js';
+import { formatAprsDevice } from '../utils/aprsDevice.js';
 import { getAllLayers } from '../plugins/layerRegistry.js';
 import { GLOBE_OVERLAY_LAYER_IDS } from '../utils/globeOverlays.js';
 import { countryColor, fetchCountriesGeojson } from '../utils/countriesBasemap.js';
@@ -2403,6 +2404,7 @@ export const WorldMap = ({
                 ${isWatched ? ' <span style="color:#f59e0b">★</span>' : ''}
                 ${isRF ? ' <span style="color:#4ade80;font-size:10px">RF</span>' : ''}<br>
                 <span style="color:#888;font-size:11px">${ageStr}</span><br>
+                ${station.device ? `<span style="color:#aaa;font-size:11px">${esc(formatAprsDevice(station.device))}</span><br>` : ''}
                 ${station.speed > 0 ? `Speed: ${station.speed} kt<br>` : ''}
                 ${station.altitude ? `Alt: ${station.altitude} ft<br>` : ''}
                 ${station.comment ? `<span style="font-size:11px;color:#aaa">${esc(station.comment.substring(0, 80))}</span>` : ''}
