@@ -990,6 +990,7 @@ export default function EmcommLayout(props) {
             showAPRS={true}
             aprsStations={mapAprsStations}
             aprsWatchlistCalls={aprsData?.allWatchlistCalls}
+            showAPRSLabels={mapLayers?.showAPRSLabels ?? false}
             hoveredSpot={hoveredSpot}
             hideOverlays={true}
             callsign={config.callsign}

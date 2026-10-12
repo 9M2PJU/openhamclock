@@ -298,6 +298,7 @@ const App = () => {
     toggleDXNews,
     toggleRotatorBearing,
     toggleAPRS,
+    toggleAPRSLabels,
     toggleMeshCom,
   } = useMapLayers();
 
@@ -786,6 +787,7 @@ const App = () => {
     toggleDXNews,
     toggleRotatorBearing,
     toggleAPRS,
+    toggleAPRSLabels,
     toggleMeshCom,
     hoveredSpot,
     setHoveredSpot,

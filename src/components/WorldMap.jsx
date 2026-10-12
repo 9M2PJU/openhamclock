@@ -25,6 +25,7 @@ import {
 } from '../utils/bandColors.js';
 import { createTerminator } from '../utils/terminator.js';
 import { getAprsSymbolIcon } from '../utils/aprs-symbols.js';
+import { requestAprsSelect } from '../utils/aprsSelect.js';
 import { getAllLayers } from '../plugins/layerRegistry.js';
 import { GLOBE_OVERLAY_LAYER_IDS } from '../utils/globeOverlays.js';
 import { countryColor, fetchCountriesGeojson } from '../utils/countriesBasemap.js';
@@ -147,6 +148,7 @@ export const WorldMap = ({
   showAPRS,
   aprsStations,
   aprsWatchlistCalls,
+  showAPRSLabels = false,
   showMeshCom,
   meshcomNodes,
   onSpotClick,
@@ -2395,30 +2397,48 @@ export const WorldMap = ({
                     ? `${ageMin}m ago`
                     : `${Math.floor(ageMin / 60)}h ago`;
 
-            marker
-              .bindPopup(
-                `
-                <b data-map-call="${esc(station.ssid || station.call)}" data-loc-lat="${station.lat}" data-loc-lon="${station.lon}">${esc(station.ssid || station.call)}</b>
+            const label = station.ssid || station.call;
+            const popupHtml = `
+                <b data-map-call="${esc(label)}" data-loc-lat="${station.lat}" data-loc-lon="${station.lon}">${esc(label)}</b>
                 ${isWatched ? ' <span style="color:#f59e0b">★</span>' : ''}
                 ${isRF ? ' <span style="color:#4ade80;font-size:10px">RF</span>' : ''}<br>
                 <span style="color:#888;font-size:11px">${ageStr}</span><br>
                 ${station.speed > 0 ? `Speed: ${station.speed} kt<br>` : ''}
                 ${station.altitude ? `Alt: ${station.altitude} ft<br>` : ''}
                 ${station.comment ? `<span style="font-size:11px;color:#aaa">${esc(station.comment.substring(0, 80))}</span>` : ''}
-              `,
-              )
-              .addTo(map);
+              `;
+            // APRS clicks open the popup and bring the station's row into view
+            // in the APRS panel (#1210) — intentionally do not set DX location.
+            const selectInList = () => requestAprsSelect({ ssid: station.ssid, call: station.call });
 
-            // APRS clicks open the popup only — intentionally do not set DX location
-
+            marker.bindPopup(popupHtml).addTo(map);
+            marker.on('click', selectInList);
             aprsMarkersRef.current.push(marker);
+
+            // Optional callsign tag beside the symbol, same treatment as the
+            // POTA/SOTA labels (#1209); tinted with the station's colour.
+            if (showAPRSLabels) {
+              const tag = L.marker([rLat, rLon], {
+                icon: L.divIcon({
+                  className: '',
+                  html: `<span style="display:inline-block;background:${color};color:#000;padding:1px 4px;border-radius:3px;font-size:10px;font-family:var(--font-mono);font-weight:700;white-space:nowrap;border:1px solid rgba(0,0,0,0.5);box-shadow:0 1px 2px rgba(0,0,0,0.3);line-height:1.1;">${esc(label)}</span>`,
+                  iconSize: [0, 0],
+                  iconAnchor: [-(iconSize / 2 + 2), iconSize / 2],
+                }),
+                zIndexOffset: isWatched ? 4999 : 999,
+              })
+                .bindPopup(popupHtml)
+                .addTo(map);
+              tag.on('click', selectInList);
+              aprsMarkersRef.current.push(tag);
+            }
           });
         } catch (err) {
           // skip bad station
         }
       });
     }
-  }, [aprsStations, showAPRS, aprsWatchlistCalls]);
+  }, [aprsStations, showAPRS, aprsWatchlistCalls, showAPRSLabels]);
 
   // Update MeshCom node markers
   useEffect(() => {
