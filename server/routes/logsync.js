@@ -11,7 +11,7 @@
  * Upstream contracts implemented:
  *   Wavelog/Cloudlog  POST <base>/index.php/api/qso
  *                       {key, station_profile_id, type:'adif', string:'<record><eor>'}
- *                     POST <base>/index.php/api/station_info  {key}  → [{station_id,…}]  (Test)
+ *                     GET  <base>/index.php/api/station_info/<key>  → [{station_id,…}]  (Test)
  *   QRZ Logbook       POST https://logbook.qrz.com/api  (form-encoded)
  *                       KEY=…&ACTION=INSERT&ADIF=<record><eor>   → RESULT=OK&LOGID=…&COUNT=…
  *                       KEY=…&ACTION=STATUS                      → RESULT=OK&COUNT=…&…    (Test)
@@ -33,6 +33,7 @@ const QRZ_API_URL = 'https://logbook.qrz.com/api';
 const LOTW_REPORT_URL = 'https://lotw.arrl.org/lotwuser/lotwreport.adi';
 
 const PUSH_TIMEOUT_MS = 20000;
+const WAVELOG_PULL_TIMEOUT_MS = 60000;
 const LOTW_TIMEOUT_MS = 90000; // LoTW is notoriously slow — give it room
 
 module.exports = function (app, ctx) {
@@ -190,22 +191,26 @@ module.exports = function (app, ctx) {
     if (!target.ok) return res.status(400).json({ error: target.reason });
 
     try {
-      const upstream = await fetchWithTimeout(`${target.base}/api/get_contacts_adif`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-          'User-Agent': userAgent,
-          Host: target.host,
+      const upstream = await fetchWithTimeout(
+        `${target.base}/api/get_contacts_adif`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+            'User-Agent': userAgent,
+            Host: target.host,
+          },
+          body: JSON.stringify({
+            key: key.trim(),
+            station_id: ids,
+            fetchfromid: cursor,
+            limit: requestedLimit,
+            output_format: 'adif',
+          }),
         },
-        body: JSON.stringify({
-          key: key.trim(),
-          station_id: ids,
-          fetchfromid: cursor,
-          limit: requestedLimit,
-          output_format: 'adif',
-        }),
-      });
+        WAVELOG_PULL_TIMEOUT_MS,
+      );
 
       const text = await upstream.text();
       let data = null;

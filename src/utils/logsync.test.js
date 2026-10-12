@@ -412,6 +412,150 @@ describe('Wavelog pull sync', () => {
     expect(addMany).toHaveBeenCalledWith(expect.any(Array), { strict: true });
     expect(getLogsyncState().wavelogLastFetchedId).toBe(10);
   });
+
+  it('continues across full pages and accumulates results', async () => {
+    setLogsyncServiceConfig('wavelog', {
+      enabled: true,
+      url: 'http://wavelog.test/index.php',
+      apiKey: 'secret',
+      pullEnabled: true,
+      pullStationIds: [1],
+    });
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          ok: true,
+          lastFetchedId: 2000,
+          exportedQsos: 2000,
+          adif: 'page-one',
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          ok: true,
+          lastFetchedId: 2001,
+          exportedQsos: 1,
+          adif: 'page-two',
+        }),
+      });
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const parseAdif = vi
+      .fn()
+      .mockReturnValueOnce({ qsos: [qso({ id: undefined, call: 'W1AW' })] })
+      .mockReturnValueOnce({ qsos: [qso({ id: undefined, call: 'K1ABC' })] });
+
+    const result = await syncWavelogQsos({ parseAdif });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({
+      fetchFromId: 0,
+      limit: 2000,
+    });
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toMatchObject({
+      fetchFromId: 2000,
+      limit: 2000,
+    });
+    expect(result).toMatchObject({
+      fetched: 2001,
+      imported: 2,
+      skipped: 0,
+      lastFetchedId: 2001,
+    });
+    expect(getLogsyncState().wavelogLastFetchedId).toBe(2001);
+    expect(logbookStore.getAll()).toHaveLength(2);
+  });
+
+  it('retains the last successful page cursor when a later import fails', async () => {
+    setLogsyncServiceConfig('wavelog', {
+      enabled: true,
+      url: 'http://wavelog.test/index.php',
+      apiKey: 'secret',
+      pullEnabled: true,
+      pullStationIds: [1],
+    });
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          ok: true,
+          lastFetchedId: 2000,
+          exportedQsos: 2000,
+          adif: 'page-one',
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          ok: true,
+          lastFetchedId: 2001,
+          exportedQsos: 1,
+          adif: 'page-two',
+        }),
+      });
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const addMany = vi
+      .spyOn(logbookStore, 'addMany')
+      .mockResolvedValueOnce({ imported: 1, skipped: 0 })
+      .mockRejectedValueOnce(new Error('disk write failed'));
+
+    await expect(
+      syncWavelogQsos({
+        parseAdif: () => ({ qsos: [qso({ id: undefined })] }),
+      }),
+    ).rejects.toThrow('disk write failed');
+
+    expect(addMany).toHaveBeenCalledTimes(2);
+    expect(getLogsyncState().wavelogLastFetchedId).toBe(2000);
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body).fetchFromId).toBe(2000);
+  });
+
+  it('rejects a full page with a stalled cursor', async () => {
+    setLogsyncServiceConfig('wavelog', {
+      enabled: true,
+      url: 'http://wavelog.test/index.php',
+      apiKey: 'secret',
+      pullEnabled: true,
+      pullStationIds: [1],
+    });
+
+    localStorage.setItem(
+      LOGSYNC_STATE_KEY,
+      JSON.stringify({
+        wavelogLastFetchedId: 100,
+      }),
+    );
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        ok: true,
+        lastFetchedId: 100,
+        exportedQsos: 2000,
+        adif: 'page-one',
+      }),
+    });
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      syncWavelogQsos({
+        parseAdif: () => ({ qsos: [] }),
+      }),
+    ).rejects.toThrow('Wavelog QSO cursor did not advance');
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(getLogsyncState().wavelogLastFetchedId).toBe(100);
+  });
 });
 
 // ── LoTW cooldown + sync ───────────────────────────────────────────────────
