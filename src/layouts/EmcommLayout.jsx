@@ -854,20 +854,16 @@ export default function EmcommLayout(props) {
   const clearEventLog = useCallback(() => {
     if (!window.confirm('Clear the entire EmComm event log? This cannot be undone.')) return;
     clearEvents();
-    // Clearing wiped the stored events but the diff snapshots above still
-    // remembered everything already on the board, so nothing re-logged until
-    // a brand-new station/alert appeared — the log looked dead until a page
-    // refresh (#1181). Reset the baselines to *empty* (not null) so the next
-    // effect pass treats the current picture as freshly heard, exactly like a
-    // reload does, without throwing away the map's RF history.
-    evtPrevRef.current = {
-      roster: new Set(),
-      alerts: new Set(),
-      shelters: new Set(),
-      stations: new Set(),
-      fieldReports: new Set(),
-    };
-    msgSinceRef.current = sessionStartRef.current;
+    // Two earlier behaviours were both wrong. Leaving the diff snapshots
+    // alone meant nothing could log again until a brand-new station appeared
+    // (#1181, "the log looks dead"). Resetting them to *empty* sets (the first
+    // fix) re-logged the whole current board the instant Clear was pressed,
+    // so the log looked like it never cleared (#1211). Null snapshots take the
+    // middle road: the next effect pass re-baselines on what is on the board
+    // now without reporting any of it, and only activity after this moment
+    // is recorded — which is what "clear it between operations" means.
+    evtPrevRef.current = { roster: null, alerts: null, shelters: null, stations: null, fieldReports: null };
+    msgSinceRef.current = Date.now();
     setLogEpoch((n) => n + 1);
   }, []);
 

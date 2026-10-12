@@ -1174,18 +1174,19 @@ export const WorldMap = ({
   // "Bring this station into view" requests from panel rows (#1182). Pans only
   // when the target is off-screen (or the request is forced), then drops a
   // self-removing pulse ring so the eye finds the target in a busy view.
-  // The Leaflet map is hidden under the azimuthal / 3D projections, so those
-  // requests are ignored until the projection has its own focus handling.
+  // Under the azimuthal projection the pulse goes on its transparent Leaflet
+  // overlay (whose bounds are not meaningful, so it never pans); the 3D globe
+  // answers the same event itself (#1210).
   const focusPulseRef = useRef(null);
   useEffect(() => {
-    if (isLeafletHidden) return;
+    if (isGlobe3D) return;
     const handleFocus = (e) => {
-      const map = mapInstanceRef.current;
+      const map = isAzimuthal ? azimuthalMapRef.current : mapInstanceRef.current;
       const d = e.detail;
       if (!map || !d || !Number.isFinite(d.lat) || !Number.isFinite(d.lon)) return;
-      const lon = nearestWrappedLon(map.getCenter().lng, d.lon);
+      const lon = isAzimuthal ? d.lon : nearestWrappedLon(map.getCenter().lng, d.lon);
       const target = [d.lat, lon];
-      if (d.force || !isInView(map.getBounds(), d.lat, d.lon)) {
+      if (!isAzimuthal && (d.force || !isInView(map.getBounds(), d.lat, d.lon))) {
         if (Number.isFinite(d.zoom)) map.setView(target, d.zoom, { animate: true });
         else map.panTo(target, { animate: true });
       }
@@ -1232,7 +1233,7 @@ export const WorldMap = ({
         focusPulseRef.current = null;
       }
     };
-  }, [leafletReady, isLeafletHidden]);
+  }, [leafletReady, isAzimuthal, isGlobe3D, azimuthalMapReady]);
 
   // Update the value for how many scroll pixels count as a zoom level
   useEffect(() => {

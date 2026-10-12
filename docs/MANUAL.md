@@ -154,7 +154,7 @@ _Settings → Map Layers: every overlay grouped by category, each with an opacit
 
 - **Your station (DE)** is marked at your configured location. The DE panel shows grid, coordinates, sunrise/sunset, and local weather.
 - **Click anywhere on the map** to set the DX target there. The DX panel updates with bearing, distance, grid, sun times, and (optionally) weather; the propagation panels recalculate for the new path.
-- **Click any spot** (cluster, POTA, PSK, WSJT-X…) to set that station as the DX target. The map drops a short expanding-ring **pulse** on the target so your eye finds it in a busy view, and pans to it if it is off-screen (if it is already in view the map stays put). APRS panel rows and, in the EmComm layout, station, gateway, and roster rows work the same way. Flat map only for now — the Azimuthal and 3D views ignore the pan.
+- **Click any spot** (cluster, POTA, PSK, WSJT-X…) to set that station as the DX target. The map drops a short expanding-ring **pulse** on the target so your eye finds it in a busy view, and pans to it if it is off-screen (if it is already in view the map stays put). APRS panel rows and, in the EmComm layout, station, gateway, and roster rows work the same way. On the Azimuthal view the ring is drawn without panning; on the 3D globe the camera swings to the station and the ring pulses on the surface.
 - **Type a locator:** click the DX grid display and enter a grid like `JN58sm`.
 - **DX Favorites:** star up to 10 DX grids for one-click recall — great for regular skeds.
 - **DXCC entity picker:** browse/search the full DXCC list next to the DX grid display.

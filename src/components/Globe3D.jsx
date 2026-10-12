@@ -21,6 +21,7 @@ import { getBandColor, getBandFromFreq } from '../utils/callsign.js';
 import { getSunPosition, getMoonPosition, getMoonAzEl, densifyGeoJson } from '../utils/geo.js';
 import { lzwDecode } from '../plugins/layers/useLightning.js';
 import { MAP_STYLES } from '../utils/config.js';
+import { MAP_FOCUS_EVENT, MAP_FOCUS_PULSE_MS } from '../utils/mapFocus.js';
 import { buildGlobeTexture, buildGlobeDetailPatch, chooseGlobeTileZoom } from '../utils/globeTexture.js';
 import {
   classifySatellite,
@@ -464,6 +465,79 @@ export default function Globe3D({
       }
     }, AUTOROTATE_IDLE_MS);
   }, []);
+  // "Bring this station into view" requests from panel rows (#1182/#1210):
+  // swing the camera to the target over ~0.7 s, keeping its distance, and
+  // drop a pulse ring on the surface for as long as the flat map's ring lives.
+  const focusRef = useRef(null);
+  useEffect(() => {
+    const clearFocus = () => {
+      const f = focusRef.current;
+      if (!f) return;
+      cancelAnimationFrame(f.raf);
+      const s = gl.current;
+      if (s?.scene) s.scene.remove(f.ring);
+      f.geo.dispose();
+      f.mat.dispose();
+      focusRef.current = null;
+      s?.requestRender?.();
+    };
+    const onFocus = (e) => {
+      const s = gl.current;
+      const d = e?.detail;
+      if (!s?.camera || !s.controls || !s.scene || !d) return;
+      if (!Number.isFinite(d.lat) || !Number.isFinite(d.lon)) return;
+      clearFocus();
+      kickIdleTimer(); // a focus counts as presence: stop auto-rotate for a while
+
+      const dist = s.camera.position.length();
+      const fromDir = s.camera.position.clone().normalize();
+      const toDir = latLonToVec3(d.lat, d.lon, 1).normalize();
+      const swing = new THREE.Quaternion().setFromUnitVectors(fromDir, toDir);
+      const identity = new THREE.Quaternion();
+
+      const geo = new THREE.RingGeometry(0.018, 0.026, 48);
+      const mat = new THREE.MeshBasicMaterial({
+        color: 0x22d3ee,
+        transparent: true,
+        opacity: 0.95,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      });
+      const ring = new THREE.Mesh(geo, mat);
+      ring.position.copy(latLonToVec3(d.lat, d.lon, EARTH_R * 1.004));
+      ring.lookAt(0, 0, 0);
+      ring.renderOrder = 50;
+      s.scene.add(ring);
+
+      const SWING_MS = 700;
+      const RING_PERIOD_MS = 1300; // matches the CSS ring animation on the flat map
+      const start = performance.now();
+      const step = (now) => {
+        const s2 = gl.current;
+        if (!s2?.camera) return clearFocus();
+        const elapsed = now - start;
+        if (elapsed <= SWING_MS) {
+          const t = Math.min(1, elapsed / SWING_MS);
+          const k = t * t * (3 - 2 * t);
+          const dir = fromDir.clone().applyQuaternion(identity.clone().slerp(swing, k));
+          s2.camera.position.copy(dir.multiplyScalar(dist));
+          s2.controls.update();
+        }
+        const phase = (elapsed % RING_PERIOD_MS) / RING_PERIOD_MS;
+        ring.scale.setScalar(1 + phase * 3);
+        mat.opacity = 0.95 * (1 - phase);
+        s2.requestRender?.();
+        if (elapsed >= MAP_FOCUS_PULSE_MS) return clearFocus();
+        focusRef.current.raf = requestAnimationFrame(step);
+      };
+      focusRef.current = { raf: requestAnimationFrame(step), ring, geo, mat };
+    };
+    window.addEventListener(MAP_FOCUS_EVENT, onFocus);
+    return () => {
+      window.removeEventListener(MAP_FOCUS_EVENT, onFocus);
+      clearFocus();
+    };
+  }, [kickIdleTimer]);
   const [textureLoading, setTextureLoading] = useState(true);
   // One-way per-session detail upgrade: once the camera has been close enough
   // that tile resolution visibly limits the basemap (labels pixelate), the

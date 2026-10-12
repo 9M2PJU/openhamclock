@@ -213,6 +213,32 @@ module.exports = function (app, ctx) {
     return { ...station, device, timestamp: Date.now() };
   }
 
+  // Net check-in / check-out from a parsed message. Shared by the APRS-IS
+  // feed and the local-TNC path: until #1212 only the internet path applied
+  // the command, so a `CQ NETNAME` heard over RF never reached the roster.
+  function applyNetCommand(msg) {
+    if (!msg?.netCommand) return;
+    const { action, netName, status } = msg.netCommand;
+    if (action === 'checkin') {
+      const station = aprsStations.get(msg.from) || aprsStations.get(msg.from.split('-')[0]) || {};
+      netRoster.set(msg.from, {
+        call: msg.from,
+        netName,
+        status: status || 'Checked in',
+        checkinTime: Date.now(),
+        lastHeard: Date.now(),
+        lat: station.lat ?? null,
+        lon: station.lon ?? null,
+        tokens: station.tokens || [],
+        source: msg.source || station.source || null,
+      });
+      logInfo(`[APRS Net] ${msg.from} checked into ${netName}: ${status || '(no status)'}`);
+    } else if (action === 'checkout') {
+      netRoster.delete(msg.from);
+      logInfo(`[APRS Net] ${msg.from} checked out of ${netName}`);
+    }
+  }
+
   function connectAprsIS() {
     if (!APRS_ENABLED || aprsSocket) return;
 
@@ -284,28 +310,7 @@ module.exports = function (app, ctx) {
             if (msg.isShelterReport) {
               logDebug(`[APRS] Shelter report from ${msg.from}: ${msg.text}`);
             }
-            // Handle net check-in/check-out
-            if (msg.netCommand) {
-              const { action, netName, status } = msg.netCommand;
-              if (action === 'checkin') {
-                const station = aprsStations.get(msg.from.split('-')[0]) || {};
-                netRoster.set(msg.from, {
-                  call: msg.from,
-                  netName,
-                  status: status || 'Checked in',
-                  checkinTime: Date.now(),
-                  lastHeard: Date.now(),
-                  lat: station.lat ?? null,
-                  lon: station.lon ?? null,
-                  tokens: station.tokens || [],
-                  source: station.source || null,
-                });
-                logInfo(`[APRS Net] ${msg.from} checked into ${netName}: ${status || '(no status)'}`);
-              } else if (action === 'checkout') {
-                netRoster.delete(msg.from);
-                logInfo(`[APRS Net] ${msg.from} checked out of ${netName}`);
-              }
-            }
+            applyNetCommand(msg);
           }
         }
       }
@@ -628,6 +633,7 @@ module.exports = function (app, ctx) {
           msg.source = 'local-tnc';
           aprsMessages.push(msg);
           if (aprsMessages.length > APRS_MAX_MESSAGES) aprsMessages.shift();
+          applyNetCommand(msg);
         }
         continue;
       }
