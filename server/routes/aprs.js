@@ -7,6 +7,7 @@ const net = require('net');
 
 const { parseAprsPacket: parseAprsPosition, parseResourceTokens } = require('../utils/aprsParser');
 const { identifyDevice } = require('../utils/aprsDeviceId');
+const { parseAprsMessage } = require('../utils/aprsMessage');
 
 module.exports = function (app, ctx) {
   const { CONFIG, APP_VERSION, logDebug, logInfo, logWarn, logErrorOnce } = ctx;
@@ -129,70 +130,6 @@ module.exports = function (app, ctx) {
   // Parse APRS message packets (addressed messages + bulletins)
   // Format: :ADDRESSEE:message text{msgid
   // Bulletins: :BLN1     :bulletin text
-  function parseAprsMessage(line) {
-    try {
-      const headerEnd = line.indexOf(':');
-      if (headerEnd < 0) return null;
-
-      const header = line.substring(0, headerEnd);
-      const payload = line.substring(headerEnd + 1);
-      const from = header.split('>')[0].trim();
-
-      // APRS message format: :ADDRESSEE:message{id
-      if (payload.charAt(0) !== ':') return null;
-      const addrEnd = payload.indexOf(':', 1);
-      if (addrEnd < 0) return null;
-
-      const to = payload.substring(1, addrEnd).trim();
-      const body = payload.substring(addrEnd + 1);
-
-      // Extract message ID if present
-      const idMatch = body.match(/\{(\w+)$/);
-      const msgId = idMatch ? idMatch[1] : null;
-      const text = idMatch ? body.substring(0, body.lastIndexOf('{')).trim() : body.trim();
-
-      // Skip acks/rejs
-      if (text.startsWith('ack') || text.startsWith('rej')) return null;
-
-      const isBulletin = to.startsWith('BLN');
-      const { tokens, cleanComment } = parseResourceTokens(text);
-
-      // Detect shelter-related content
-      const isShelterReport =
-        /shelter|evacuate|refuge|beds|capacity|open|closed|accepting/i.test(text) ||
-        tokens.some((t) => ['Beds', 'Capacity', 'Shelter', 'Evacuees'].includes(t.key));
-
-      // Detect net check-in/check-out commands (messages to EMCOMM)
-      let netCommand = null;
-      if (to.toUpperCase() === 'EMCOMM' || to.toUpperCase().startsWith('EMCOMM')) {
-        const upper = text.toUpperCase().trim();
-        const cqMatch = upper.match(/^CQ\s+(\S+)\s*(.*)/);
-        const uMatch = upper.match(/^U\s+(\S+)/);
-        if (cqMatch) {
-          netCommand = { action: 'checkin', netName: cqMatch[1], status: cqMatch[2] || '' };
-        } else if (uMatch) {
-          netCommand = { action: 'checkout', netName: uMatch[1] };
-        }
-      }
-
-      return {
-        type: isBulletin ? 'bulletin' : 'message',
-        from,
-        to,
-        text,
-        cleanText: cleanComment,
-        tokens,
-        msgId,
-        isShelterReport,
-        netCommand,
-        timestamp: Date.now(),
-        raw: line,
-      };
-    } catch (e) {
-      return null;
-    }
-  }
-
   // Parse a raw APRS packet into a position object (or null if not a position packet)
   /**
    * Position packets go through the shared parser (server/utils/aprsParser.js —
