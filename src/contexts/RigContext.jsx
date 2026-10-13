@@ -513,7 +513,11 @@ export const RigProvider = ({ children, rigConfig }) => {
         if (f) {
           tuneTo(f, m);
           // Remember who we tuned to, so the Logbook's +QSO can fill in the call.
-          if (spot.call) setTunedSpot({ call: spot.call, freqHz: toHz(f), gridsquare: spot.dxGrid || spot.grid });
+          // Only with rig control on: a spot clicked while nothing was tuned
+          // must not be offered later, the moment a rig gets connected.
+          if (spot.call && rigConfig?.enabled) {
+            setTunedSpot({ call: spot.call, freqHz: toHz(f), gridsquare: spot.dxGrid || spot.grid });
+          }
         }
         return;
       }

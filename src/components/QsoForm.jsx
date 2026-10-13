@@ -375,20 +375,23 @@ export const QsoForm = ({ prefill, editQso, onSaved, onCancel, onDelete, myGrid,
                   mode: rigMode ? rigMode.toUpperCase() : f.mode,
                 };
                 // New QSOs also take the call of the spot the rig was tuned to:
-                // still near it → that call (and its grid); tuned well away →
-                // the call no longer belongs to this frequency, so clear it.
-                // Without a remembered spot the call is left alone.
+                // still near it → that call (and its grid). Tuned well away →
+                // a call that came from the spot no longer belongs to this
+                // frequency, so clear it; a call typed by hand is left alone.
+                // Without a remembered spot the call is left alone too.
                 const spot = editing ? null : tunedSpotForRig(rig.freq);
-                if (spot?.near) {
-                  const sameStation =
+                if (spot) {
+                  const fromSpot =
                     String(f.call || '')
                       .trim()
                       .toUpperCase() === spot.call;
-                  next.call = spot.call;
-                  next.gridsquare = spot.gridsquare || (sameStation ? f.gridsquare : '');
-                } else if (spot) {
-                  next.call = '';
-                  next.gridsquare = '';
+                  if (spot.near) {
+                    next.call = spot.call;
+                    next.gridsquare = spot.gridsquare || (fromSpot ? f.gridsquare : '');
+                  } else if (fromSpot) {
+                    next.call = '';
+                    next.gridsquare = '';
+                  }
                 }
                 return next;
               })
