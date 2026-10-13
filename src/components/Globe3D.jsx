@@ -18,7 +18,7 @@ import { useTranslation } from 'react-i18next';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { getBandColor, getBandFromFreq } from '../utils/callsign.js';
-import { getBandColorForBand } from '../utils/bandColors.js';
+import { getBandColorForBand, getEffectiveBandColors } from '../utils/bandColors.js';
 import { getSunPosition, getMoonPosition, getMoonAzEl, densifyGeoJson } from '../utils/geo.js';
 import { lzwDecode } from '../plugins/layers/useLightning.js';
 import { MAP_STYLES } from '../utils/config.js';
@@ -33,7 +33,7 @@ import { getSantaTemplate } from '../utils/santaModel.js';
 import { getSantaState, resolveSantaClock, destinationPoint, formatPresents } from '../utils/santa.js';
 import { GLOBE_OVERLAY_PAINTERS, ZONE_SOURCES, workedGridCounts, decimateAircraft } from '../utils/globeOverlays.js';
 import logbookStore from '../services/logbookStore.js';
-import { MAX_LOGBOOK_LINES, useLogbookMapPoints } from '../utils/logbookMap.js';
+import { logbookLinesShown, useLogbookMapPoints } from '../utils/logbookMap.js';
 import {
   acquire as acquireHistory,
   release as releaseHistory,
@@ -679,6 +679,7 @@ export default function Globe3D({
     // Logbook QSOs: one dot per worked position and band. Clicking sets DX
     // only — `raw` carries no frequency, so a past QSO never retunes the rig.
     if (logbookOn) {
+      const palette = getEffectiveBandColors(); // once, not per dot
       logbookPoints.forEach((p) => {
         const latest = p.qsos.reduce((a, b) =>
           `${b.qso_date || ''}${b.time_on || ''}` > `${a.qso_date || ''}${a.time_on || ''}` ? b : a,
@@ -687,7 +688,7 @@ export default function Globe3D({
         out.push({
           lat: p.lat,
           lon: p.lon,
-          color: getBandColorForBand(p.band),
+          color: getBandColorForBand(p.band, palette),
           size: p.qsos.length > 1 ? 8 : 7,
           kind: 'QSO',
           label: `${latest.call}${more}`,
@@ -763,12 +764,13 @@ export default function Globe3D({
 
     // Logbook QSOs: DE → each worked position, band-coloured — only while
     // they stay readable (see MAX_LOGBOOK_LINES); the dots always show.
-    if (logbookOn && hasDE && logbookPoints.length <= MAX_LOGBOOK_LINES) {
+    if (logbookOn && hasDE && logbookLinesShown(logbookPoints.length)) {
+      const palette = getEffectiveBandColors(); // once, not per arc
       logbookPoints.forEach((p) => {
         out.push({
           from: [lat0, lon0],
           to: [p.lat, p.lon],
-          color: getBandColorForBand(p.band),
+          color: getBandColorForBand(p.band, palette),
           opacity: logbookOpacity * 0.8, // 0.64 at the default, like the cluster arcs
         });
       });

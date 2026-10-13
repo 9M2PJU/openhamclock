@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildLogbookMapPoints } from './logbookMap.js';
+import { MAX_LOGBOOK_LINES, buildLogbookMapPoints, logbookLinesShown } from './logbookMap.js';
 
 const qso = (over = {}) => ({ call: 'OZ1ABC', band: '20m', mode: 'SSB', gridsquare: 'JO65', ...over });
 
@@ -53,5 +53,14 @@ describe('buildLogbookMapPoints', () => {
     expect(count({ band: '20m' })).toBe(2);
     expect(count({ mode: 'cw' })).toBe(1);
     expect(count({ search: 'dl1' })).toBe(1);
+  });
+});
+
+describe('logbookLinesShown', () => {
+  it('draws lines up to and including MAX_LOGBOOK_LINES points, not beyond', () => {
+    expect(MAX_LOGBOOK_LINES).toBe(500);
+    expect(logbookLinesShown(0)).toBe(true);
+    expect(logbookLinesShown(500)).toBe(true);
+    expect(logbookLinesShown(501)).toBe(false);
   });
 });

@@ -1,8 +1,8 @@
 import { useEffect } from 'react';
-import { getBandColorForBand } from '../../utils/bandColors.js';
+import { getBandColorForBand, getEffectiveBandColors } from '../../utils/bandColors.js';
 import { esc } from '../../utils/escapeHtml.js';
 import { getGreatCirclePoints, replicatePath, replicatePoint } from '../../utils/geo.js';
-import { MAX_LOGBOOK_LINES, useLogbookMapPoints } from '../../utils/logbookMap.js';
+import { logbookLinesShown, useLogbookMapPoints } from '../../utils/logbookMap.js';
 
 /**
  * Logbook QSOs layer
@@ -72,13 +72,18 @@ export function useLayer({ enabled = false, opacity = 0.8, map = null, deLat = n
 
     // The azimuthal projection is periodic in longitude: draw one copy only.
     const isAzimuthal = map.options?.crs?.code === 'AzimuthalEquidistant';
+    // Removed again in the cleanup: Leaflet adds a renderer to the map with
+    // its first path and keeps it (canvas + move/zoom listeners) until it is
+    // removed itself, and this effect re-runs on every filter keystroke.
     const renderer = L.canvas({ padding: 0.5 });
     const layers = [];
     // Lines only while they stay readable (see MAX_LOGBOOK_LINES).
-    const drawLines = Number.isFinite(deLat) && Number.isFinite(deLon) && points.length <= MAX_LOGBOOK_LINES;
+    const drawLines = Number.isFinite(deLat) && Number.isFinite(deLon) && logbookLinesShown(points.length);
+    // Read the band palette (user overrides from localStorage) once, not per dot.
+    const palette = getEffectiveBandColors();
 
     for (const p of points) {
-      const color = getBandColorForBand(p.band);
+      const color = getBandColorForBand(p.band, palette);
 
       if (drawLines) {
         const arc = getGreatCirclePoints(deLat, deLon, p.lat, p.lon, ARC_POINTS);
@@ -107,7 +112,7 @@ export function useLayer({ enabled = false, opacity = 0.8, map = null, deLat = n
 
     layers.forEach((layer) => layer.addTo(map));
     return () => {
-      layers.forEach((layer) => {
+      [...layers, renderer].forEach((layer) => {
         try {
           map.removeLayer(layer);
         } catch {

@@ -30,7 +30,7 @@ import CallsignLink from './CallsignLink.jsx';
 import { useCallsignPopup } from './CallsignPopupManager.jsx';
 import GroupLogSection from './GroupLogSection.jsx';
 import { IconMap } from './Icons.jsx';
-import { MAX_LOGBOOK_LINES, buildLogbookMapPoints } from '../utils/logbookMap.js';
+import { MAX_LOGBOOK_LINES, logbookLinesShown, useLogbookMapPoints } from '../utils/logbookMap.js';
 import QsoForm, { BANDS, inputStyle, smallBtnStyle } from './QsoForm.jsx';
 
 const MAX_ROWS = 200;
@@ -80,6 +80,15 @@ export const LogbookPanel = ({ userCallsign, myGrid }) => {
   });
   const fileInputRef = useRef(null);
   const [mapOn, setMapOn] = useState(readMapLayerOn);
+  // Follow the layer when it is switched elsewhere (Settings, command palette,
+  // keyboard shortcut) so the button never stays lit for a hidden layer.
+  useEffect(() => {
+    const onToggle = (e) => {
+      if (e.detail?.id === MAP_LAYER_ID) setMapOn(!!e.detail.enabled);
+    };
+    window.addEventListener('openhamclock-layer-toggle', onToggle);
+    return () => window.removeEventListener('openhamclock-layer-toggle', onToggle);
+  }, []);
 
   // Log-sync pending pushes (Wavelog/QRZ retry queue) — shown in the footer.
   // Mounting the panel also retries anything left over from a previous session.
@@ -173,7 +182,9 @@ export const LogbookPanel = ({ userCallsign, myGrid }) => {
 
   // Dots the map layer draws for this selection — past MAX_LOGBOOK_LINES the
   // lines from DE are left out, and the note below says how to get them back.
-  const mapDots = useMemo(() => (mapOn ? buildLogbookMapPoints(filtered).length : 0), [mapOn, filtered]);
+  // Same hook as the map (published filter, cty.dat re-placement once it has
+  // loaded), so the note and the map can never disagree.
+  const mapDots = useLogbookMapPoints(mapOn).length;
 
   const bandOptions = useMemo(() => {
     const inLog = Object.keys(stats.byBand);
@@ -447,7 +458,7 @@ export const LogbookPanel = ({ userCallsign, myGrid }) => {
         </div>
       )}
 
-      {mapOn && mapDots > MAX_LOGBOOK_LINES && (
+      {mapOn && !logbookLinesShown(mapDots) && (
         <div role="status" style={{ fontSize: '10px', color: 'var(--text-muted)', marginBottom: '6px' }}>
           {t('logbook.mapLinesHidden', {
             defaultValue:

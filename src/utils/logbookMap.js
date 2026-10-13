@@ -1,8 +1,8 @@
 /**
  * logbookMap — logbook QSOs as map points, shared by the flat/azimuthal
- * "Logbook QSOs" layer (plugins/layers/useLogbookQsos.js) and the 3D globe's
- * overlay painter (paintLogbookQsos in utils/globeOverlays.js), so both
- * projections place, group and filter QSOs identically.
+ * "Logbook QSOs" layer (plugins/layers/useLogbookQsos.js), the 3D globe
+ * (Globe3D draws them natively as markers + arcs) and the Logbook panel's
+ * dot count, so every view places, groups and filters QSOs identically.
  *
  * Position: the logged grid square when there is one, else the DXCC entity's
  * position from cty.dat (approximate — `approx: true`). QSOs at the same
@@ -21,6 +21,9 @@ import { maidenheadToLatLon } from './geo.js';
  * to narrow the filter to get the lines back.
  */
 export const MAX_LOGBOOK_LINES = 500;
+
+/** Are the lines from DE drawn for this many points? */
+export const logbookLinesShown = (pointCount) => pointCount <= MAX_LOGBOOK_LINES;
 
 const qsoBand = (q) => q?.band || (q?.freq ? getBandFromFreq(q.freq) : '') || '';
 
