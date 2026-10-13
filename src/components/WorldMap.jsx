@@ -2036,6 +2036,9 @@ export const WorldMap = ({
             ...prev,
             [id]: { ...prev[id], enabled },
           }));
+          // Lets panels that mirror a layer (e.g. the Logbook's map button)
+          // follow toggles made in Settings, the command palette or shortcuts.
+          window.dispatchEvent(new CustomEvent('openhamclock-layer-toggle', { detail: { id, enabled } }));
         },
 
         setOpacity: (id, opacity) => {

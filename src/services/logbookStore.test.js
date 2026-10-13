@@ -14,14 +14,18 @@ import {
   count,
   dedupKey,
   getAll,
+  getViewFilter,
   hasMountedPanel,
   init,
+  qsoMatchesFilter,
   registerPanelMount,
   remove,
   requestLogQso,
   setTunedSpot,
+  setViewFilter,
   subscribe,
   subscribePrefill,
+  subscribeViewFilter,
   tunedSpotForRig,
   tunedSpotPrefill,
   unregisterPanelMount,
@@ -243,6 +247,35 @@ describe('tuned-spot prefill for +QSO', () => {
     setTunedSpot({ call: 'ZL1XYZ', freqHz: 14025000 });
     await add(sampleQso({ call: 'OZ1ABC' }));
     expect(tunedSpotPrefill(14025000)).toEqual({ call: 'ZL1XYZ' });
+  });
+});
+
+describe('view filter (Logbook panel → map)', () => {
+  const rec = { call: 'OZ1ABC', band: '20m', mode: 'SSB', name: 'Lars', comment: 'POTA DK-0001' };
+
+  it('matches band, mode (any case) and search in call / name / comment', () => {
+    expect(qsoMatchesFilter(rec, undefined)).toBe(true);
+    expect(qsoMatchesFilter(rec, { band: '20m' })).toBe(true);
+    expect(qsoMatchesFilter(rec, { band: '40m' })).toBe(false);
+    expect(qsoMatchesFilter(rec, { mode: 'ssb' })).toBe(true);
+    expect(qsoMatchesFilter(rec, { mode: 'CW' })).toBe(false);
+    expect(qsoMatchesFilter(rec, { search: 'oz1' })).toBe(true);
+    expect(qsoMatchesFilter(rec, { search: 'lars' })).toBe(true);
+    expect(qsoMatchesFilter(rec, { search: 'dk-0001' })).toBe(true);
+    expect(qsoMatchesFilter(rec, { search: 'W1AW' })).toBe(false);
+  });
+
+  it('publishes filter changes to subscribers and resets on null', () => {
+    const cb = vi.fn();
+    const unsub = subscribeViewFilter(cb);
+    setViewFilter({ band: '20m' });
+    expect(getViewFilter()).toEqual({ band: '20m', mode: '', search: '' });
+    setViewFilter({ band: '20m' }); // unchanged → no notification
+    expect(cb).toHaveBeenCalledTimes(1);
+    setViewFilter(null);
+    expect(getViewFilter()).toEqual({ band: '', mode: '', search: '' });
+    expect(cb).toHaveBeenCalledTimes(2);
+    unsub();
   });
 });
 
