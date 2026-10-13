@@ -208,6 +208,7 @@ export default function EmcommLayout(props) {
     handleToggleDxLock,
     mapLayers,
     toggleDXLabels,
+    toggleAPRSLabels,
     toggleSatellites,
     hoveredSpot,
     setHoveredSpot,
@@ -1247,6 +1248,21 @@ export default function EmcommLayout(props) {
                   style={{ ...EMCOMM_APRS_SELECT, cursor: 'pointer' }}
                 >
                   Clear
+                </button>
+                {/* Callsign tags beside the APRS symbols on the map (#1209) */}
+                <button
+                  type="button"
+                  onClick={() => toggleAPRSLabels?.()}
+                  aria-pressed={!!mapLayers?.showAPRSLabels}
+                  title={mapLayers?.showAPRSLabels ? 'Hide APRS callsigns on map' : 'Show APRS callsigns on map'}
+                  style={{
+                    ...EMCOMM_APRS_SELECT,
+                    cursor: 'pointer',
+                    fontWeight: 700,
+                    ...(mapLayers?.showAPRSLabels ? { color: '#ffaa00', borderColor: '#ffaa00' } : {}),
+                  }}
+                >
+                  Aa
                 </button>
               </span>
             }

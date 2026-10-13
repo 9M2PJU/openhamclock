@@ -679,8 +679,10 @@ export const WorldMap = ({
         opacity: pluginLayerStates[l.id]?.opacity ?? l.defaultOpacity,
       };
     });
+    // APRS is not a plugin layer; its map toggle drives the globe painter (#1210).
+    out.aprs = { enabled: !!showAPRS, opacity: 1 };
     return out;
-  }, [mapProjection, pluginLayerStates]);
+  }, [mapProjection, pluginLayerStates, showAPRS]);
   // Set when a crash or chunk-load failure forces the session back to
   // Mercator: the switch must not overwrite the user's saved projection.
   // Cleared the next time they pick a projection themselves.
@@ -2427,7 +2429,7 @@ export const WorldMap = ({
               const tag = L.marker([rLat, rLon], {
                 icon: L.divIcon({
                   className: '',
-                  html: `<span style="display:inline-block;background:${color};color:#000;padding:1px 4px;border-radius:3px;font-size:10px;font-family:var(--font-mono);font-weight:700;white-space:nowrap;border:1px solid rgba(0,0,0,0.5);box-shadow:0 1px 2px rgba(0,0,0,0.3);line-height:1.1;">${esc(label)}</span>`,
+                  html: `<span style="display:inline-block;background:${color};color:#000;padding:2px 5px;border-radius:3px;font-size:11px;font-family:var(--font-mono);font-weight:700;white-space:nowrap;border:1px solid rgba(0,0,0,0.5);box-shadow:0 1px 2px rgba(0,0,0,0.3);line-height:1.1;">${esc(label)}</span>`,
                   iconSize: [0, 0],
                   iconAnchor: [-(iconSize / 2 + 2), iconSize / 2],
                 }),
@@ -2606,6 +2608,10 @@ export const WorldMap = ({
             showPSKPaths={showPSKPaths}
             showMutualReception={showMutualReception}
             showWSJTX={showWSJTX}
+            showAPRS={showAPRS}
+            aprsStations={aprsStations}
+            aprsWatchlistCalls={aprsWatchlistCalls}
+            showAPRSLabels={showAPRSLabels}
             onSpotClick={onSpotClick}
             hoveredSpot={hoveredSpot}
             callsign={callsign}
@@ -2669,6 +2675,9 @@ export const WorldMap = ({
               showWWBOTA={showWWBOTA}
               showPSKReporter={showPSKReporter}
               showWSJTX={showWSJTX}
+              aprsStations={showAPRS ? aprsStations : null}
+              aprsWatchlistCalls={aprsWatchlistCalls}
+              showAPRSLabels={showAPRSLabels}
               onSpotClick={onSpotClick}
               callsign={callsign}
               showDeDxMarkers={showDeDxMarkers}

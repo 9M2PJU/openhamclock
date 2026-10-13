@@ -416,6 +416,9 @@ export default function Globe3D({
   // { layerId: { enabled, opacity } } for the globe-capable plugin layers —
   // same states the flat map persists to openhamclock_mapSettings.layers.
   overlayLayerStates = null,
+  aprsStations = null,
+  aprsWatchlistCalls = null,
+  showAPRSLabels = false,
   allUnits = { dist: 'imperial' },
   config,
   hideUi = false,
@@ -2373,6 +2376,7 @@ export default function Globe3D({
       'tornado-warnings': overlayTornado,
       'atc-sectors': overlayATC,
       'history-playback': overlayHistory,
+      aprs: { stations: aprsStations, watch: aprsWatchlistCalls, labels: showAPRSLabels },
     };
     let painted = false;
     for (const [id, painter] of Object.entries(GLOBE_OVERLAY_PAINTERS)) {
@@ -2403,6 +2407,9 @@ export default function Globe3D({
     overlayTornado,
     overlayATC,
     overlayHistory,
+    aprsStations,
+    aprsWatchlistCalls,
+    showAPRSLabels,
     lowMem,
   ]);
 
