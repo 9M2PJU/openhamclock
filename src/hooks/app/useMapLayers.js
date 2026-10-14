@@ -21,6 +21,7 @@ export default function useMapLayers() {
     showDXNews: true,
     showRotatorBearing: false,
     showAPRS: true,
+    showAPRSLabels: false,
     showMeshCom: true,
   };
 
@@ -101,6 +102,10 @@ export default function useMapLayers() {
     [],
   );
   const toggleAPRS = useCallback(() => setMapLayers((prev) => ({ ...prev, showAPRS: !prev.showAPRS })), []);
+  const toggleAPRSLabels = useCallback(
+    () => setMapLayers((prev) => ({ ...prev, showAPRSLabels: !prev.showAPRSLabels })),
+    [],
+  );
   const toggleMeshCom = useCallback(() => setMapLayers((prev) => ({ ...prev, showMeshCom: !prev.showMeshCom })), []);
 
   return {
@@ -124,6 +129,7 @@ export default function useMapLayers() {
     toggleDXNews,
     toggleRotatorBearing,
     toggleAPRS,
+    toggleAPRSLabels,
     toggleMeshCom,
   };
 }

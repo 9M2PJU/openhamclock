@@ -208,6 +208,7 @@ export default function EmcommLayout(props) {
     handleToggleDxLock,
     mapLayers,
     toggleDXLabels,
+    toggleAPRSLabels,
     toggleSatellites,
     hoveredSpot,
     setHoveredSpot,
@@ -224,7 +225,6 @@ export default function EmcommLayout(props) {
   } = props;
 
   const { t } = useTranslation();
-  const [seconds, setSeconds] = useState(() => String(new Date().getUTCSeconds()).padStart(2, '0'));
   const [expandedAlert, setExpandedAlert] = useState(null);
   // Sidebar section collapse state (#1188)
   const [panelMode, setPanelMode] = useState(readPanelMode);
@@ -279,14 +279,6 @@ export default function EmcommLayout(props) {
   const msgSinceRef = useRef(sessionStartRef.current);
   const mapInstanceRef = useRef(null);
   const overlayLayersRef = useRef([]);
-
-  // UTC seconds ticker
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setSeconds(String(new Date().getUTCSeconds()).padStart(2, '0'));
-    }, 1000);
-    return () => clearInterval(timer);
-  }, []);
 
   // Fetch the Winlink gateway list once on mount and refresh hourly. The
   // server proxy already caches for 1h so this is essentially free; we use
@@ -854,20 +846,16 @@ export default function EmcommLayout(props) {
   const clearEventLog = useCallback(() => {
     if (!window.confirm('Clear the entire EmComm event log? This cannot be undone.')) return;
     clearEvents();
-    // Clearing wiped the stored events but the diff snapshots above still
-    // remembered everything already on the board, so nothing re-logged until
-    // a brand-new station/alert appeared — the log looked dead until a page
-    // refresh (#1181). Reset the baselines to *empty* (not null) so the next
-    // effect pass treats the current picture as freshly heard, exactly like a
-    // reload does, without throwing away the map's RF history.
-    evtPrevRef.current = {
-      roster: new Set(),
-      alerts: new Set(),
-      shelters: new Set(),
-      stations: new Set(),
-      fieldReports: new Set(),
-    };
-    msgSinceRef.current = sessionStartRef.current;
+    // Two earlier behaviours were both wrong. Leaving the diff snapshots
+    // alone meant nothing could log again until a brand-new station appeared
+    // (#1181, "the log looks dead"). Resetting them to *empty* sets (the first
+    // fix) re-logged the whole current board the instant Clear was pressed,
+    // so the log looked like it never cleared (#1211). Null snapshots take the
+    // middle road: the next effect pass re-baselines on what is on the board
+    // now without reporting any of it, and only activity after this moment
+    // is recorded — which is what "clear it between operations" means.
+    evtPrevRef.current = { roster: null, alerts: null, shelters: null, stations: null, fieldReports: null };
+    msgSinceRef.current = Date.now();
     setLogEpoch((n) => n + 1);
   }, []);
 
@@ -946,9 +934,10 @@ export default function EmcommLayout(props) {
           {loading && <span style={{ color: '#888', fontSize: '11px', marginLeft: '8px' }}>Loading...</span>}
         </div>
         <div style={{ fontFamily: 'var(--font-mono)', fontSize: '14px' }}>
-          <span style={{ color: '#fff', fontWeight: 600 }}>
-            {utcTime}:{seconds}
-          </span>
+          {/* utcTime already carries seconds (HH:MM:SS); a second ticker used to
+              be appended, printing "00:13:47:47", and the date was missing (#1217) */}
+          <span style={{ color: '#888', marginRight: '8px', fontSize: '12px' }}>{utcDate}</span>
+          <span style={{ color: '#fff', fontWeight: 600 }}>{utcTime}</span>
           <span style={{ color: '#888', marginLeft: '6px', fontSize: '11px' }}>UTC</span>
         </div>
       </div>
@@ -990,6 +979,7 @@ export default function EmcommLayout(props) {
             showAPRS={true}
             aprsStations={mapAprsStations}
             aprsWatchlistCalls={aprsData?.allWatchlistCalls}
+            showAPRSLabels={mapLayers?.showAPRSLabels ?? false}
             hoveredSpot={hoveredSpot}
             hideOverlays={true}
             callsign={config.callsign}
@@ -1105,32 +1095,73 @@ export default function EmcommLayout(props) {
             {disasters.length === 0 ? (
               <EmptyState text="No recent disaster declarations" />
             ) : (
-              disasters.map((d) => (
-                <div
-                  key={d.id || d.disasterNumber}
-                  style={{
-                    padding: '4px 8px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '8px',
-                    fontSize: '11px',
-                    marginBottom: '2px',
-                  }}
-                >
-                  <span style={{ fontSize: '14px' }}>{incidentIcon(d.incidentType)}</span>
-                  <div>
-                    <div style={{ color: '#ddd' }}>{d.declarationTitle}</div>
-                    <div style={{ color: '#888', fontSize: '10px' }}>
-                      {d.incidentType} —{' '}
-                      {d.declarationType === 'DR'
-                        ? 'Major'
-                        : d.declarationType === 'EM'
-                          ? 'Emergency'
-                          : d.declarationType}
+              <>
+                {disasters.map((d) => {
+                  const kind =
+                    d.declarationType === 'DR'
+                      ? 'Major disaster'
+                      : d.declarationType === 'EM'
+                        ? 'Emergency'
+                        : d.declarationType === 'FM'
+                          ? 'Fire management'
+                          : d.declarationType;
+                  const areas = Array.isArray(d.areas) ? d.areas : [];
+                  const shownAreas = areas.slice(0, 4).join(', ');
+                  const moreAreas = areas.length > 4 ? ` +${areas.length - 4} more` : '';
+                  const day = (iso) => (iso ? String(iso).slice(0, 10) : '');
+                  return (
+                    <div
+                      key={d.id || d.disasterNumber}
+                      style={{
+                        padding: '4px 8px',
+                        display: 'flex',
+                        alignItems: 'flex-start',
+                        gap: '8px',
+                        fontSize: '11px',
+                        marginBottom: '2px',
+                      }}
+                    >
+                      <span style={{ fontSize: '14px' }}>{incidentIcon(d.incidentType)}</span>
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ color: '#ddd' }}>
+                          {d.declarationTitle}
+                          {d.url && (
+                            <a
+                              href={d.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              title="Open this declaration on fema.gov"
+                              style={{ color: '#f59e0b', marginLeft: '6px', fontSize: '10px', textDecoration: 'none' }}
+                            >
+                              FEMA ↗
+                            </a>
+                          )}
+                        </div>
+                        <div style={{ color: '#888', fontSize: '10px' }}>
+                          {d.incidentType} — {kind}
+                          {d.disasterNumber ? ` · ${d.declarationType || 'DR'}-${d.disasterNumber}` : ''}
+                        </div>
+                        <div style={{ color: '#888', fontSize: '10px' }}>
+                          Declared {day(d.declarationDate)}
+                          {d.incidentBeginDate
+                            ? ` · Incident ${day(d.incidentBeginDate)}${d.incidentEndDate ? ` – ${day(d.incidentEndDate)}` : ' – ongoing'}`
+                            : ''}
+                        </div>
+                        {areas.length > 0 && (
+                          <div style={{ color: '#aaa', fontSize: '10px' }} title={areas.join(', ')}>
+                            {shownAreas}
+                            {moreAreas}
+                          </div>
+                        )}
+                      </div>
                     </div>
-                  </div>
+                  );
+                })}
+                <div style={{ color: '#666', fontSize: '9px', padding: '2px 8px 4px' }}>
+                  Source: FEMA OpenFEMA disaster declarations{emcommData?.state ? ` for ${emcommData.state}` : ''}, last
+                  30 days, grouped per declaration.
                 </div>
-              ))
+              </>
             )}
           </PanelSection>
 
@@ -1174,6 +1205,11 @@ export default function EmcommLayout(props) {
                         <SourceBadge source={s.source} />
                       </span>
                       <span
+                        title={
+                          isAprs
+                            ? 'Status read from the words in the report (open / closed / full) — not a control'
+                            : 'Shelter status reported by FEMA'
+                        }
                         style={{
                           color: SHELTER_STATUS_COLORS[s.status] || '#888',
                           fontSize: '10px',
@@ -1250,6 +1286,21 @@ export default function EmcommLayout(props) {
                   style={{ ...EMCOMM_APRS_SELECT, cursor: 'pointer' }}
                 >
                   Clear
+                </button>
+                {/* Callsign tags beside the APRS symbols on the map (#1209) */}
+                <button
+                  type="button"
+                  onClick={() => toggleAPRSLabels?.()}
+                  aria-pressed={!!mapLayers?.showAPRSLabels}
+                  title={mapLayers?.showAPRSLabels ? 'Hide APRS callsigns on map' : 'Show APRS callsigns on map'}
+                  style={{
+                    ...EMCOMM_APRS_SELECT,
+                    cursor: 'pointer',
+                    fontWeight: 700,
+                    ...(mapLayers?.showAPRSLabels ? { color: '#ffaa00', borderColor: '#ffaa00' } : {}),
+                  }}
+                >
+                  Aa
                 </button>
               </span>
             }

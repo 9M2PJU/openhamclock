@@ -25,6 +25,8 @@ import {
 } from '../utils/bandColors.js';
 import { createTerminator } from '../utils/terminator.js';
 import { getAprsSymbolIcon } from '../utils/aprs-symbols.js';
+import { requestAprsSelect } from '../utils/aprsSelect.js';
+import { formatAprsDevice } from '../utils/aprsDevice.js';
 import { getAllLayers } from '../plugins/layerRegistry.js';
 import { GLOBE_OVERLAY_LAYER_IDS } from '../utils/globeOverlays.js';
 import { countryColor, fetchCountriesGeojson } from '../utils/countriesBasemap.js';
@@ -147,6 +149,7 @@ export const WorldMap = ({
   showAPRS,
   aprsStations,
   aprsWatchlistCalls,
+  showAPRSLabels = false,
   showMeshCom,
   meshcomNodes,
   onSpotClick,
@@ -676,8 +679,10 @@ export const WorldMap = ({
         opacity: pluginLayerStates[l.id]?.opacity ?? l.defaultOpacity,
       };
     });
+    // APRS is not a plugin layer; its map toggle drives the globe painter (#1210).
+    out.aprs = { enabled: !!showAPRS, opacity: 1 };
     return out;
-  }, [mapProjection, pluginLayerStates]);
+  }, [mapProjection, pluginLayerStates, showAPRS]);
   // Set when a crash or chunk-load failure forces the session back to
   // Mercator: the switch must not overwrite the user's saved projection.
   // Cleared the next time they pick a projection themselves.
@@ -1171,18 +1176,19 @@ export const WorldMap = ({
   // "Bring this station into view" requests from panel rows (#1182). Pans only
   // when the target is off-screen (or the request is forced), then drops a
   // self-removing pulse ring so the eye finds the target in a busy view.
-  // The Leaflet map is hidden under the azimuthal / 3D projections, so those
-  // requests are ignored until the projection has its own focus handling.
+  // Under the azimuthal projection the pulse goes on its transparent Leaflet
+  // overlay (whose bounds are not meaningful, so it never pans); the 3D globe
+  // answers the same event itself (#1210).
   const focusPulseRef = useRef(null);
   useEffect(() => {
-    if (isLeafletHidden) return;
+    if (isGlobe3D) return;
     const handleFocus = (e) => {
-      const map = mapInstanceRef.current;
+      const map = isAzimuthal ? azimuthalMapRef.current : mapInstanceRef.current;
       const d = e.detail;
       if (!map || !d || !Number.isFinite(d.lat) || !Number.isFinite(d.lon)) return;
-      const lon = nearestWrappedLon(map.getCenter().lng, d.lon);
+      const lon = isAzimuthal ? d.lon : nearestWrappedLon(map.getCenter().lng, d.lon);
       const target = [d.lat, lon];
-      if (d.force || !isInView(map.getBounds(), d.lat, d.lon)) {
+      if (!isAzimuthal && (d.force || !isInView(map.getBounds(), d.lat, d.lon))) {
         if (Number.isFinite(d.zoom)) map.setView(target, d.zoom, { animate: true });
         else map.panTo(target, { animate: true });
       }
@@ -1229,7 +1235,7 @@ export const WorldMap = ({
         focusPulseRef.current = null;
       }
     };
-  }, [leafletReady, isLeafletHidden]);
+  }, [leafletReady, isAzimuthal, isGlobe3D, azimuthalMapReady]);
 
   // Update the value for how many scroll pixels count as a zoom level
   useEffect(() => {
@@ -2032,6 +2038,9 @@ export const WorldMap = ({
             ...prev,
             [id]: { ...prev[id], enabled },
           }));
+          // Lets panels that mirror a layer (e.g. the Logbook's map button)
+          // follow toggles made in Settings, the command palette or shortcuts.
+          window.dispatchEvent(new CustomEvent('openhamclock-layer-toggle', { detail: { id, enabled } }));
         },
 
         setOpacity: (id, opacity) => {
@@ -2395,30 +2404,49 @@ export const WorldMap = ({
                     ? `${ageMin}m ago`
                     : `${Math.floor(ageMin / 60)}h ago`;
 
-            marker
-              .bindPopup(
-                `
-                <b data-map-call="${esc(station.ssid || station.call)}" data-loc-lat="${station.lat}" data-loc-lon="${station.lon}">${esc(station.ssid || station.call)}</b>
+            const label = station.ssid || station.call;
+            const popupHtml = `
+                <b data-map-call="${esc(label)}" data-loc-lat="${station.lat}" data-loc-lon="${station.lon}">${esc(label)}</b>
                 ${isWatched ? ' <span style="color:#f59e0b">★</span>' : ''}
                 ${isRF ? ' <span style="color:#4ade80;font-size:10px">RF</span>' : ''}<br>
                 <span style="color:#888;font-size:11px">${ageStr}</span><br>
+                ${station.device ? `<span style="color:#aaa;font-size:11px">${esc(formatAprsDevice(station.device))}</span><br>` : ''}
                 ${station.speed > 0 ? `Speed: ${station.speed} kt<br>` : ''}
                 ${station.altitude ? `Alt: ${station.altitude} ft<br>` : ''}
                 ${station.comment ? `<span style="font-size:11px;color:#aaa">${esc(station.comment.substring(0, 80))}</span>` : ''}
-              `,
-              )
-              .addTo(map);
+              `;
+            // APRS clicks open the popup and bring the station's row into view
+            // in the APRS panel (#1210) — intentionally do not set DX location.
+            const selectInList = () => requestAprsSelect({ ssid: station.ssid, call: station.call });
 
-            // APRS clicks open the popup only — intentionally do not set DX location
-
+            marker.bindPopup(popupHtml).addTo(map);
+            marker.on('click', selectInList);
             aprsMarkersRef.current.push(marker);
+
+            // Optional callsign tag beside the symbol, same treatment as the
+            // POTA/SOTA labels (#1209); tinted with the station's colour.
+            if (showAPRSLabels) {
+              const tag = L.marker([rLat, rLon], {
+                icon: L.divIcon({
+                  className: '',
+                  html: `<span style="display:inline-block;background:${color};color:#000;padding:2px 5px;border-radius:3px;font-size:11px;font-family:var(--font-mono);font-weight:700;white-space:nowrap;border:1px solid rgba(0,0,0,0.5);box-shadow:0 1px 2px rgba(0,0,0,0.3);line-height:1.1;">${esc(label)}</span>`,
+                  iconSize: [0, 0],
+                  iconAnchor: [-(iconSize / 2 + 2), iconSize / 2],
+                }),
+                zIndexOffset: isWatched ? 4999 : 999,
+              })
+                .bindPopup(popupHtml)
+                .addTo(map);
+              tag.on('click', selectInList);
+              aprsMarkersRef.current.push(tag);
+            }
           });
         } catch (err) {
           // skip bad station
         }
       });
     }
-  }, [aprsStations, showAPRS, aprsWatchlistCalls]);
+  }, [aprsStations, showAPRS, aprsWatchlistCalls, showAPRSLabels]);
 
   // Update MeshCom node markers
   useEffect(() => {
@@ -2580,6 +2608,10 @@ export const WorldMap = ({
             showPSKPaths={showPSKPaths}
             showMutualReception={showMutualReception}
             showWSJTX={showWSJTX}
+            showAPRS={showAPRS}
+            aprsStations={aprsStations}
+            aprsWatchlistCalls={aprsWatchlistCalls}
+            showAPRSLabels={showAPRSLabels}
             onSpotClick={onSpotClick}
             hoveredSpot={hoveredSpot}
             callsign={callsign}
@@ -2643,6 +2675,9 @@ export const WorldMap = ({
               showWWBOTA={showWWBOTA}
               showPSKReporter={showPSKReporter}
               showWSJTX={showWSJTX}
+              aprsStations={showAPRS ? aprsStations : null}
+              aprsWatchlistCalls={aprsWatchlistCalls}
+              showAPRSLabels={showAPRSLabels}
               onSpotClick={onSpotClick}
               callsign={callsign}
               showDeDxMarkers={showDeDxMarkers}

@@ -6,6 +6,8 @@
 const net = require('net');
 
 const { parseAprsPacket: parseAprsPosition, parseResourceTokens } = require('../utils/aprsParser');
+const { identifyDevice } = require('../utils/aprsDeviceId');
+const { parseAprsMessage } = require('../utils/aprsMessage');
 
 module.exports = function (app, ctx) {
   const { CONFIG, APP_VERSION, logDebug, logInfo, logWarn, logErrorOnce } = ctx;
@@ -128,70 +130,6 @@ module.exports = function (app, ctx) {
   // Parse APRS message packets (addressed messages + bulletins)
   // Format: :ADDRESSEE:message text{msgid
   // Bulletins: :BLN1     :bulletin text
-  function parseAprsMessage(line) {
-    try {
-      const headerEnd = line.indexOf(':');
-      if (headerEnd < 0) return null;
-
-      const header = line.substring(0, headerEnd);
-      const payload = line.substring(headerEnd + 1);
-      const from = header.split('>')[0].trim();
-
-      // APRS message format: :ADDRESSEE:message{id
-      if (payload.charAt(0) !== ':') return null;
-      const addrEnd = payload.indexOf(':', 1);
-      if (addrEnd < 0) return null;
-
-      const to = payload.substring(1, addrEnd).trim();
-      const body = payload.substring(addrEnd + 1);
-
-      // Extract message ID if present
-      const idMatch = body.match(/\{(\w+)$/);
-      const msgId = idMatch ? idMatch[1] : null;
-      const text = idMatch ? body.substring(0, body.lastIndexOf('{')).trim() : body.trim();
-
-      // Skip acks/rejs
-      if (text.startsWith('ack') || text.startsWith('rej')) return null;
-
-      const isBulletin = to.startsWith('BLN');
-      const { tokens, cleanComment } = parseResourceTokens(text);
-
-      // Detect shelter-related content
-      const isShelterReport =
-        /shelter|evacuate|refuge|beds|capacity|open|closed|accepting/i.test(text) ||
-        tokens.some((t) => ['Beds', 'Capacity', 'Shelter', 'Evacuees'].includes(t.key));
-
-      // Detect net check-in/check-out commands (messages to EMCOMM)
-      let netCommand = null;
-      if (to.toUpperCase() === 'EMCOMM' || to.toUpperCase().startsWith('EMCOMM')) {
-        const upper = text.toUpperCase().trim();
-        const cqMatch = upper.match(/^CQ\s+(\S+)\s*(.*)/);
-        const uMatch = upper.match(/^U\s+(\S+)/);
-        if (cqMatch) {
-          netCommand = { action: 'checkin', netName: cqMatch[1], status: cqMatch[2] || '' };
-        } else if (uMatch) {
-          netCommand = { action: 'checkout', netName: uMatch[1] };
-        }
-      }
-
-      return {
-        type: isBulletin ? 'bulletin' : 'message',
-        from,
-        to,
-        text,
-        cleanText: cleanComment,
-        tokens,
-        msgId,
-        isShelterReport,
-        netCommand,
-        timestamp: Date.now(),
-        raw: line,
-      };
-    } catch (e) {
-      return null;
-    }
-  }
-
   // Parse a raw APRS packet into a position object (or null if not a position packet)
   /**
    * Position packets go through the shared parser (server/utils/aprsParser.js —
@@ -200,7 +138,42 @@ module.exports = function (app, ctx) {
    */
   function parseAprsPacket(line) {
     const station = parseAprsPosition(line);
-    return station ? { ...station, timestamp: Date.now() } : null;
+    if (!station) return null;
+    // Radio/software identification (#1202): tocall for ordinary packets,
+    // Mic-E type bytes for Mic-E — which are also stripped from the comment
+    // so the panel no longer shows them as stray punctuation.
+    const { device, comment } = identifyDevice(station);
+    if (comment !== station.comment) {
+      const { tokens, cleanComment } = parseResourceTokens(comment);
+      Object.assign(station, { comment, tokens, cleanComment });
+    }
+    return { ...station, device, timestamp: Date.now() };
+  }
+
+  // Net check-in / check-out from a parsed message. Shared by the APRS-IS
+  // feed and the local-TNC path: until #1212 only the internet path applied
+  // the command, so a `CQ NETNAME` heard over RF never reached the roster.
+  function applyNetCommand(msg) {
+    if (!msg?.netCommand) return;
+    const { action, netName, status } = msg.netCommand;
+    if (action === 'checkin') {
+      const station = aprsStations.get(msg.from) || aprsStations.get(msg.from.split('-')[0]) || {};
+      netRoster.set(msg.from, {
+        call: msg.from,
+        netName,
+        status: status || 'Checked in',
+        checkinTime: Date.now(),
+        lastHeard: Date.now(),
+        lat: station.lat ?? null,
+        lon: station.lon ?? null,
+        tokens: station.tokens || [],
+        source: msg.source || station.source || null,
+      });
+      logInfo(`[APRS Net] ${msg.from} checked into ${netName}: ${status || '(no status)'}`);
+    } else if (action === 'checkout') {
+      netRoster.delete(msg.from);
+      logInfo(`[APRS Net] ${msg.from} checked out of ${netName}`);
+    }
   }
 
   function connectAprsIS() {
@@ -274,28 +247,7 @@ module.exports = function (app, ctx) {
             if (msg.isShelterReport) {
               logDebug(`[APRS] Shelter report from ${msg.from}: ${msg.text}`);
             }
-            // Handle net check-in/check-out
-            if (msg.netCommand) {
-              const { action, netName, status } = msg.netCommand;
-              if (action === 'checkin') {
-                const station = aprsStations.get(msg.from.split('-')[0]) || {};
-                netRoster.set(msg.from, {
-                  call: msg.from,
-                  netName,
-                  status: status || 'Checked in',
-                  checkinTime: Date.now(),
-                  lastHeard: Date.now(),
-                  lat: station.lat ?? null,
-                  lon: station.lon ?? null,
-                  tokens: station.tokens || [],
-                  source: station.source || null,
-                });
-                logInfo(`[APRS Net] ${msg.from} checked into ${netName}: ${status || '(no status)'}`);
-              } else if (action === 'checkout') {
-                netRoster.delete(msg.from);
-                logInfo(`[APRS Net] ${msg.from} checked out of ${netName}`);
-              }
-            }
+            applyNetCommand(msg);
           }
         }
       }
@@ -353,6 +305,7 @@ module.exports = function (app, ctx) {
           speed: station.speed,
           course: station.course,
           altitude: station.altitude,
+          device: station.device ?? null,
           age: Math.floor((Date.now() - station.timestamp) / 60000),
           timestamp: station.timestamp,
           source: station.source ?? null,
@@ -617,6 +570,7 @@ module.exports = function (app, ctx) {
           msg.source = 'local-tnc';
           aprsMessages.push(msg);
           if (aprsMessages.length > APRS_MAX_MESSAGES) aprsMessages.shift();
+          applyNetCommand(msg);
         }
         continue;
       }

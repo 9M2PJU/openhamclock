@@ -27,9 +27,6 @@
  */
 
 const net = require('net');
-const http = require('http');
-const https = require('https');
-const { URL } = require('url');
 const { parseAprsPacket } = require('../lib/aprs-parser');
 const {
   decodeKissFrame,
@@ -111,13 +108,24 @@ const descriptor = {
     const cfg = config.aprs || {};
     const bus = services?.pluginBus;
     const protocol = cfg.protocol || 'kiss-tcp';
-    const callsign = (cfg.callsign || 'N0CALL').toUpperCase();
-    const ssid = cfg.ssid || 0;
-    const myCall = ssid > 0 ? `${callsign}-${ssid}` : callsign;
-    const dest = cfg.destination || 'APOHC1';
-    const digiPath = cfg.path || ['WIDE1-1', 'WIDE2-1'];
-    const symbol = cfg.symbol || '/-';
     const beaconIntervalSec = cfg.beaconInterval != null ? cfg.beaconInterval : 600;
+
+    // Station identity is read from the live config on every frame, not
+    // captured once at start-up: the settings page saves without restarting
+    // the plugin, and a captured value meant a changed SSID kept going out
+    // under the old one until rig-bridge was restarted (#1213). Protocol,
+    // host/port and the beacon timer are connection-level and still need a
+    // restart.
+    const live = () => config.aprs || cfg;
+    const stationCall = () => (live().callsign || 'N0CALL').toUpperCase();
+    const stationSsid = () => {
+      const n = parseInt(live().ssid, 10);
+      return Number.isFinite(n) && n > 0 && n <= 15 ? n : 0;
+    };
+    const myCallNow = () => (stationSsid() > 0 ? `${stationCall()}-${stationSsid()}` : stationCall());
+    const destNow = () => live().destination || 'APOHC1';
+    const pathNow = () => live().path || ['WIDE1-1', 'WIDE2-1'];
+    const symbolNow = () => live().symbol || '/-';
 
     let connection = null; // TCP socket or serial port
     let kissBuffer = Buffer.alloc(0);
@@ -141,36 +149,6 @@ const descriptor = {
           fn(packet);
         } catch (e) {}
       }
-    }
-
-    // Forward a batch of packets to the local OHC server's /api/aprs/local.
-    // Fire-and-forget — errors are silently ignored so a down OHC server
-    // never stalls the TNC receive loop.
-    function forwardToLocal(packets) {
-      if (cfg.localForward === false) return;
-      const ohcUrl = (cfg.ohcUrl || 'http://localhost:8080').replace(/\/$/, '');
-      let parsed;
-      try {
-        parsed = new URL(`${ohcUrl}/api/aprs/local`);
-      } catch (e) {
-        return;
-      }
-      const body = JSON.stringify({ packets });
-      const mod = parsed.protocol === 'https:' ? https : http;
-      const req = mod.request(
-        {
-          hostname: parsed.hostname,
-          port: parsed.port || (parsed.protocol === 'https:' ? 443 : 80),
-          path: parsed.pathname,
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
-        },
-        () => {},
-      );
-      req.on('error', () => {}); // swallow errors
-      req.setTimeout(3000, () => req.destroy());
-      req.write(body);
-      req.end();
     }
 
     // Format latitude for APRS: DDMM.MMN
@@ -261,14 +239,15 @@ const descriptor = {
     }
 
     function sendBeacon(lat, lon, comment) {
+      const symbol = symbolNow();
       const symbolTable = symbol.charAt(0);
       const symbolCode = symbol.charAt(1);
       const info = `!${formatAprsLat(lat)}${symbolTable}${formatAprsLon(lon)}${symbolCode}${comment || ''}`;
-      const frame = buildAx25Frame(myCall, dest, digiPath, info);
+      const frame = buildAx25Frame(myCallNow(), destNow(), pathNow(), info);
       const ok = sendRaw(frame);
       if (ok) {
         lastBeaconTime = Date.now();
-        console.log(`[APRS-TNC] TX beacon: ${myCall} @ ${lat.toFixed(4)},${lon.toFixed(4)}`);
+        console.log(`[APRS-TNC] TX beacon: ${myCallNow()} @ ${lat.toFixed(4)},${lon.toFixed(4)}`);
       }
       return ok;
     }
@@ -277,7 +256,7 @@ const descriptor = {
       const padTo = to.padEnd(9, ' ');
       const idSuffix = msgId ? `{${msgId}` : '';
       const info = `:${padTo}:${message}${idSuffix}`;
-      const frame = buildAx25Frame(myCall, dest, digiPath, info);
+      const frame = buildAx25Frame(myCallNow(), destNow(), pathNow(), info);
       const ok = sendRaw(frame);
       if (ok) {
         console.log(`[APRS-TNC] TX msg to ${to}: ${message}`);
@@ -288,7 +267,7 @@ const descriptor = {
     function sendAck(to, msgId) {
       const padTo = to.padEnd(9, ' ');
       const info = `:${padTo}:ack${msgId}`;
-      const frame = buildAx25Frame(myCall, dest, digiPath, info);
+      const frame = buildAx25Frame(myCallNow(), destNow(), pathNow(), info);
       const ok = sendRaw(frame);
       if (ok) {
         console.log(`[APRS-TNC] TX ack to ${to} for msg ${msgId}`);
@@ -330,7 +309,7 @@ const descriptor = {
     }
 
     function connect() {
-      if (callsign === 'N0CALL') {
+      if (stationCall() === 'N0CALL') {
         console.warn('[APRS-TNC] Cannot start: configure your callsign in aprs.callsign');
         return;
       }
@@ -406,7 +385,7 @@ const descriptor = {
         running: connection !== null,
         connected,
         protocol,
-        callsign: myCall,
+        callsign: myCallNow(),
         packetsRx,
         packetsTx,
         lastBeaconTime,
