@@ -299,6 +299,7 @@ const App = () => {
     toggleRotatorBearing,
     toggleAPRS,
     toggleAPRSLabels,
+    cycleAprsIconScale,
     toggleMeshCom,
   } = useMapLayers();
 
@@ -788,6 +789,7 @@ const App = () => {
     toggleRotatorBearing,
     toggleAPRS,
     toggleAPRSLabels,
+    cycleAprsIconScale,
     toggleMeshCom,
     hoveredSpot,
     setHoveredSpot,

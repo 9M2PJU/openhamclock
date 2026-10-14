@@ -191,6 +191,7 @@ export const DockableApp = ({
   toggleWSJTX,
   toggleAPRS,
   toggleAPRSLabels,
+  cycleAprsIconScale,
   toggleMeshCom,
   toggleRotatorBearing,
   hoveredSpot,
@@ -355,6 +356,7 @@ export const DockableApp = ({
   const toggleRotatorBearingEff = useInternalMapLayers ? internalMap.toggleRotatorBearing : toggleRotatorBearing;
   const toggleAPRSEff = useInternalMapLayers ? internalMap.toggleAPRS : toggleAPRS;
   const toggleAPRSLabelsEff = useInternalMapLayers ? internalMap.toggleAPRSLabels : toggleAPRSLabels;
+  const cycleAprsIconScaleEff = useInternalMapLayers ? internalMap.cycleAprsIconScale : cycleAprsIconScale;
   const toggleMeshComEff = useInternalMapLayers ? internalMap.toggleMeshCom : toggleMeshCom;
 
   // Per-panel zoom levels (persisted)
@@ -845,6 +847,7 @@ export const DockableApp = ({
         aprsStations={aprsData?.filteredStations}
         aprsWatchlistCalls={aprsData?.allWatchlistCalls}
         showAPRSLabels={mapLayersEff.showAPRSLabels}
+        aprsIconScale={mapLayersEff.aprsIconScale ?? 1}
         showMeshCom={mapLayersEff.showMeshCom}
         meshcomNodes={meshcomData?.nodes}
         // ✅ Rotator bearing overlay support
@@ -1181,6 +1184,8 @@ export const DockableApp = ({
               onToggleMap={toggleAPRSEff}
               showLabelsOnMap={mapLayersEff.showAPRSLabels}
               onToggleLabelsOnMap={toggleAPRSLabelsEff}
+              iconScale={mapLayersEff.aprsIconScale ?? 1}
+              onCycleIconScale={cycleAprsIconScaleEff}
               onHoverSpot={setHoveredSpot}
               onSpotClick={handleSpotClick}
               deLocation={config.location}

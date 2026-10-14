@@ -690,8 +690,9 @@ export function paintAprs(ctx, { width, height, opacity = 1, data }) {
   if (!Array.isArray(stations) || !stations.length) return;
   const watch = data?.watch;
   const k = width / 2048;
+  const scale = Number(data?.scale) > 0 ? Number(data.scale) : 1; // #1214
   const dotStroke = Math.max(1, k);
-  const font = `${Math.max(9, Math.round(11 * k))}px monospace`;
+  const font = `${Math.max(9, Math.round(11 * k * scale))}px monospace`;
   ctx.save();
   ctx.lineWidth = dotStroke;
   ctx.strokeStyle = `rgba(0,0,0,${opacity})`;
@@ -703,7 +704,7 @@ export function paintAprs(ctx, { width, height, opacity = 1, data }) {
     const rgb = isWatched ? '245,158,11' : st.source === 'local-tnc' ? '74,222,128' : '34,211,238';
     const x = lonToX(lon, width);
     const y = latToY(lat, height);
-    const r = (isWatched ? 4 : 3) * k;
+    const r = (isWatched ? 4 : 3) * k * scale;
     ctx.fillStyle = `rgba(${rgb},${opacity})`;
     ctx.beginPath();
     ctx.arc(x, y, r, 0, Math.PI * 2);

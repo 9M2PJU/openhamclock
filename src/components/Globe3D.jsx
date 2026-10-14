@@ -419,6 +419,7 @@ export default function Globe3D({
   aprsStations = null,
   aprsWatchlistCalls = null,
   showAPRSLabels = false,
+  aprsIconScale = 1,
   allUnits = { dist: 'imperial' },
   config,
   hideUi = false,
@@ -2376,7 +2377,7 @@ export default function Globe3D({
       'tornado-warnings': overlayTornado,
       'atc-sectors': overlayATC,
       'history-playback': overlayHistory,
-      aprs: { stations: aprsStations, watch: aprsWatchlistCalls, labels: showAPRSLabels },
+      aprs: { stations: aprsStations, watch: aprsWatchlistCalls, labels: showAPRSLabels, scale: aprsIconScale },
     };
     let painted = false;
     for (const [id, painter] of Object.entries(GLOBE_OVERLAY_PAINTERS)) {
@@ -2410,6 +2411,7 @@ export default function Globe3D({
     aprsStations,
     aprsWatchlistCalls,
     showAPRSLabels,
+    aprsIconScale,
     lowMem,
   ]);
 

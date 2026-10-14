@@ -90,4 +90,42 @@ function parseAprsMessage(line) {
   }
 }
 
-module.exports = { parseAprsMessage };
+/**
+ * Messages exchanged with one station (#1216): anything from or to the exact
+ * callsign-SSID, plus the base callsign's other SSIDs (KE8PLM-9 and KE8PLM-7
+ * are the same operator from a net control's point of view). Newest first.
+ */
+function messagesForStation(messages, call, limit = 200) {
+  const key = String(call || '')
+    .trim()
+    .toUpperCase();
+  if (!key) return [];
+  const base = key.split('-')[0];
+  const baseOf = (c) =>
+    String(c || '')
+      .trim()
+      .toUpperCase()
+      .split('-')[0];
+  const hit = (c) => {
+    const u = String(c || '')
+      .trim()
+      .toUpperCase();
+    return u === key || baseOf(u) === base;
+  };
+  return (messages || [])
+    .filter((m) => m && (hit(m.from) || hit(m.to)))
+    .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0))
+    .slice(0, limit)
+    .map((m) => ({
+      from: m.from,
+      to: m.to,
+      text: m.text,
+      msgId: m.msgId ?? null,
+      timestamp: m.timestamp,
+      direction: m.direction || 'received',
+      source: m.source || null,
+      type: m.type || 'message',
+    }));
+}
+
+module.exports = { parseAprsMessage, messagesForStation };

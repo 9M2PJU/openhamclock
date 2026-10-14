@@ -7,7 +7,7 @@ const net = require('net');
 
 const { parseAprsPacket: parseAprsPosition, parseResourceTokens } = require('../utils/aprsParser');
 const { identifyDevice } = require('../utils/aprsDeviceId');
-const { parseAprsMessage } = require('../utils/aprsMessage');
+const { parseAprsMessage, messagesForStation } = require('../utils/aprsMessage');
 
 module.exports = function (app, ctx) {
   const { CONFIG, APP_VERSION, logDebug, logInfo, logWarn, logErrorOnce } = ctx;
@@ -336,6 +336,14 @@ module.exports = function (app, ctx) {
     });
   });
 
+  // REST endpoint: GET /api/aprs/messages/history?call=KE8PLM-9 — both directions, newest first (#1216)
+  app.get('/api/aprs/messages/history', (req, res) => {
+    const call = String(req.query.call || '').trim();
+    if (!call) return res.status(400).json({ error: 'call parameter required' });
+    const messages = messagesForStation(aprsMessages, call);
+    res.json({ call: call.toUpperCase(), count: messages.length, messages });
+  });
+
   // Find a heard position for a reporting station (exact SSID first, then base call)
   function findStationPosition(from) {
     const exact = aprsStations.get(from);
@@ -486,6 +494,24 @@ module.exports = function (app, ctx) {
         body: JSON.stringify({ to, message }),
       });
       if (response.ok) {
+        // Keep our own side of the conversation so a station's message
+        // history shows both directions (#1216). Rig-bridge only transmits.
+        aprsMessages.push({
+          type: 'message',
+          from: (CONFIG.callsign || 'N0CALL').toUpperCase(),
+          to: String(to).trim().toUpperCase(),
+          text: message,
+          cleanText: message,
+          tokens: [],
+          msgId: null,
+          isShelterReport: false,
+          netCommand: null,
+          direction: 'sent',
+          source: 'local-tnc',
+          timestamp: Date.now(),
+          raw: null,
+        });
+        if (aprsMessages.length > APRS_MAX_MESSAGES) aprsMessages.shift();
         return res.json({ ok: true, via: 'rig-bridge' });
       }
       const err = await response.text();
