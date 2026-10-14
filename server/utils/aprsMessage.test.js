@@ -28,6 +28,14 @@ describe('parseAprsMessage', () => {
     }
   });
 
+  it('stays fast on a 50k run of trailing NULs (CodeQL js/polynomial-redos)', () => {
+    const t0 = Date.now();
+    const m = parseAprsMessage(line(':EMCOMM   :CQ TESTNET{02' + '\0'.repeat(50000)));
+    expect(Date.now() - t0).toBeLessThan(200);
+    expect(m.text).toBe('CQ TESTNET');
+    expect(m.msgId).toBe('02');
+  });
+
   it('understands the APRS 1.2 reply-ack id forms', () => {
     expect(parseAprsMessage(line(':W1AW     :hello{02}'))).toMatchObject({ text: 'hello', msgId: '02' });
     expect(parseAprsMessage(line(':W1AW     :hello{02}AB'))).toMatchObject({ text: 'hello', msgId: '02' });

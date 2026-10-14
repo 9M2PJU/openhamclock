@@ -32,7 +32,13 @@ function parseAprsMessage(line) {
     // a Yaesu heard over a KISS TNC arrives with a trailing CR/space, which
     // used to leave "{02" glued to the text (#1212). Trim control characters
     // and whitespace first, then take the id off the end.
-    const trimmedBody = body.replace(/[\s\0-\x1f\x7f]+$/, '');
+    let end = body.length;
+    while (end > 0) {
+      const c = body.charCodeAt(end - 1);
+      if (c <= 0x20 || c === 0x7f) end--;
+      else break;
+    }
+    const trimmedBody = body.slice(0, end);
     const idMatch = trimmedBody.match(/\{([A-Za-z0-9]{1,5})(?:\}([A-Za-z0-9]{0,2}))?$/);
     const msgId = idMatch ? idMatch[1] : null;
     const text = (idMatch ? trimmedBody.slice(0, idMatch.index) : trimmedBody).trim();
