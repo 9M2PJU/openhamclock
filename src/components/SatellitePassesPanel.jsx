@@ -6,6 +6,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Orbit from '../utils/orbit.js';
+import { displayNowMs, subscribeDisplayTime } from '../utils/displayTime.js';
 
 const RECOMPUTE_MS = 30 * 60 * 1000;
 const WINDOW_HOURS = 24;
@@ -27,9 +28,9 @@ function countdown(ms) {
 
 const fmtTime = (ms) => new Date(ms).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
 
-function computePasses(sats, groundStation, minElevation) {
-  const start = new Date(Date.now() - 30 * 60 * 1000); // catch in-progress passes
-  const end = new Date(Date.now() + WINDOW_HOURS * 3600 * 1000);
+function computePasses(sats, groundStation, minElevation, nowMs = displayNowMs()) {
+  const start = new Date(nowMs - 30 * 60 * 1000); // catch in-progress passes
+  const end = new Date(nowMs + WINDOW_HOURS * 3600 * 1000);
   const passes = [];
   for (const sat of sats) {
     if (!sat?.omm) continue;
@@ -41,7 +42,7 @@ function computePasses(sats, groundStation, minElevation) {
       // bad/stale OMM for one bird shouldn't empty the whole table
     }
   }
-  const now = Date.now();
+  const now = nowMs;
   return passes
     .filter((p) => p.end > now)
     .sort((a, b) => a.start - b.start)
@@ -49,17 +50,23 @@ function computePasses(sats, groundStation, minElevation) {
 }
 
 export const SatellitePassesPanel = ({ satellites, config }) => {
-  const [now, setNow] = useState(() => Date.now());
+  // "now" is the display time, so a time shift re-plans the pass list.
+  const [now, setNow] = useState(() => displayNowMs());
   const [passTick, setPassTick] = useState(0);
   const satsRef = useRef([]);
   satsRef.current = satellites?.data || [];
 
   useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 15_000);
+    const id = setInterval(() => setNow(displayNowMs()), 15_000);
     const recompute = setInterval(() => setPassTick((t) => t + 1), RECOMPUTE_MS);
+    const unsub = subscribeDisplayTime(() => {
+      setNow(displayNowMs());
+      setPassTick((t) => t + 1);
+    });
     return () => {
       clearInterval(id);
       clearInterval(recompute);
+      unsub();
     };
   }, []);
 

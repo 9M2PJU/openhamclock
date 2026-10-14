@@ -807,6 +807,28 @@ export const LiSunMoon = glyph(
     <path d="M16 6.5a6.2 6.2 0 1 0 5.5 9.2 7 7 0 0 1-5.5-9.2z" />
   </>,
 );
+// Planners (P4): gray-line sunrise over a horizon, moon with a timeline, satellite over DE/DX
+export const LiGraylinePlan = glyph(
+  <>
+    <line x1="3" y1="15.5" x2="21" y2="15.5" />
+    <path d="M7 15.5a5 5 0 0 1 10 0" />
+    <path d="M12 5.5v2M5.5 8.5l1.4 1.4M18.5 8.5l-1.4 1.4" />
+    <line x1="4" y1="19.5" x2="20" y2="19.5" strokeDasharray="2 2" />
+  </>,
+);
+export const LiEmePlan = glyph(
+  <>
+    <path d="M15 4a6 6 0 1 0 5.5 8.5A6.8 6.8 0 0 1 15 4z" />
+    <polyline points="3,19 6,13 9,17 12,10 15,16" />
+  </>,
+);
+export const LiSatPlan = glyph(
+  <>
+    <circle cx="12" cy="8" r="1.8" />
+    <path d="M6.5 8h3.7M13.8 8h3.7" />
+    <polyline points="3,20 7,13 11,18 15,12 19,17 21,15" />
+  </>,
+);
 export const LiTrendWave = glyph(
   <>
     <polyline points="3,7.5 7,12 10,9 14.5,16.5 17.5,13 21,16" />
@@ -937,6 +959,9 @@ export const PANEL_ICONS = {
   'world-clocks': LiGlobeClock,
   stopwatch: LiStopwatch,
   'aircraft-nearby': LiPlane,
+  'grayline-planner': LiGraylinePlan,
+  'eme-planner': LiEmePlan,
+  'sat-planner': LiSatPlan,
 };
 
 /**

@@ -45,6 +45,8 @@ export const HELP_TOPICS = {
   settings: 'settings-reference',
   hosting: 'hosted-site-vs-self-hosted',
   utility: 'utility',
+  eme: 'the-eme-layout',
+  'time-shift': 'time-shift',
 };
 
 /** Dockable panel component id → topic key (see DockableApp panelDefs) */
@@ -112,6 +114,9 @@ export const PANEL_HELP = {
   'world-clocks': 'utility',
   stopwatch: 'utility',
   'aircraft-nearby': 'utility',
+  'grayline-planner': 'propagation-panels',
+  'eme-planner': 'eme',
+  'sat-planner': 'satellites',
 };
 
 /**
@@ -135,6 +140,7 @@ export const LAYER_HELP = {
   'winlink-gateways': 'emcomm-mesh',
   'worked-grids': 'logbook',
   'active-users': 'map-layers',
+  'time-shift': 'time-shift',
 };
 
 /** Settings tab id → topic key */

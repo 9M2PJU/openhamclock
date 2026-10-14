@@ -31,6 +31,8 @@ import { getAllLayers } from '../plugins/layerRegistry.js';
 import { GLOBE_OVERLAY_LAYER_IDS } from '../utils/globeOverlays.js';
 import { countryColor, fetchCountriesGeojson } from '../utils/countriesBasemap.js';
 import PluginLayer from './PluginLayer.jsx';
+import TimeShiftControl from './TimeShiftControl.jsx';
+import { displayNow, subscribeDisplayTime } from '../utils/displayTime.js';
 import AzimuthalMap from './AzimuthalMap.jsx';
 import { MAP_FOCUS_EVENT, MAP_FOCUS_PULSE_MS, nearestWrappedLon, isInView } from '../utils/mapFocus.js';
 // three.js is ~600 kB — load it only when the operator actually opens 3D mode.
@@ -663,6 +665,7 @@ export const WorldMap = ({
     return getAllLayers().filter(
       (l) =>
         l.id !== 'satellites' &&
+        l.id !== 'time-shift' &&
         !(!lowMemoryMode && GLOBE_OVERLAY_LAYER_IDS.includes(l.id)) &&
         (pluginLayerStates[l.id]?.enabled ?? l.defaultEnabled),
     );
@@ -1036,26 +1039,22 @@ export const WorldMap = ({
       wrap: false,
     }).addTo(map);
 
-    // Refresh terminator immediately to set initial position
-    setTimeout(() => {
+    // Refresh terminator immediately to set initial position. The night
+    // polygon follows the display time (utils/displayTime.js), so a time
+    // shift moves it at once rather than on the next minute tick.
+    const refreshTerminator = () => {
       if (terminatorRef.current) {
-        terminatorRef.current.setTime();
+        terminatorRef.current.setTime(displayNow());
         const path = terminatorRef.current.getElement();
         if (path) {
           path.classList.add('terminator-path');
         }
       }
-    }, 100);
+    };
+    setTimeout(refreshTerminator, 100);
 
-    const terminatorInterval = setInterval(() => {
-      if (terminatorRef.current) {
-        terminatorRef.current.setTime();
-        const path = terminatorRef.current.getElement();
-        if (path) {
-          path.classList.add('terminator-path');
-        }
-      }
-    }, 60000);
+    const terminatorInterval = setInterval(refreshTerminator, 60000);
+    const unsubTerminatorShift = subscribeDisplayTime(refreshTerminator);
 
     map.on('moveend', () => {
       try {
@@ -1151,6 +1150,7 @@ export const WorldMap = ({
 
     return () => {
       clearInterval(terminatorInterval);
+      unsubTerminatorShift();
       resizeObserver.disconnect();
       mapRef.current?.removeEventListener('click', handlePopupCallsignClick);
       mapInstanceRef.current = null;
@@ -1610,7 +1610,7 @@ export const WorldMap = ({
       sunMarkerRef.current = [];
       moonMarkerRef.current = [];
 
-      const now = new Date();
+      const now = displayNow();
       // World copy offsets so sun/moon appear on all visible map copies
       const worldOffsets = [-360, 0, 360];
 
@@ -1663,10 +1663,12 @@ export const WorldMap = ({
     // Initial render
     updateCelestial();
 
-    // Update every 60 seconds to match terminator
+    // Update every 60 seconds to match terminator, and at once on a time shift
     const interval = setInterval(updateCelestial, 60000);
+    const unsubShift = subscribeDisplayTime(updateCelestial);
     return () => {
       clearInterval(interval);
+      unsubShift();
       sunMarkerRef.current.forEach((m) => {
         try {
           map.removeLayer(m);
@@ -3294,6 +3296,11 @@ export const WorldMap = ({
 
       {!hideOverlays && !mapUiHidden && (
         <CallsignWeatherOverlay hoveredSpot={hoveredSpot} enabled={dxWeatherAllowed} allUnits={allUnits} />
+      )}
+
+      {/* Display-time scrubber (Time Shift layer) — floats over every projection */}
+      {!hideOverlays && !mapUiHidden && pluginLayerStates['time-shift']?.enabled && (
+        <TimeShiftControl onClose={() => window.hamclockLayerControls?.toggleLayer('time-shift', false)} />
       )}
 
       {/* DX News Ticker - left side of bottom bar (independent of UI hide toggle) */}

@@ -8,6 +8,9 @@ import DonateButton from './DonateButton.jsx';
 import { ctyLookup, isCtyLoaded } from '../utils/ctyLookup';
 import { getFlagUrl } from '../utils/countryFlags';
 import { formatTemperature, formatTemperatureBoth } from '../utils/formatWeather.js';
+import useDisplayTime from '../hooks/app/useDisplayTime.js';
+import { formatOffset } from '../utils/displayTime.js';
+import { AlarmIndicator } from './AlarmIndicator.jsx';
 
 export const Header = ({
   config,
@@ -31,6 +34,9 @@ export const Header = ({
 }) => {
   const isMobile = breakpoint === 'mobile';
   const isTablet = breakpoint === 'tablet';
+  // Display-time shift (Time Shift scrubber): the clocks show the shifted time
+  // and a red NOT REAL TIME badge; clicking the badge snaps back to now.
+  const { offsetMs: timeOffsetMs, shifted: timeShifted, reset: resetDisplayTime } = useDisplayTime();
 
   const scale = config.headerSize > 0 && config.headerSize <= 10 ? config.headerSize : 1;
   const callsignSize = `${(isMobile ? 16 : 22) * scale}px`;
@@ -125,6 +131,31 @@ export const Header = ({
                 {utcDate}
               </span>
             )}
+            {timeShifted && (
+              <button
+                type="button"
+                onClick={resetDisplayTime}
+                title={`Display time is ${formatOffset(timeOffsetMs)} from now — click to return to real time`}
+                aria-label={`Not real time: display shifted ${formatOffset(timeOffsetMs)}. Click to return to real time`}
+                style={{
+                  background: '#ff4d4d',
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: '4px',
+                  padding: '2px 6px',
+                  fontSize: `${10 * scale}px`,
+                  fontWeight: 700,
+                  letterSpacing: '0.5px',
+                  cursor: 'pointer',
+                  fontFamily: 'inherit',
+                  whiteSpace: 'nowrap',
+                  animation: 'pulse 2s infinite',
+                }}
+              >
+                NOT REAL TIME {formatOffset(timeOffsetMs)}
+              </button>
+            )}
+            <AlarmIndicator timeZone={config.timezone} />
           </div>
         ) : (
           <div

@@ -147,8 +147,20 @@ _Settings → Map Layers: every overlay grouped by category, each with an opacit
 | Logged QSOs (N3FJP) | Recently logged QSOs and live entry previews from the N3FJP bridge (self-hosted); each contact gets a callsign pill in the layer colour (previews with a trailing ?) that follows the map's Show/Hide Calls button                                                                | N   |
 | Logged QSOs (API)   | QSOs pushed by any external logger via the open REST API (self-hosted) — see [API.md](API.md); callsign pills as above, per-QSO colours carry into the pill                                                                                                                       | —   |
 | History Playback    | Scrub through the last 24h of DX spots — timeline slider, 5–60 min window, play/pause with speeds up to 15 min/s, paths colored by band. Works on the flat map and the 3D globe, sharing one timeline. History records from server start; the control shows how far back it goes. | —   |
+| Time Shift          | A floating scrubber that moves the whole dashboard's **display time** up to ±30 days — see [Time shift](#time-shift) below. Works on every projection.                                                                                                                            | —   |
 
 **Write your own layer or panel:** drop a plugin file into `src/plugins/local/` (map layers) or `src/plugins/local/panels/` (dockable panels) and it's auto-discovered — no registration, and it survives updates. See [PLUGINS.md](PLUGINS.md).
+
+### Time shift
+
+HamClock users will know this one: shift the **display time** forward or back and the dashboard shows that moment instead of now — where the terminator and gray line will be at your sked time, the sun and moon, every satellite's position, track and footprint, the next passes, the VOACAP chart's "now" column, and the header clocks. Live spot feeds (cluster, POTA, PSKReporter, APRS…) are **not** shifted — they are always live.
+
+- **The control:** turn on the **Time Shift** layer (Settings → Map Layers, the command palette, or the layer list) and a small draggable, minimisable panel appears on the map with **−1w / −1d / −1h / +1h / +1d / +1w** buttons, a slider spanning ±30 days, the shifted UTC time, and a **Now** button. Drag the title to move it; double-click the title to reset its position; × closes it (the shift stays until you press Now).
+- **The badge:** while the offset is anything but zero, the header clocks (and the Clock layout) carry a red **NOT REAL TIME** badge with the offset. Click the badge to snap back to real time.
+- **Keys:** `[` and `]` step −/+1 hour, `{` and `}` −/+1 day, `0` returns to now (listed in the `?` shortcuts panel).
+- **Planners:** rows in the Grayline, EME and Satellite planner panels are clickable — "Show on map" sets the display time to that window's start so you can see the geometry.
+- The shift lives for the session only (a reload is always real time) and never moves the alarm clock, which rings on real time.
+- **Remote control:** `window.dispatchEvent(new CustomEvent('ohc:set-time', { detail: { offsetMs: 3600000 } }))`, `{ iso: '2026-12-21T12:00:00Z' }`, or `'now'` drives it from the console or a kiosk/remote-control integration.
 
 ### DE and DX: markers, click-to-set, favorites
 
@@ -184,37 +196,40 @@ _The command palette (Ctrl/Cmd+K): jump to any panel, layout, layer, or setting 
 
 **Command palette.** Press **Ctrl+K** (⌘K on Mac) for a fuzzy-searchable list of most things you can do: toggle map layers, switch layouts (named dockable presets included, as "Dockable — _name_"), open Settings on a specific tab, jump to a manual topic, toggle fullscreen, open What's New — and, in the Dockable layout, open or focus any panel. Arrow keys select, Enter runs, Esc closes.
 
-| Key | Action                                   |
-| --- | ---------------------------------------- |
-| `?` | Toggle the keyboard shortcuts help panel |
-| `/` | Toggle DE and DX markers                 |
-| Esc | Close the open modal                     |
-| A   | Aurora Forecast                          |
-| B   | PSKR Band Activity                       |
-| C   | City Lights (Night)                      |
-| D   | DE/DX Great Circle                       |
-| E   | Earthquakes                              |
-| F   | Wildfires                                |
-| G   | Gray Line                                |
-| H   | Maidenhead Grid                          |
-| I   | Floods & Storms                          |
-| J   | D-RAP Absorption                         |
-| K   | Winlink Gateways                         |
-| L   | Lightning Activity                       |
-| M   | MUF Map                                  |
-| N   | Logged QSOs (N3FJP)                      |
-| O   | Global Clouds (OWM)                      |
-| P   | WSPR                                     |
-| Q   | Contest QSOs                             |
-| R   | Reverse Beacon Network                   |
-| S   | Satellite Tracks                         |
-| T   | Tornado Warnings                         |
-| U   | Active Users                             |
-| V   | VOACAP Propagation Map                   |
-| W   | Weather Radar                            |
-| X   | Aircraft                                 |
-| Y   | CQ / ITU Zones                           |
-| Z   | ATC Sectors                              |
+| Key     | Action                                              |
+| ------- | --------------------------------------------------- |
+| `?`     | Toggle the keyboard shortcuts help panel            |
+| `/`     | Toggle DE and DX markers                            |
+| `[` `]` | Display time −/+ 1 hour ([Time shift](#time-shift)) |
+| `{` `}` | Display time −/+ 1 day                              |
+| `0`     | Display time back to now                            |
+| Esc     | Close the open modal                                |
+| A       | Aurora Forecast                                     |
+| B       | PSKR Band Activity                                  |
+| C       | City Lights (Night)                                 |
+| D       | DE/DX Great Circle                                  |
+| E       | Earthquakes                                         |
+| F       | Wildfires                                           |
+| G       | Gray Line                                           |
+| H       | Maidenhead Grid                                     |
+| I       | Floods & Storms                                     |
+| J       | D-RAP Absorption                                    |
+| K       | Winlink Gateways                                    |
+| L       | Lightning Activity                                  |
+| M       | MUF Map                                             |
+| N       | Logged QSOs (N3FJP)                                 |
+| O       | Global Clouds (OWM)                                 |
+| P       | WSPR                                                |
+| Q       | Contest QSOs                                        |
+| R       | Reverse Beacon Network                              |
+| S       | Satellite Tracks                                    |
+| T       | Tornado Warnings                                    |
+| U       | Active Users                                        |
+| V       | VOACAP Propagation Map                              |
+| W       | Weather Radar                                       |
+| X       | Aircraft                                            |
+| Y       | CQ / ITU Zones                                      |
+| Z       | ATC Sectors                                         |
 
 The alphabet is fully spoken for, so a few newer layers (Meshtastic Nodes, IBP Beacons, Worked Grids) have no key — toggle those from Settings → Map Layers.
 
@@ -266,6 +281,7 @@ _The Solar panel cycling through live imagery, indices, X-ray flux, and the moon
 - **Space Wx Trends** — where conditions are _heading_: 24-hour sparklines of solar wind speed, IMF Bz, and GOES ≥10 MeV proton flux from NOAA's real-time feeds. Southward (negative) Bz turns amber then red — sustained south Bz plus rising wind speed is the classic prelude to a geomagnetic storm, hours before the K-index shows it.
 - **Meteor Showers** — annual showers for meteor-scatter operators, sorted by proximity to peak, with ZHR and live radiant elevation from your QTH.
 - **Sun & Moon** — sunrise/sunset (UTC) and current twilight state, moonrise/moonset (local), and live moon azimuth/elevation for both DE and the DX target, plus the current phase. Greyline chasers get both ends of the path at a glance; EME operators get pointing without opening the lunar panel.
+- **Grayline Planner** — when are DE and the DX target _both_ on the gray line? A seven-day timeline (one row per UTC day) paints each station's twilight windows — sunrise and sunset ± a margin you choose (15–90 minutes, default 30) — and highlights the overlaps in green, with a countdown to the next mutual window and a table of upcoming windows in UTC and your local time, tagged sunrise/sunset at each end. Click a window to set the [display time](#time-shift) to its start and watch the terminator line up. Pure local math (the same NOAA sunrise/sunset the DE/DX panels use) — no network.
 - **My Signal (RBN)** — who is hearing _you_: live Reverse Beacon Network skimmer reports of your callsign from the last 30 minutes, grouped by band with SNR and CW speed. Call CQ on CW/RTTY/FT modes and watch your signal land — the honest antenna-comparison tool.
 - **WSPR My Spots** — where your WSPR beacons were received in the last 24 hours (via the [wspr.live](https://wspr.live) archive): per-band counts, unique receivers, best DX, and the full reception list with SNR and distance. The milliwatt companion to the RBN panel.
 
@@ -461,6 +477,7 @@ Two dockable panels build on the tracking:
 
 - **Satellite Passes** — one table of every upcoming pass for your tracked birds over the next 24 hours, sorted by AOS: countdown, start/end times, duration, compass path (e.g. SW→NE), and max elevation color-coded by quality. Passes in progress glow green with a LOS countdown. Uses your minimum-elevation setting.
 - **AMSAT Status** — the community-reported AMSAT status board: which birds have been **Heard**, are **Telemetry Only**, or **Not Heard**, with report counts and recency. Passes tell you when the bird is up; this tells you whether the transponder is worth pointing at.
+- **Satellite Planner** — pick one tracked satellite and see its elevation at DE _and_ at the DX target over the next 24 hours on one chart, with the windows where it is above your minimum elevation at **both** ends shaded green and listed underneath (start, end, length, peak common elevation, each station's own AOS–LOS). Click the chart for a point readout (elevations, sub-point, altitude); click a pass — or the readout's **Show on map** — to set the [display time](#time-shift) to that moment so the map, globe and footprints jump there. Same math as the EME layout's SAT mode.
 
 ---
 
@@ -541,6 +558,7 @@ The rail:
 - **Moon Now** — phase, distance, declination (positive is the northern hemisphere's friend), the two-way path-loss delta against the mean distance (loss goes with distance⁴, so the perigee–apogee cycle is worth about ±2 dB), and an az/el card for each end with the next rise or set.
 - **Sky Tracks** — both stations' moon tracks for the next 24 hours on one polar dial (centre = zenith, edge = horizon), with each station's moon marker; hollow markers are below the horizon at their rising azimuth.
 - **Mutual Windows** — the next 48 hours of windows where _both_ ends have the moon at or above the selectable minimum elevation, with duration, the peak of the lower elevation, and a countdown to the next one. The header badge turns green while a window is open.
+- **EME Planner** — the same 48 hours as a chart: moon elevation at DE (solid) and DX (dashed) with the mutual windows shaded green and a red "now" cursor. Click any point for a readout — azimuth/elevation at both ends, Earth–Moon distance, the path-loss delta against the mean distance, and the round-trip echo delay — and **Show on map** to set the [display time](#time-shift) there. The table under it lists each window with its start, end, length, peak common elevation and the best (lowest) path-loss delta inside it. Also available as a dockable panel (**EME Planner**) outside this layout.
 - **DX Target** — type a grid, click the globe, or pick a spot; lock it while you work a station.
 - **EME Activity (PSK Reporter)** — every Q65 and JT65 report at 50 MHz and above from PSK Reporter's live feed over the last two hours, sender → receiver with mode, frequency, SNR and grids. Q65 is a VHF+ mode by design and JT65 above 6 m is EME, so this is where digital moonbounce activity actually shows up. Clicking a row sets the sender as the DX target. The server subscribes to the band-wide feed only while an EME layout is asking for it.
 - **EME Spots (cluster)** — DX cluster spots on an amateur EME band (6 m and up) whose comment mentions EME, moonbounce, JT65, Q65, or QRA64. Clicking one sets it as the DX target.
@@ -567,7 +585,7 @@ DX-side Doppler is deliberately not shown — that belongs to the other operator
 
 _Settings → Alerts: pick what wakes you and how_
 
-**Settings → Alerts** plays a tone when new items appear in a feed. Feeds: POTA, SOTA, WWFF, WWBOTA, DX Cluster, Watchlist Hits, DXpeditions, Contests, Contest Starts, Satellite Passes, Band Openings, Lightning Proximity, and Space Weather — all off by default, each with its own tone (nine Web Audio presets — no sound files) and a master volume.
+**Settings → Alerts** plays a tone when new items appear in a feed. Feeds: POTA, SOTA, WWFF, WWBOTA, DX Cluster, Watchlist Hits, DXpeditions, Contests, Contest Starts, Satellite Passes, Band Openings, Lightning Proximity, Space Weather, and Alarm Clock — all off by default, each with its own tone (nine Web Audio presets — no sound files) and a master volume. (The Alarm Clock entry only picks the alarm's tone and notification; an armed alarm always rings.)
 
 Four event feeds go beyond "new item in a panel":
 
@@ -577,6 +595,8 @@ Four event feeds go beyond "new item in a panel":
 - **Band Openings** — the server watches RBN and cluster spot streams and flags surges against a 3-hour baseline, both per band and continent path and per band and CQ zone of the stations doing the hearing. A **Scope** setting picks what you are told about: **My CQ zone** (default — "20m opening EU→zone 3 (12 spots, 4x baseline)", so a West Coast station is not woken for an East Coast opening), **My continent**, or **Worldwide**. Your zone comes from your callsign; enter it by hand if your call's prefix doesn't match where you actually operate. One alert per opening episode; quiet while the baseline is still warming after a server restart.
 
 Sensible guardrails: no alert storm on page load or when returning to a background tab, a per-feed cooldown, and one tone per batch of new items.
+
+**Alarm clock.** A **daily** alarm and a **once-only** alarm, each set as HH:MM in your station's local time or UTC and armed or disarmed independently. Set them at the bottom of Settings → Alerts, or click the small **bell** in the header (grey = nothing armed, **green = armed**, red and pulsing = ringing) for the same editor in a popover; the Clock layout shows the same bell in its corner. When an alarm is due it rings the Alarm Clock tone repeatedly (up to 90 s), shows a red banner across the top with **Dismiss**, and sends a browser notification if notifications are on; the once-only alarm disarms itself after ringing. Alarms are stored in your settings (so they survive reloads and sync like everything else) and always run on real time, never on the time shift. In the Contests panel the **⏰** next to a contest sets the once-only alarm to that contest's start (click again to clear). Remote control: `window.dispatchEvent(new CustomEvent('ohc:set-alarm', { detail: { kind: 'daily', time: '06:30', utc: false, armed: true } }))` (`kind: 'once'` also accepts `at: '<ISO instant>'`).
 
 **Browser notifications:** each feed also gets a 🔔 toggle to show an OS-level notification alongside the tone — delivered through the service worker, so they work while the tab is backgrounded. Grant permission with the master button at the top of the Alerts tab.
 

@@ -64,6 +64,9 @@ import useVersionCheck from './hooks/app/useVersionCheck';
 import usePresence from './hooks/app/usePresence';
 import useWavelogSync from './hooks/app/useWavelogSync.js';
 import useAudioAlerts from './hooks/app/useAudioAlerts';
+import { useAlarmScheduler } from './hooks/app/useAlarmClock.js';
+import { AlarmBanner } from './components/AlarmIndicator.jsx';
+import { shiftDisplayTime, resetDisplayTime, HOUR_MS, DAY_MS } from './utils/displayTime.js';
 import { useSatelliteAnnouncements } from './hooks/app/useSatelliteAnnouncements';
 import useSceneRotation from './hooks/app/useSceneRotation';
 import useIdleClock from './hooks/app/useIdleClock';
@@ -191,7 +194,15 @@ const App = () => {
         }
         return { key: key.toUpperCase(), description: `Toggle ${name}` };
       })
-      .sort((a, b) => a.key.localeCompare(b.key));
+      .sort((a, b) => a.key.localeCompare(b.key))
+      .concat([
+        // Display-time shift (utils/displayTime.js) — see MANUAL "Time shift"
+        { key: '[', description: 'Display time −1 hour' },
+        { key: ']', description: 'Display time +1 hour' },
+        { key: '{', description: 'Display time −1 day' },
+        { key: '}', description: 'Display time +1 day' },
+        { key: '0', description: 'Display time back to now' },
+      ]);
   }, [layerShortcuts, t]);
 
   useEffect(() => {
@@ -221,6 +232,19 @@ const App = () => {
 
       if (e.key === '/') {
         toggleDeDxMarkers();
+        e.preventDefault();
+        return;
+      }
+
+      // Display-time shift: [ ] = ∓1 h, { } = ∓1 day, 0 = back to now
+      const timeStep = { '[': -HOUR_MS, ']': HOUR_MS, '{': -DAY_MS, '}': DAY_MS }[e.key];
+      if (timeStep) {
+        shiftDisplayTime(timeStep);
+        e.preventDefault();
+        return;
+      }
+      if (e.key === '0') {
+        resetDisplayTime();
         e.preventDefault();
         return;
       }
@@ -479,6 +503,9 @@ const App = () => {
     }
     return upcoming;
   }, [satellites.data]);
+
+  // Alarm clock: rings armed daily/once alarms on real time (utils/alarmClock.js)
+  useAlarmScheduler(config.timezone);
 
   // Audio alerts for new items in data feeds
   useAudioAlerts({
@@ -986,6 +1013,7 @@ const App = () => {
         onClose={() => setShowKeybindings(false)}
         keybindings={keybindingsList}
       />
+      <AlarmBanner timeZone={config.timezone} />
       <ActivateFilterManager
         name="POTA"
         filters={potaFilters}

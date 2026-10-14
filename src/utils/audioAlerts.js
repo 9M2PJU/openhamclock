@@ -46,6 +46,9 @@ export const ALERT_FEEDS = {
   'band-openings': { label: 'Band Openings', defaultTone: 'low-tone', eventful: true },
   lightning: { label: 'Lightning Proximity', defaultTone: 'chirp' },
   swpc: { label: 'Space Weather', defaultTone: 'chime' },
+  // Alarm clock (utils/alarmClock.js): armed alarms always ring; this entry
+  // picks the tone and whether a browser notification accompanies it.
+  alarm: { label: 'Alarm Clock', defaultTone: 'chime', eventful: true },
 };
 
 const LS_KEY = 'ohc_audio_alerts';

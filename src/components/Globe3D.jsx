@@ -20,6 +20,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { getBandColor, getBandFromFreq } from '../utils/callsign.js';
 import { getBandColorForBand, getEffectiveBandColors } from '../utils/bandColors.js';
 import { getSunPosition, getMoonPosition, getMoonAzEl, densifyGeoJson } from '../utils/geo.js';
+import { displayNow, subscribeDisplayTime } from '../utils/displayTime.js';
 import { lzwDecode } from '../plugins/layers/useLightning.js';
 import { MAP_STYLES } from '../utils/config.js';
 import { MAP_FOCUS_EVENT, MAP_FOCUS_PULSE_MS } from '../utils/mapFocus.js';
@@ -1413,13 +1414,17 @@ export default function Globe3D({
     const update = () => {
       const s = gl.current;
       if (!s.earthMat) return;
-      const sun = getSunPosition(new Date());
+      const sun = getSunPosition(displayNow());
       s.sunWorld = latLonToVec3(sun.lat, sun.lon, 1).normalize();
       s.requestRender?.(); // the sun moves on a timer, not on input
     };
     update();
     const id = setInterval(update, 60_000);
-    return () => clearInterval(id);
+    const unsubShift = subscribeDisplayTime(update); // display-time shift moves the sun at once
+    return () => {
+      clearInterval(id);
+      unsubShift();
+    };
   }, [lowMem]);
 
   // ── Moon: real position, real phase ──────────────────────
@@ -1458,7 +1463,7 @@ export default function Globe3D({
     let lastImageBucket = null;
 
     const updatePosition = () => {
-      const pos = getMoonPosition(new Date());
+      const pos = getMoonPosition(displayNow());
       latLonToVec3(pos.lat, pos.lon, MOON_DIST, moon.position);
       s.requestRender?.();
     };
@@ -1512,11 +1517,13 @@ export default function Globe3D({
     updateTexture();
     const posId = setInterval(updatePosition, 60_000);
     const texId = setInterval(updateTexture, 600_000); // checks the hour bucket
+    const unsubMoonShift = subscribeDisplayTime(updatePosition);
 
     return () => {
       alive = false;
       clearInterval(posId);
       clearInterval(texId);
+      unsubMoonShift();
       s.scene?.remove(moon);
       material.map?.dispose();
       material.dispose();
@@ -1573,7 +1580,7 @@ export default function Globe3D({
 
     const build = () => {
       clear();
-      const now = new Date();
+      const now = displayNow();
       const viaSat = !!relayTarget && Number.isFinite(relayTarget.lat) && Number.isFinite(relayTarget.lon);
       let targetVec;
       let deUp;
@@ -1657,7 +1664,9 @@ export default function Globe3D({
     // Moon legs drift slowly (one-minute tick); satellite legs rebuild with
     // every relayTarget update instead, so no timer in that mode.
     const id = relayTarget ? null : setInterval(build, 60_000);
+    const unsubLegShift = relayTarget ? null : subscribeDisplayTime(build);
     return () => {
+      unsubLegShift?.();
       if (id) clearInterval(id);
       clear();
       s.scene?.remove(group);
@@ -1711,7 +1720,7 @@ export default function Globe3D({
       s.requestRender?.();
       return;
     }
-    const pos = getMoonPosition(new Date());
+    const pos = getMoonPosition(displayNow());
     const moonDir = latLonToVec3(pos.lat, pos.lon, 1);
     const up = new THREE.Vector3(0, 1, 0);
     const side = new THREE.Vector3().crossVectors(moonDir, up);

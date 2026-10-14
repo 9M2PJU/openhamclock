@@ -6,6 +6,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { MoonSkyChart } from './MoonSkyChart.jsx';
 import { getMoonPhase, getMoonAzEl, getMoonTimes, latLonToMaidenhead } from '../utils/geo.js';
 import { loadConfig } from '../utils/config.js';
+import { displayNow, subscribeDisplayTime, isTimeShifted } from '../utils/displayTime.js';
 import useAutoRotate from '../hooks/app/useAutoRotate.js';
 
 const MODES = ['image', 'indices', 'xray', 'lunar'];
@@ -375,7 +376,12 @@ export const SolarPanel = ({ solarIndices, bandConditions, forcedMode, config })
   const [moonTick, setMoonTick] = useState(0);
   useEffect(() => {
     const interval = setInterval(() => setMoonTick((t) => t + 1), 60 * 1000);
-    return () => clearInterval(interval);
+    // Display-time shift (Time Shift scrubber) re-points the moon at once.
+    const unsub = subscribeDisplayTime(() => setMoonTick((t) => t + 1));
+    return () => {
+      clearInterval(interval);
+      unsub();
+    };
   }, []);
 
   const emeData = useMemo(() => {
@@ -385,7 +391,7 @@ export const SolarPanel = ({ solarIndices, bandConditions, forcedMode, config })
     const lat = cfg?.location?.lat;
     const lon = cfg?.location?.lon;
     if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
-    const now = new Date();
+    const now = displayNow();
     const pos = getMoonAzEl(now, lat, lon);
     const times = getMoonTimes(now, lat, lon);
     // EME path loss goes with distance^4 (two-way): Δ vs the mean distance
@@ -434,12 +440,15 @@ export const SolarPanel = ({ solarIndices, bandConditions, forcedMode, config })
   }, []);
 
   const renderLunar = () => {
-    const now = new Date();
+    const now = displayNow();
     const phase = getMoonPhase(now); // 0-1, 0=new, 0.5=full
 
-    // Use NASA Dial-A-Moon data when available, fall back to local cosine approximation
-    const nasaIllumination = moonData?.phase;
-    const nasaAge = moonData?.age;
+    // Use NASA Dial-A-Moon data when available, fall back to local cosine
+    // approximation. NASA data describes the real moment, so when the display
+    // time is shifted the local model takes over.
+    const shifted = isTimeShifted();
+    const nasaIllumination = shifted ? null : moonData?.phase;
+    const nasaAge = shifted ? null : moonData?.age;
     const illumination =
       nasaIllumination != null
         ? Math.round(nasaIllumination)

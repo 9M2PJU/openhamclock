@@ -36,6 +36,7 @@ import {
   DEFAULT_BAND_OPENING_SCOPE,
 } from '../utils/audioAlerts';
 import { getCallsignInfo } from '../utils/callsign';
+import { AlarmSettingsSection } from './AlarmIndicator.jsx';
 import { getNotificationPermission, requestNotificationPermission } from '../utils/notifications';
 import {
   isPushSupported,
@@ -6448,7 +6449,7 @@ export const SettingsPanel = ({
           aria-labelledby="tab-settings-alerts"
           hidden={activeTab !== 'alerts'}
         >
-          {activeTab === 'alerts' && <AudioAlertsTab callsign={config?.callsign} />}
+          {activeTab === 'alerts' && <AudioAlertsTab callsign={config?.callsign} timeZone={config?.timezone} />}
         </div>
 
         {/* Rig Bridge Tab */}
@@ -7198,7 +7199,7 @@ function WebPushCard({ notifPermission }) {
 }
 
 /** Audio Alerts settings tab */
-function AudioAlertsTab({ callsign }) {
+function AudioAlertsTab({ callsign, timeZone }) {
   const { t } = useTranslation();
   const [alertSettings, setAlertSettingsState] = useState(() => getAlertSettings());
   // CQ zone derived from the callsign — the Band Openings scope default (#1191)
@@ -7494,6 +7495,21 @@ function AudioAlertsTab({ callsign }) {
           </div>
         );
       })}
+
+      {/* Alarm clock — daily + once-only (utils/alarmClock.js) */}
+      <div
+        style={{
+          background: 'var(--bg-tertiary)',
+          border: '1px solid var(--border-color)',
+          borderRadius: '8px',
+          padding: '14px',
+        }}
+      >
+        <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '8px' }}>
+          🔔 {t('alarm.title')}
+        </div>
+        <AlarmSettingsSection timeZone={timeZone} />
+      </div>
     </div>
   );
 }
