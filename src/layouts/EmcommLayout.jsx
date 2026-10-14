@@ -225,7 +225,6 @@ export default function EmcommLayout(props) {
   } = props;
 
   const { t } = useTranslation();
-  const [seconds, setSeconds] = useState(() => String(new Date().getUTCSeconds()).padStart(2, '0'));
   const [expandedAlert, setExpandedAlert] = useState(null);
   // Sidebar section collapse state (#1188)
   const [panelMode, setPanelMode] = useState(readPanelMode);
@@ -280,14 +279,6 @@ export default function EmcommLayout(props) {
   const msgSinceRef = useRef(sessionStartRef.current);
   const mapInstanceRef = useRef(null);
   const overlayLayersRef = useRef([]);
-
-  // UTC seconds ticker
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setSeconds(String(new Date().getUTCSeconds()).padStart(2, '0'));
-    }, 1000);
-    return () => clearInterval(timer);
-  }, []);
 
   // Fetch the Winlink gateway list once on mount and refresh hourly. The
   // server proxy already caches for 1h so this is essentially free; we use
@@ -943,9 +934,10 @@ export default function EmcommLayout(props) {
           {loading && <span style={{ color: '#888', fontSize: '11px', marginLeft: '8px' }}>Loading...</span>}
         </div>
         <div style={{ fontFamily: 'var(--font-mono)', fontSize: '14px' }}>
-          <span style={{ color: '#fff', fontWeight: 600 }}>
-            {utcTime}:{seconds}
-          </span>
+          {/* utcTime already carries seconds (HH:MM:SS); a second ticker used to
+              be appended, printing "00:13:47:47", and the date was missing (#1217) */}
+          <span style={{ color: '#888', marginRight: '8px', fontSize: '12px' }}>{utcDate}</span>
+          <span style={{ color: '#fff', fontWeight: 600 }}>{utcTime}</span>
           <span style={{ color: '#888', marginLeft: '6px', fontSize: '11px' }}>UTC</span>
         </div>
       </div>
@@ -1103,32 +1095,73 @@ export default function EmcommLayout(props) {
             {disasters.length === 0 ? (
               <EmptyState text="No recent disaster declarations" />
             ) : (
-              disasters.map((d) => (
-                <div
-                  key={d.id || d.disasterNumber}
-                  style={{
-                    padding: '4px 8px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '8px',
-                    fontSize: '11px',
-                    marginBottom: '2px',
-                  }}
-                >
-                  <span style={{ fontSize: '14px' }}>{incidentIcon(d.incidentType)}</span>
-                  <div>
-                    <div style={{ color: '#ddd' }}>{d.declarationTitle}</div>
-                    <div style={{ color: '#888', fontSize: '10px' }}>
-                      {d.incidentType} —{' '}
-                      {d.declarationType === 'DR'
-                        ? 'Major'
-                        : d.declarationType === 'EM'
-                          ? 'Emergency'
-                          : d.declarationType}
+              <>
+                {disasters.map((d) => {
+                  const kind =
+                    d.declarationType === 'DR'
+                      ? 'Major disaster'
+                      : d.declarationType === 'EM'
+                        ? 'Emergency'
+                        : d.declarationType === 'FM'
+                          ? 'Fire management'
+                          : d.declarationType;
+                  const areas = Array.isArray(d.areas) ? d.areas : [];
+                  const shownAreas = areas.slice(0, 4).join(', ');
+                  const moreAreas = areas.length > 4 ? ` +${areas.length - 4} more` : '';
+                  const day = (iso) => (iso ? String(iso).slice(0, 10) : '');
+                  return (
+                    <div
+                      key={d.id || d.disasterNumber}
+                      style={{
+                        padding: '4px 8px',
+                        display: 'flex',
+                        alignItems: 'flex-start',
+                        gap: '8px',
+                        fontSize: '11px',
+                        marginBottom: '2px',
+                      }}
+                    >
+                      <span style={{ fontSize: '14px' }}>{incidentIcon(d.incidentType)}</span>
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ color: '#ddd' }}>
+                          {d.declarationTitle}
+                          {d.url && (
+                            <a
+                              href={d.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              title="Open this declaration on fema.gov"
+                              style={{ color: '#f59e0b', marginLeft: '6px', fontSize: '10px', textDecoration: 'none' }}
+                            >
+                              FEMA ↗
+                            </a>
+                          )}
+                        </div>
+                        <div style={{ color: '#888', fontSize: '10px' }}>
+                          {d.incidentType} — {kind}
+                          {d.disasterNumber ? ` · ${d.declarationType || 'DR'}-${d.disasterNumber}` : ''}
+                        </div>
+                        <div style={{ color: '#888', fontSize: '10px' }}>
+                          Declared {day(d.declarationDate)}
+                          {d.incidentBeginDate
+                            ? ` · Incident ${day(d.incidentBeginDate)}${d.incidentEndDate ? ` – ${day(d.incidentEndDate)}` : ' – ongoing'}`
+                            : ''}
+                        </div>
+                        {areas.length > 0 && (
+                          <div style={{ color: '#aaa', fontSize: '10px' }} title={areas.join(', ')}>
+                            {shownAreas}
+                            {moreAreas}
+                          </div>
+                        )}
+                      </div>
                     </div>
-                  </div>
+                  );
+                })}
+                <div style={{ color: '#666', fontSize: '9px', padding: '2px 8px 4px' }}>
+                  Source: FEMA OpenFEMA disaster declarations{emcommData?.state ? ` for ${emcommData.state}` : ''}, last
+                  30 days, grouped per declaration.
                 </div>
-              ))
+              </>
             )}
           </PanelSection>
 
@@ -1172,6 +1205,11 @@ export default function EmcommLayout(props) {
                         <SourceBadge source={s.source} />
                       </span>
                       <span
+                        title={
+                          isAprs
+                            ? 'Status read from the words in the report (open / closed / full) — not a control'
+                            : 'Shelter status reported by FEMA'
+                        }
                         style={{
                           color: SHELTER_STATUS_COLORS[s.status] || '#888',
                           fontSize: '10px',

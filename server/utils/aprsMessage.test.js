@@ -66,6 +66,14 @@ describe('parseAprsMessage', () => {
     expect(parseAprsMessage('garbage')).toBeNull();
   });
 
+  it('flags shelter reports only with shelter context (#1219)', () => {
+    expect(parseAprsMessage(line(':KE8PLM-9 :How many open Cots are available?')).isShelterReport).toBe(false);
+    expect(parseAprsMessage(line(':EMCOMM   :Net is closed for tonight')).isShelterReport).toBe(false);
+    expect(parseAprsMessage(line(':EMCOMM   :Shelter open at the high school, 40 beds')).isShelterReport).toBe(true);
+    expect(parseAprsMessage(line(':EMCOMM   :Evacuees arriving at the fairgrounds')).isShelterReport).toBe(true);
+    expect(parseAprsMessage(line(':EMCOMM   :[Beds 12/20] cots on the floor')).isShelterReport).toBe(true);
+  });
+
   it('extracts resource tokens from the text', () => {
     const m = parseAprsMessage(line(':EMCOMM   :[Beds 12/20] shelter open'));
     expect(m.tokens.map((t) => t.key)).toContain('Beds');

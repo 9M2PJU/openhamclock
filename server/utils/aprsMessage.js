@@ -44,8 +44,13 @@ function parseAprsMessage(line) {
     const { tokens, cleanComment } = parseResourceTokens(text);
 
     // Detect shelter-related content
+    // A shelter report needs shelter context: the word itself (or evacuee /
+    // refuge), or a structured shelter token. Bare "open" / "closed" /
+    // "capacity" / "beds" used to qualify, so an ordinary net message such as
+    // "How many open cots are available?" became a shelter named after its
+    // sender (#1219).
     const isShelterReport =
-      /shelter|evacuate|refuge|beds|capacity|open|closed|accepting/i.test(text) ||
+      /\bshelter|\bevacuee|\bevacuation\s+(center|centre|site)|\brefuge\b/i.test(text) ||
       tokens.some((t) => ['Beds', 'Capacity', 'Shelter', 'Evacuees'].includes(t.key));
 
     // Detect net check-in/check-out commands (messages to EMCOMM)
