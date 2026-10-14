@@ -61,6 +61,9 @@ import {
   SkedPlannerPanel,
   IonosondePanel,
   PropVerifyPanel,
+  GraylinePlannerPanel,
+  EmePlannerPanel,
+  SatPlannerPanel,
 } from './components';
 import MeshtasticPanel from './components/MeshtasticPanel.jsx';
 import LogbookPanel from './components/LogbookPanel.jsx';
@@ -1385,6 +1388,27 @@ export const DockableApp = ({
               deLon={config.location?.lon ?? null}
               units={config.allUnits?.dist ?? 'metric'}
             />
+          );
+          break;
+
+        case 'grayline-planner':
+          content = (
+            <GraylinePlannerPanel
+              deLocation={config.location}
+              dxLocation={dxLocation}
+              dxCallsign={dxCallsign}
+              timeZone={config.timezone}
+            />
+          );
+          break;
+
+        case 'eme-planner':
+          content = <EmePlannerPanel deLocation={config.location} dxLocation={dxLocation} dxCallsign={dxCallsign} />;
+          break;
+
+        case 'sat-planner':
+          content = (
+            <SatPlannerPanel satellites={satellites} config={config} dxLocation={dxLocation} dxCallsign={dxCallsign} />
           );
           break;
 

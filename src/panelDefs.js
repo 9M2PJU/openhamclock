@@ -85,6 +85,9 @@ export function buildPanelDefs({ isLocalInstall = false } = {}) {
     'world-clocks': { name: 'World Clocks', icon: '🌐' },
     stopwatch: { name: 'Stopwatch', icon: '⏱️' },
     'aircraft-nearby': { name: 'Aircraft Nearby', icon: '✈️' },
+    'grayline-planner': { name: 'Grayline Planner', icon: '🌅', group: 'Propagation' },
+    'eme-planner': { name: 'EME Planner', icon: '🌙', group: 'Solar' },
+    'sat-planner': { name: 'Satellite Planner', icon: '🛰️' },
   };
 
   // Append auto-discovered panel plugins (src/plugins/local/panels/*.jsx).

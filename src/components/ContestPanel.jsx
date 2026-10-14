@@ -10,6 +10,7 @@ import {
   getContestReminders,
   toggleContestReminder,
 } from '../utils/contestReminders';
+import { useAlarmState } from '../hooks/app/useAlarmClock.js';
 
 export const ContestPanel = ({ data, loading }) => {
   const { t, i18n } = useTranslation();
@@ -26,6 +27,16 @@ export const ContestPanel = ({ data, loading }) => {
       window.removeEventListener('storage', sync);
     };
   }, []);
+
+  // Once-only alarm clock (utils/alarmClock.js): "set alarm for contest start".
+  const { alarm, setOnceAt, update: updateAlarm } = useAlarmState();
+  const handleAlarmToggle = (contest, e) => {
+    e.stopPropagation();
+    const startIso = contest?.start ? new Date(contest.start).toISOString() : null;
+    if (!startIso) return;
+    if (alarm.once.armed && alarm.once.at === startIso) updateAlarm('once', { armed: false, at: null });
+    else setOnceAt(startIso, contest.name || '');
+  };
 
   const handleReminderToggle = (contest, e) => {
     e.stopPropagation();
@@ -340,6 +351,36 @@ export const ContestPanel = ({ data, loading }) => {
                             }}
                           >
                             🔔
+                          </button>
+                        );
+                      })()}
+                    {/* Once-only alarm clock at contest start */}
+                    {!live &&
+                      contest.start &&
+                      (() => {
+                        const startIso = new Date(contest.start).toISOString();
+                        const set = alarm.once.armed && alarm.once.at === startIso;
+                        return (
+                          <button
+                            type="button"
+                            onClick={(e) => handleAlarmToggle(contest, e)}
+                            title={t(set ? 'contest.panel.alarm.on' : 'contest.panel.alarm.off')}
+                            aria-label={t(set ? 'contest.panel.alarm.on' : 'contest.panel.alarm.off')}
+                            aria-pressed={set}
+                            style={{
+                              cursor: 'pointer',
+                              fontSize: '10px',
+                              opacity: set ? 1 : 0.35,
+                              userSelect: 'none',
+                              transition: 'opacity 0.2s',
+                              background: 'none',
+                              border: 'none',
+                              padding: 0,
+                              color: set ? '#4ade80' : 'inherit',
+                              flexShrink: 0,
+                            }}
+                          >
+                            ⏰
                           </button>
                         );
                       })()}

@@ -70,6 +70,11 @@ export const DEFAULT_CONFIG = {
   customDxCluster: { enabled: false, host: '', port: 7300 },
   udpDxCluster: { host: '', port: 12060 },
   wsjtxRelayMulticast: { enabled: false, address: '224.0.0.1' },
+  // Alarm clock (utils/alarmClock.js): a daily alarm and a once-only alarm, HH:MM in DE local or UTC
+  alarm: {
+    daily: { time: '07:00', utc: false, armed: false },
+    once: { time: '', utc: true, armed: false, at: null, label: '' },
+  },
 };
 
 // Cache for server config
@@ -225,6 +230,9 @@ const SYNC_KEYS = [
   'openhamclock_satelliteFilters',
   'openhamclock_solarImageType',
   'openhamclock_solarPanelMode',
+  'openhamclock_graylineMargin',
+  'openhamclock_emePlannerMinElev',
+  'openhamclock_satPlannerSat',
   'openhamclock_use12Hour',
   'openhamclock_voacapColorScheme',
   'openhamclock_voacapViewMode',
