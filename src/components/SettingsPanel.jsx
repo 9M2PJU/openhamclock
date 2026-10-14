@@ -63,6 +63,14 @@ const SettingsTabIcon = ({ tab }) => {
 import HelpTab from './HelpTab.jsx';
 import HelpLink from './HelpLink.jsx';
 import WeatherSourceCard from './WeatherSourceCard.jsx';
+import WatchlistEditor from './WatchlistEditor.jsx';
+import {
+  CLUSTER_COMMANDS_MAX,
+  CLUSTER_COMMAND_MAX_LENGTH,
+  normalizeLoginCommands,
+  validateClusterCommand,
+} from '../utils/clusterCommands.js';
+import { SPOT_LABEL_MODES } from '../utils/spotLabel.js';
 
 export const SettingsPanel = ({
   isOpen,
@@ -76,6 +84,8 @@ export const SettingsPanel = ({
   mapLayers,
   onToggleDeDxMarkers,
   onToggleDXNews,
+  onSetSpotLabelMode,
+  onSetSpotLabelMinKm,
   wakeLockStatus,
   defaultTab,
   wsjtxSessionId,
@@ -2626,6 +2636,61 @@ export const SettingsPanel = ({
                         'OpenHamClock listens for UDP DX spot packets on this port and plots matched spots on the map.',
                     })}
                   </div>
+
+                  {/* HamClock-style UDP options: spots set DX, show all / only mine */}
+                  <label
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      marginTop: '12px',
+                      color: 'var(--text-secondary)',
+                      fontSize: '12px',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={!!udpDxCluster.setDx}
+                      onChange={(e) => setUdpDxCluster({ ...udpDxCluster, setDx: e.target.checked })}
+                    />
+                    {t('station.settings.dx.udp.setDx', { defaultValue: 'UDP spots set DX' })}
+                  </label>
+                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '24px', marginTop: '2px' }}>
+                    {t('station.settings.dx.udp.setDxHelp', {
+                      defaultValue:
+                        'Each new spot received over UDP (N1MM, DXLog, MacLoggerDX…) becomes the DX target, like HamClock.',
+                    })}
+                  </div>
+                  <div style={{ marginTop: '12px' }}>
+                    <label
+                      htmlFor="udp-show-select"
+                      style={{ display: 'block', marginBottom: '4px', color: 'var(--text-muted)', fontSize: '11px' }}
+                    >
+                      {t('station.settings.dx.udp.show', { defaultValue: 'Show UDP spots' })}
+                    </label>
+                    <select
+                      id="udp-show-select"
+                      value={udpDxCluster.show === 'mine' ? 'mine' : 'all'}
+                      onChange={(e) => setUdpDxCluster({ ...udpDxCluster, show: e.target.value })}
+                      style={{
+                        width: '100%',
+                        padding: '8px 12px',
+                        background: 'var(--bg-secondary)',
+                        border: '1px solid var(--border-color)',
+                        borderRadius: '6px',
+                        color: 'var(--text-primary)',
+                        fontSize: '13px',
+                      }}
+                    >
+                      <option value="all">{t('station.settings.dx.udp.showAll', { defaultValue: 'All spots' })}</option>
+                      <option value="mine">
+                        {t('station.settings.dx.udp.showMine', {
+                          defaultValue: 'Only mine (spotted by my callsign)',
+                        })}
+                      </option>
+                    </select>
+                  </div>
                 </div>
               )}
 
@@ -2711,6 +2776,133 @@ export const SettingsPanel = ({
                   <div style={{ fontSize: '11px', color: 'var(--accent-amber)', marginTop: '8px' }}>
                     {t('station.settings.dx.custom.warning')}
                   </div>
+
+                  {/* Cluster login commands — sent once after login (HamClock "cluster commands") */}
+                  {(() => {
+                    const commands = normalizeLoginCommands(customDxCluster.loginCommands);
+                    const update = (next) => setCustomDxCluster({ ...customDxCluster, loginCommands: next });
+                    return (
+                      <div
+                        style={{ marginTop: '16px', borderTop: '1px solid var(--border-color)', paddingTop: '12px' }}
+                      >
+                        <div
+                          style={{
+                            color: 'var(--accent-cyan)',
+                            fontSize: '12px',
+                            fontWeight: '600',
+                            marginBottom: '4px',
+                          }}
+                        >
+                          {t('station.settings.dx.loginCommands.title', { defaultValue: 'Cluster login commands' })}
+                        </div>
+                        <div
+                          style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '8px', lineHeight: 1.5 }}
+                        >
+                          {t('station.settings.dx.loginCommands.help', {
+                            defaultValue:
+                              'Native cluster commands sent once after login, in order (e.g. set/filter dxbm/pass 20,15 or set/skimmer). One line each, max {{max}} commands, {{len}} characters; toggle a command off to keep it without sending it. Telnet clusters only — HTTP sources ignore these.',
+                            max: CLUSTER_COMMANDS_MAX,
+                            len: CLUSTER_COMMAND_MAX_LENGTH,
+                          })}
+                        </div>
+                        {commands.map((c, i) => {
+                          const v = validateClusterCommand(c.cmd);
+                          return (
+                            <div
+                              key={i}
+                              style={{ display: 'flex', gap: '6px', alignItems: 'center', marginBottom: '6px' }}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={c.enabled}
+                                aria-label={t('station.settings.dx.loginCommands.enabled', {
+                                  defaultValue: 'Send this command',
+                                })}
+                                onChange={(e) =>
+                                  update(commands.map((x, j) => (j === i ? { ...x, enabled: e.target.checked } : x)))
+                                }
+                              />
+                              <input
+                                type="text"
+                                value={c.cmd}
+                                maxLength={CLUSTER_COMMAND_MAX_LENGTH}
+                                spellCheck={false}
+                                aria-label={t('station.settings.dx.loginCommands.command', {
+                                  defaultValue: 'Cluster command {{n}}',
+                                  n: i + 1,
+                                })}
+                                onChange={(e) =>
+                                  update(commands.map((x, j) => (j === i ? { ...x, cmd: e.target.value } : x)))
+                                }
+                                style={{
+                                  flex: 1,
+                                  padding: '6px 10px',
+                                  background: 'var(--bg-secondary)',
+                                  border: `1px solid ${v.ok ? 'var(--border-color)' : 'var(--accent-red)'}`,
+                                  borderRadius: '6px',
+                                  color: c.enabled ? 'var(--text-primary)' : 'var(--text-muted)',
+                                  fontSize: '13px',
+                                  fontFamily: 'var(--font-mono)',
+                                }}
+                              />
+                              <button
+                                type="button"
+                                onClick={() => update(commands.filter((_, j) => j !== i))}
+                                aria-label={t('station.settings.dx.loginCommands.remove', {
+                                  defaultValue: 'Remove command',
+                                })}
+                                title={t('station.settings.dx.loginCommands.remove', {
+                                  defaultValue: 'Remove command',
+                                })}
+                                style={{
+                                  background: 'none',
+                                  border: '1px solid var(--border-color)',
+                                  borderRadius: '4px',
+                                  color: 'var(--accent-red)',
+                                  cursor: 'pointer',
+                                  padding: '2px 8px',
+                                  fontSize: '14px',
+                                }}
+                              >
+                                ×
+                              </button>
+                              {!v.ok && (
+                                <span style={{ fontSize: '10px', color: 'var(--accent-red)' }} role="alert">
+                                  {v.reason}
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })}
+                        <button
+                          type="button"
+                          disabled={commands.length >= CLUSTER_COMMANDS_MAX}
+                          onClick={() => update([...commands, { cmd: '', enabled: true }])}
+                          style={{
+                            padding: '6px 12px',
+                            background: 'var(--bg-secondary)',
+                            border: '1px solid var(--border-color)',
+                            borderRadius: '6px',
+                            color:
+                              commands.length >= CLUSTER_COMMANDS_MAX ? 'var(--text-muted)' : 'var(--text-primary)',
+                            fontSize: '12px',
+                            cursor: commands.length >= CLUSTER_COMMANDS_MAX ? 'not-allowed' : 'pointer',
+                          }}
+                        >
+                          {t('station.settings.dx.loginCommands.add', { defaultValue: '+ Add command' })}
+                        </button>
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
+
+              {isLocalInstall && dxClusterSource !== 'custom' && (
+                <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '20px', marginTop: '-8px' }}>
+                  {t('station.settings.dx.telnetOnlyNote', {
+                    defaultValue:
+                      'Cluster login commands and the Cluster Console panel are available only with a Custom Telnet Server source — HTTP and UDP sources have no session to talk to.',
+                  })}
                 </div>
               )}
 
@@ -2829,6 +3021,45 @@ export const SettingsPanel = ({
                     </button>
                   ))}
                 </div>
+              </div>
+
+              {/* Watch lists (HamClock-style) — shared with the DX / activation filter dialogs and the Logbook */}
+              <div
+                style={{
+                  marginTop: '24px',
+                  padding: '16px',
+                  background: 'var(--bg-tertiary)',
+                  borderRadius: '8px',
+                  border: '1px solid var(--border-color)',
+                }}
+              >
+                <div style={{ color: 'var(--accent-cyan)', fontSize: '12px', fontWeight: '600', marginBottom: '4px' }}>
+                  {t('station.settings.watchlists.title', { defaultValue: 'Watch lists' })}
+                </div>
+                <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '12px', lineHeight: 1.5 }}>
+                  {t('station.settings.watchlists.help', {
+                    defaultValue:
+                      'Three independent lists: DX cluster spots, activation spots (POTA/SOTA/WWFF/WWBOTA) and logbook rows. Red highlights matches, Only shows just matches, Not hides them. The same lists are editable from each panel’s filter dialog.',
+                  })}
+                </div>
+                <div style={{ marginBottom: '14px' }}>
+                  <WatchlistEditor
+                    listKey="dx"
+                    title={t('watchlist.dxTitle', { defaultValue: 'DX cluster watch list' })}
+                  />
+                </div>
+                <div style={{ marginBottom: '14px' }}>
+                  <WatchlistEditor
+                    listKey="activations"
+                    title={t('watchlist.activationsTitle', { defaultValue: 'Activation watch list' })}
+                    compact
+                  />
+                </div>
+                <WatchlistEditor
+                  listKey="logbook"
+                  title={t('watchlist.logbookTitle', { defaultValue: 'Logbook watch list' })}
+                  compact
+                />
               </div>
             </>
           )}
@@ -4938,6 +5169,79 @@ export const SettingsPanel = ({
                   return result;
                 })();
               })()}
+
+              {/* Spot labels (HamClock "Spot labels" + "Min label dist") */}
+              <div
+                style={{
+                  background: 'var(--bg-tertiary)',
+                  border: '1px solid var(--border-color)',
+                  borderRadius: '8px',
+                  padding: '14px',
+                  marginTop: '12px',
+                }}
+              >
+                <div style={{ color: 'var(--accent-cyan)', fontSize: '12px', fontWeight: '600', marginBottom: '4px' }}>
+                  🏷️ {t('station.settings.layers.spotLabels.title', { defaultValue: 'Spot labels' })}
+                </div>
+                <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '10px', lineHeight: 1.5 }}>
+                  {t('station.settings.layers.spotLabels.help', {
+                    defaultValue:
+                      'What the labels on DX cluster and activation (POTA/SOTA/WWFF/WWBOTA) markers show, and a minimum distance from DE below which labels are hidden so nearby spots do not clutter the map.',
+                  })}
+                </div>
+                <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                  <label style={{ fontSize: '11px', color: 'var(--text-muted)', flex: '1 1 160px' }}>
+                    {t('station.settings.layers.spotLabels.mode', { defaultValue: 'Label text' })}
+                    <select
+                      value={mapLayers?.spotLabelMode || 'call'}
+                      onChange={(e) => onSetSpotLabelMode?.(e.target.value)}
+                      style={{
+                        display: 'block',
+                        width: '100%',
+                        marginTop: '4px',
+                        padding: '8px 10px',
+                        background: 'var(--bg-secondary)',
+                        border: '1px solid var(--border-color)',
+                        borderRadius: '6px',
+                        color: 'var(--text-primary)',
+                        fontSize: '13px',
+                      }}
+                    >
+                      {SPOT_LABEL_MODES.map((m) => (
+                        <option key={m} value={m}>
+                          {t(`station.settings.layers.spotLabels.mode.${m}`, {
+                            defaultValue: { none: 'None', call: 'Callsign', prefix: 'Prefix', freq: 'Frequency' }[m],
+                          })}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label style={{ fontSize: '11px', color: 'var(--text-muted)', flex: '1 1 160px' }}>
+                    {t('station.settings.layers.spotLabels.minDist', { defaultValue: 'Min label distance (km)' })}
+                    <input
+                      type="number"
+                      min="0"
+                      max="20000"
+                      step="50"
+                      value={mapLayers?.spotLabelMinKm ?? 0}
+                      onChange={(e) => onSetSpotLabelMinKm?.(e.target.value)}
+                      style={{
+                        display: 'block',
+                        width: '100%',
+                        boxSizing: 'border-box',
+                        marginTop: '4px',
+                        padding: '8px 10px',
+                        background: 'var(--bg-secondary)',
+                        border: '1px solid var(--border-color)',
+                        borderRadius: '6px',
+                        color: 'var(--text-primary)',
+                        fontSize: '13px',
+                        fontFamily: 'var(--font-mono)',
+                      }}
+                    />
+                  </label>
+                </div>
+              </div>
             </div>
           )}
         </div>

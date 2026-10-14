@@ -12,6 +12,7 @@ import { useWorkedBefore } from '../hooks/useWorkedBefore.js';
 import { useAwards } from '../hooks/useAwards.js';
 import { spotBadge } from '../utils/awards.js';
 import { requestLogQso } from '../services/logbookStore.js';
+import { useCompiledWatchlist } from '../hooks/useWatchlists.js';
 
 export const ActivatePanel = ({
   mapDefs,
@@ -63,6 +64,11 @@ export const ActivatePanel = ({
   // is not in the log at all (ATNO), 'new-band' = entity worked but not on
   // the spot's band. Null for everyone until the logbook has QSOs.
   const { getSpotStatus: getAwardStatus } = useAwards();
+  // Activation watch list in Red mode — Only/Not filtering happens upstream
+  // (App.jsx ActivateFilter), so here it is purely a highlight.
+  const watch = useCompiledWatchlist('activations');
+  const isWatchRed = (spot) =>
+    watch.mode === 'red' && !!watch.matcher && watch.matcher({ call: spot.call, freq: spot.freq, grid: spot.grid });
   const staleMinutes = lastUpdated ? Math.floor((Date.now() - lastUpdated) / 60000) : null;
   const isStale = staleMinutes !== null && staleMinutes >= 5;
   const checkedTime = lastChecked ? new Date(lastChecked).toISOString().substr(11, 5) + 'z' : '';
@@ -278,11 +284,15 @@ export const ActivatePanel = ({
               >
                 <div
                   role="row"
+                  data-watch-red={isWatchRed(spot) ? '1' : undefined}
                   style={{
                     display: 'grid',
                     gridTemplateColumns: '62px 72px 58px 1fr auto',
                     gap: '4px',
                     cursor: 'pointer',
+                    background: isWatchRed(spot) ? 'rgba(255, 68, 68, 0.12)' : undefined,
+                    borderLeft: isWatchRed(spot) ? '2px solid var(--accent-red)' : '2px solid transparent',
+                    paddingLeft: '2px',
                   }}
                   onMouseEnter={() => onHoverSpot?.(spot)}
                   onMouseLeave={() => onHoverSpot?.(null)}

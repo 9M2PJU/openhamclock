@@ -112,6 +112,7 @@ export const PANEL_HELP = {
   'world-clocks': 'utility',
   stopwatch: 'utility',
   'aircraft-nearby': 'utility',
+  'cluster-console': 'dx-cluster',
 };
 
 /**

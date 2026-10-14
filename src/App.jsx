@@ -2,7 +2,7 @@
  * OpenHamClock - Main Application Component
  * Amateur Radio Dashboard
  */
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { SettingsPanel, DXFilterManager, PSKFilterManager, KeybindingsPanel } from './components';
@@ -65,6 +65,8 @@ import usePresence from './hooks/app/usePresence';
 import useWavelogSync from './hooks/app/useWavelogSync.js';
 import useAudioAlerts from './hooks/app/useAudioAlerts';
 import { useSatelliteAnnouncements } from './hooks/app/useSatelliteAnnouncements';
+import { useCompiledWatchlist } from './hooks/useWatchlists.js';
+import { applyWatchlist } from './utils/watchlistSpec.js';
 import useSceneRotation from './hooks/app/useSceneRotation';
 import useIdleClock from './hooks/app/useIdleClock';
 import WhatsNew from './components/WhatsNew.jsx';
@@ -78,7 +80,6 @@ import { useLightningAnnouncements } from './hooks/app/useLightningAnnouncements
 import { HELP_EVENT } from './utils/helpTopics.js';
 import { useDXSpotAnnouncements } from './hooks/app/useDXSpotAnnouncements';
 import { useWeatherAlertAnnouncements } from './hooks/app/useWeatherAlertAnnouncements';
-import { extractBaseCall } from './components/CallsignLink.jsx';
 import { getBandFromFreq, detectMode, normalizeFrequencyToMHz, getCallsignInfo } from './utils/callsign';
 import { getContestReminders, contestReminderId, CONTEST_REMINDERS_EVENT } from './utils/contestReminders.js';
 
@@ -301,6 +302,8 @@ const App = () => {
     toggleAPRSLabels,
     cycleAprsIconScale,
     toggleMeshCom,
+    setSpotLabelMode,
+    setSpotLabelMinKm,
   } = useMapLayers();
 
   const {
@@ -369,6 +372,33 @@ const App = () => {
   const sotaSpots = useSOTASpots();
   const wwbotaSpots = useWWBOTASpots();
   const dxClusterData = useDXClusterData(dxFilters, config);
+  // HamClock-style watch lists (utils/watchlistSpec.js): the DX list drives
+  // the watchlist alert feed below; the activation list filters POTA/SOTA/
+  // WWFF/WWBOTA spots (Only/Not) — Red highlighting lives in the panels.
+  const dxWatch = useCompiledWatchlist('dx');
+  const activationWatch = useCompiledWatchlist('activations');
+
+  // "UDP spots set DX": with the UDP source active, each newly received spot
+  // (after the panel's filters, so "only mine" is honoured) becomes the DX
+  // target — HamClock behaviour for N1MM / DXLog / MacLoggerDX feeds. The
+  // batch present at startup is skipped so loading never yanks the DX marker.
+  const lastUdpDxKeyRef = useRef(null);
+  useEffect(() => {
+    if (config.dxClusterSource !== 'udp' || !config.udpDxCluster?.setDx) {
+      lastUdpDxKeyRef.current = null;
+      return;
+    }
+    const newest = (dxClusterData.spots || [])[0];
+    if (!newest) return;
+    const key = newest.id || `${newest.call}-${newest.freq}-${newest.spotter}-${newest.timestamp || ''}`;
+    if (lastUdpDxKeyRef.current === key) return;
+    const first = lastUdpDxKeyRef.current === null;
+    lastUdpDxKeyRef.current = key;
+    if (first) return;
+    if (newest.dxLat != null && newest.dxLon != null) {
+      handleDXChange({ lat: newest.dxLat, lon: newest.dxLon, callsign: newest.call ?? null });
+    }
+  }, [dxClusterData.spots, config.dxClusterSource, config.udpDxCluster?.setDx, handleDXChange]);
   const dxpeditions = useDXpeditions();
   const contests = useContests();
   const swpcAlerts = useSWPCAlerts();
@@ -401,16 +431,16 @@ const App = () => {
   // filtered elsewhere. Base-call matching (5Z4/OZ6ABL hits "OZ6ABL"), and
   // watchlist entries keep their prefix semantics ("3Y" hits any 3Y call).
   const watchlistHits = useMemo(() => {
-    const list = dxFilters?.watchlist;
-    if (!list?.length) return [];
-    const entries = list.map((w) => String(w).toUpperCase()).filter(Boolean);
+    // The DX watch list in Red or Only mode feeds the alert; a Not list hides
+    // spots, so it never alerts. Matching uses the full HamClock grammar
+    // (bands, sub-bands, NADXCC…, portable-aware prefixes).
+    if (!dxWatch.matcher || dxWatch.mode === 'not') return [];
     const hits = [];
     const seen = new Set();
     for (const item of dxClusterData.rawSpots || []) {
       const full = String(item.dxCall || '').toUpperCase();
       if (!full) continue;
-      const base = extractBaseCall(full);
-      if (!entries.some((w) => full.startsWith(w) || base.startsWith(w))) continue;
+      if (!dxWatch.matcher({ call: full, freq: item.freq, grid: item.dxGrid })) continue;
       const band = getBandFromFreq(item.freq);
       const dedupeKey = `${full}-${band}`;
       if (seen.has(dedupeKey)) continue; // rawSpots is newest-first — keep the newest per call+band
@@ -424,7 +454,7 @@ const App = () => {
       });
     }
     return hits;
-  }, [dxClusterData.rawSpots, dxFilters?.watchlist]);
+  }, [dxClusterData.rawSpots, dxWatch]);
 
   // Contest-start reminders: strictly opt-in per contest via the 🔔 buttons
   // in ContestPanel — with no reminders set, this feed never alerts. The
@@ -621,10 +651,11 @@ const App = () => {
   }, [pskReporter.txReports, pskReporter.rxReports, pskFilters]);
 
   function ActivateFilter(spots, filters) {
+    const activationSpot = (spot) => ({ call: spot.call, freq: spot.freq, grid: spot.grid });
     if (!filters?.bands?.length && !filters?.grids?.length && !filters?.modes?.length) {
-      return spots.data;
+      return applyWatchlist(spots.data, activationWatch, activationSpot).items;
     }
-    return spots.data.filter((spot) => {
+    const base = (spots.data || []).filter((spot) => {
       if (filters?.bands?.length && !filters.bands.includes(spot.band)) return false;
       if (filters?.modes?.length && !filters.modes.includes(spot.mode)) return false;
       if (filters?.grids?.length) {
@@ -633,23 +664,24 @@ const App = () => {
       }
       return true;
     });
+    return applyWatchlist(base, activationWatch, activationSpot).items;
   }
 
   const filteredPotaSpots = useMemo(() => {
     return ActivateFilter(potaSpots, potaFilters);
-  }, [potaSpots.data, potaFilters]);
+  }, [potaSpots.data, potaFilters, activationWatch]);
 
   const filteredWwffSpots = useMemo(() => {
     return ActivateFilter(wwffSpots, wwffFilters);
-  }, [wwffSpots.data, wwffFilters]);
+  }, [wwffSpots.data, wwffFilters, activationWatch]);
 
   const filteredSotaSpots = useMemo(() => {
     return ActivateFilter(sotaSpots, sotaFilters);
-  }, [sotaSpots.data, sotaFilters]);
+  }, [sotaSpots.data, sotaFilters, activationWatch]);
 
   const filteredWwbotaSpots = useMemo(() => {
     return ActivateFilter(wwbotaSpots, wwbotaFilters);
-  }, [wwbotaSpots.data, wwbotaFilters]);
+  }, [wwbotaSpots.data, wwbotaFilters, activationWatch]);
 
   const wsjtxMapSpots = useMemo(() => {
     // Apply same age filter as panel (stored in localStorage)
@@ -962,6 +994,8 @@ const App = () => {
         mapLayers={mapLayers}
         onToggleDeDxMarkers={toggleDeDxMarkers}
         onToggleDXNews={toggleDXNews}
+        onSetSpotLabelMode={setSpotLabelMode}
+        onSetSpotLabelMinKm={setSpotLabelMinKm}
         wakeLockStatus={wakeLockStatus}
         wsjtxSessionId={wsjtx.sessionId}
         isLocalInstall={isLocalInstall}

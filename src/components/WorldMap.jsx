@@ -57,6 +57,7 @@ import { use630mBandEnabled } from '../hooks/use630mBandEnabled.js';
 // DX cluster data, POTA/SOTA spots, and WSJT-X decodes come from external sources
 // and could contain malicious HTML/script tags in callsigns, comments, or park names.
 import { esc } from '../utils/escapeHtml.js';
+import { spotLabelText, spotLabelSuppressed } from '../utils/spotLabel.js';
 import { LiEye, LiEyeOff, LiLock, LiUnlock, LiPlus, LiMinus, LiRotate } from './Icons.jsx';
 
 // Lightweight error boundary for the non-Leaflet projections (azimuthal canvas,
@@ -134,6 +135,9 @@ export const WorldMap = ({
   showDeDxMarkers = true,
   showDXLabels,
   onToggleDXLabels,
+  // Spot label text mode and HamClock "Min label dist" (km) — see utils/spotLabel.js
+  spotLabelMode = 'call',
+  spotLabelMinKm = 0,
   showPOTA,
   showPOTALabels = true,
   showWWFF,
@@ -1767,11 +1771,18 @@ export const WorldMap = ({
             dxPathsMarkersRef.current.push(dxCircle);
           });
 
-          // Add label if enabled — replicate across world copies
-          if (showDXLabels || isHovered) {
+          // Add label if enabled — replicate across world copies. The text
+          // follows the Map Layers "Spot labels" mode (call / prefix / freq);
+          // labels within "Min label dist" of DE are suppressed unless hovered.
+          const dxLabelText = isHovered
+            ? dxCall
+            : showDXLabels && !spotLabelSuppressed(deLocation, path.dxLat, path.dxLon, spotLabelMinKm)
+              ? spotLabelText(spotLabelMode, { call: dxCall, freq: path.freq })
+              : null;
+          if (dxLabelText) {
             const labelIcon = L.divIcon({
               className: '',
-              html: `<span style="display:inline-block;background:${isHovered ? '#fff' : color};color:${isHovered ? color : '#000'};padding:${isHovered ? '3px 6px' : '2px 5px'};border-radius:3px;font-family:var(--font-mono);font-size:${isHovered ? '12px' : '11px'};font-weight:700;white-space:nowrap;border:1px solid ${isHovered ? color : 'rgba(0,0,0,0.5)'};box-shadow:0 1px ${isHovered ? '4px' : '2px'} rgba(0,0,0,${isHovered ? '0.5' : '0.3'});line-height:1.1;">${esc(dxCall)}</span>`,
+              html: `<span style="display:inline-block;background:${isHovered ? '#fff' : color};color:${isHovered ? color : '#000'};padding:${isHovered ? '3px 6px' : '2px 5px'};border-radius:3px;font-family:var(--font-mono);font-size:${isHovered ? '12px' : '11px'};font-weight:700;white-space:nowrap;border:1px solid ${isHovered ? color : 'rgba(0,0,0,0.5)'};box-shadow:0 1px ${isHovered ? '4px' : '2px'} rgba(0,0,0,${isHovered ? '0.5' : '0.3'});line-height:1.1;">${esc(dxLabelText)}</span>`,
               iconSize: [0, 0],
               iconAnchor: [0, 0],
             });
@@ -1810,7 +1821,18 @@ export const WorldMap = ({
         }
       });
     }
-  }, [dxPaths, dxFilters, showDXPaths, showDXLabels, hoveredSpot, bandColorVersion, bandPassesMapFilter]);
+  }, [
+    dxPaths,
+    dxFilters,
+    showDXPaths,
+    showDXLabels,
+    hoveredSpot,
+    bandColorVersion,
+    bandPassesMapFilter,
+    spotLabelMode,
+    spotLabelMinKm,
+    deLocation,
+  ]);
 
   useEffect(() => {
     const map = mapInstanceRef.current;
@@ -1937,10 +1959,14 @@ export const WorldMap = ({
             markersRef.current.push(marker);
           });
 
-          if (showLabels) {
+          const activationLabel =
+            showLabels && !spotLabelSuppressed(deLocation, spot.lat, spot.lon, spotLabelMinKm)
+              ? spotLabelText(spotLabelMode, { call: spot.call, freq: spot.freq })
+              : null;
+          if (activationLabel) {
             const labelIcon = L.divIcon({
               className: '',
-              html: `<span style="display:inline-block;background:${mapDefaults.color};color:#000;padding:2px 5px;border-radius:3px;font-size:11px;font-family:var(--font-mono);font-weight:700;white-space:nowrap;border:1px solid rgba(0,0,0,0.5);box-shadow:0 1px 2px rgba(0,0,0,0.3);line-height:1.1;">${esc(spot.call)}</span>`,
+              html: `<span style="display:inline-block;background:${mapDefaults.color};color:#000;padding:2px 5px;border-radius:3px;font-size:11px;font-family:var(--font-mono);font-weight:700;white-space:nowrap;border:1px solid rgba(0,0,0,0.5);box-shadow:0 1px 2px rgba(0,0,0,0.3);line-height:1.1;">${esc(activationLabel)}</span>`,
               iconSize: [0, 0],
               iconAnchor: [0, -2],
             });
@@ -1981,22 +2007,22 @@ export const WorldMap = ({
   // Update POTA markers
   useEffect(() => {
     placeSpots(POTADefs, potaSpots, showPOTA, showPOTALabels, potaMarkersRef, mapInstanceRef);
-  }, [potaSpots, showPOTA, showPOTALabels, bandPassesMapFilter]);
+  }, [potaSpots, showPOTA, showPOTALabels, bandPassesMapFilter, spotLabelMode, spotLabelMinKm, deLocation]);
 
   // Update WWFF markers
   useEffect(() => {
     placeSpots(WWFFDefs, wwffSpots, showWWFF, showWWFFLabels, wwffMarkersRef, mapInstanceRef);
-  }, [wwffSpots, showWWFF, showWWFFLabels, bandPassesMapFilter]);
+  }, [wwffSpots, showWWFF, showWWFFLabels, bandPassesMapFilter, spotLabelMode, spotLabelMinKm, deLocation]);
 
   // Update SOTA markers
   useEffect(() => {
     placeSpots(SOTADefs, sotaSpots, showSOTA, showSOTALabels, sotaMarkersRef, mapInstanceRef);
-  }, [sotaSpots, showSOTA, showSOTALabels, bandPassesMapFilter]);
+  }, [sotaSpots, showSOTA, showSOTALabels, bandPassesMapFilter, spotLabelMode, spotLabelMinKm, deLocation]);
 
   // Update WWBOTA markers
   useEffect(() => {
     placeSpots(WWBOTADefs, wwbotaSpots, showWWBOTA, showWWBOTALabels, wwbotaMarkersRef, mapInstanceRef);
-  }, [wwbotaSpots, showWWBOTA, showWWBOTALabels, bandPassesMapFilter]);
+  }, [wwbotaSpots, showWWBOTA, showWWBOTALabels, bandPassesMapFilter, spotLabelMode, spotLabelMinKm, deLocation]);
 
   // Plugin layer system - properly load saved states
   useEffect(() => {

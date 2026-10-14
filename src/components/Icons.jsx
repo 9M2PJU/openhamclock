@@ -735,6 +735,14 @@ export const LiKeyboard = glyph(
     <line x1="8.5" y1="14.5" x2="15.5" y2="14.5" />
   </>,
 );
+// Terminal window — Cluster Console panel (raw telnet session text)
+export const LiTerminal = glyph(
+  <>
+    <rect x="3" y="5" width="18" height="14" rx="2" />
+    <path d="M7 9.5 10 12l-3 2.5" />
+    <line x1="12" y1="15" x2="17" y2="15" />
+  </>,
+);
 export const LiMail = glyph(
   <>
     <rect x="3.5" y="6" width="17" height="13" rx="2" />
@@ -937,6 +945,7 @@ export const PANEL_ICONS = {
   'world-clocks': LiGlobeClock,
   stopwatch: LiStopwatch,
   'aircraft-nearby': LiPlane,
+  'cluster-console': LiTerminal,
 };
 
 /**

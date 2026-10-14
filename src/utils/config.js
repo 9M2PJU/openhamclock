@@ -67,8 +67,12 @@ export const DEFAULT_CONFIG = {
     terminator: 60000, // 1 minute
   },
   dxClusterSource: 'dxspider-proxy',
-  customDxCluster: { enabled: false, host: '', port: 7300 },
-  udpDxCluster: { host: '', port: 12060 },
+  // loginCommands: native cluster commands sent once after login on a custom
+  // telnet cluster (e.g. "set/filter dxbm/pass 20,15"); each { cmd, enabled }.
+  customDxCluster: { enabled: false, host: '', port: 7300, loginCommands: [] },
+  // setDx: spots arriving over UDP (N1MM / DXLog / MacLoggerDX) set the DX
+  // target; show: 'all' | 'mine' (only spots entered by this station).
+  udpDxCluster: { host: '', port: 12060, setDx: false, show: 'all' },
   wsjtxRelayMulticast: { enabled: false, address: '224.0.0.1' },
 };
 
@@ -131,6 +135,7 @@ export const loadConfig = () => {
       panels: { ...config.panels, ...serverConfig.panels },
       dxClusterSource: serverConfig.dxClusterSource || config.dxClusterSource,
       udpDxCluster: {
+        ...config.udpDxCluster,
         host: serverConfig.dxUdpHost || config.udpDxCluster.host,
         port: parseInt(serverConfig.dxUdpPort, 10) || config.udpDxCluster.port,
       },
@@ -162,7 +167,8 @@ export const loadConfig = () => {
       // Deep-merge propagation so saved configs predating the antenna field
       // (or server-synced configs missing it) don't reset antenna to default.
       propagation: { ...config.propagation, ...localConfig.propagation },
-      udpDxCluster: localConfig.udpDxCluster || config.udpDxCluster,
+      udpDxCluster: { ...config.udpDxCluster, ...(localConfig.udpDxCluster || {}) },
+      customDxCluster: { ...config.customDxCluster, ...(localConfig.customDxCluster || {}) },
     };
   }
 
@@ -205,6 +211,7 @@ const SYNC_KEYS = [
   'openhamclock_dockLayoutPresets',
   'openhamclock_dxFavorites',
   'openhamclock_dxFilters',
+  'openhamclock_watchlists',
   'openhamclock_dxLocation',
   'openhamclock_dxLocked',
   'openhamclock_mapLayers',

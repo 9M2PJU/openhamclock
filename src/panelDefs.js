@@ -85,6 +85,8 @@ export function buildPanelDefs({ isLocalInstall = false } = {}) {
     'world-clocks': { name: 'World Clocks', icon: '🌐' },
     stopwatch: { name: 'Stopwatch', icon: '⏱️' },
     'aircraft-nearby': { name: 'Aircraft Nearby', icon: '✈️' },
+    // Raw telnet text of the user's own custom cluster session — self-hosted only
+    ...(isLocalInstall ? { 'cluster-console': { name: 'Cluster Console', icon: '🖥️' } } : {}),
   };
 
   // Append auto-discovered panel plugins (src/plugins/local/panels/*.jsx).
