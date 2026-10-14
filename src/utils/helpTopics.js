@@ -117,6 +117,7 @@ export const PANEL_HELP = {
   'grayline-planner': 'propagation-panels',
   'eme-planner': 'eme',
   'sat-planner': 'satellites',
+  'cluster-console': 'dx-cluster',
 };
 
 /**

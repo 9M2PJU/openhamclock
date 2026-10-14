@@ -88,6 +88,8 @@ export function buildPanelDefs({ isLocalInstall = false } = {}) {
     'grayline-planner': { name: 'Grayline Planner', icon: '🌅', group: 'Propagation' },
     'eme-planner': { name: 'EME Planner', icon: '🌙', group: 'Solar' },
     'sat-planner': { name: 'Satellite Planner', icon: '🛰️' },
+    // Raw telnet text of the user's own custom cluster session — self-hosted only
+    ...(isLocalInstall ? { 'cluster-console': { name: 'Cluster Console', icon: '🖥️' } } : {}),
   };
 
   // Append auto-discovered panel plugins (src/plugins/local/panels/*.jsx).

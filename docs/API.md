@@ -235,6 +235,56 @@ curl -s -X POST http://localhost:3000/api/satellites/refresh
 # {"ok":true,"satellites":67,"note":"refresh queued; new elements arrive on the next fetch cycle"}
 ```
 
+## Cluster console (self-hosted only)
+
+The Cluster Console panel is a window onto the persistent telnet session the
+DX Cluster panel keeps open to a **Custom Telnet Server** source. These
+endpoints never open a connection of their own; the session must already
+exist (opened by `/api/dxcluster/paths?source=custom&…`). On a hosted
+instance (`OHC_HOSTED=1`) both return `400`.
+
+### `GET /api/dxcluster/console`
+
+Query: `host`, `port` (default `DX_CLUSTER_PORT`), `callsign` (ignored when
+`DX_CLUSTER_CALLSIGN` is set — the server-side login callsign always wins),
+`since` (last `seq` you have; omit for the whole 500-line ring buffer).
+The session is looked up by `host:port:loginCallsign`, so a browser only
+ever sees the session it would itself have opened.
+
+```json
+{
+  "exists": true,
+  "connected": true,
+  "authenticated": true,
+  "parked": false,
+  "node": { "host": "dxc.example.net", "port": 7300 },
+  "loginCallsign": "K0CJH",
+  "seq": 1234,
+  "lines": [{ "seq": 1233, "t": 1760000000000, "dir": "rx", "text": "DX de W1AW:  14025.0 ..." }]
+}
+```
+
+`dir` is `rx` for text from the node and `tx` for commands OpenHamClock typed
+(login, `sh/dx 25`, `set/dx`, login commands, console sends). Poll every 2 s
+with `since=<seq>`; a `seq` lower than the one you hold means the server
+restarted — start over.
+
+### `POST /api/dxcluster/console/send`
+
+Body: `{ "host", "port", "callsign", "command" }`. Gated like the other
+write endpoints (`API_WRITE_KEY`, see below, plus the shared write rate
+limiter) and additionally limited to **one command per second per session**
+(`429`). `command` must be a single line of printable ASCII, at most 120
+characters, and not a session-ending command (`bye`, `quit`, `exit`,
+`logout`); anything else is `400`. `409` when the session does not exist or
+is not logged in yet. Returns `{ "ok": true, "seq": <seq of the echoed line> }`.
+
+Login commands (sent once after each login) travel on the existing
+`/api/dxcluster/paths` request as `cmds`, a JSON array of up to 10 strings
+validated by the same rules.
+
+---
+
 ## Authentication
 
 Write endpoints (`POST`/`DELETE /api/qso-layer`, like the other ingest

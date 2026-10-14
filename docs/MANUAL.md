@@ -387,6 +387,52 @@ Spots are cross-referenced against your QSOs (native logbook + N3FJP + N1MM feed
 
 Portable prefixes are normalized (`5Z4/OZ6ABL` matches `OZ6ABL`) and phone/digital submodes are collapsed sensibly (USB/LSB → SSB, PSK31/63 → PSK).
 
+### Watch lists
+
+Watch lists use HamClock's grammar and come in three independent flavours — one for DX cluster spots, one for activation spots (POTA/SOTA/WWFF/WWBOTA) and one for logbook rows. Edit them from the matching panel (DX Filter Manager → Watchlist, the activation filter dialog → Watch, the Logbook's **Watch** button) or all together in Settings → Station → Watch lists. Each list has a mode:
+
+| Mode     | Effect                         |
+| -------- | ------------------------------ |
+| **Off**  | List is ignored                |
+| **Red**  | Matches are highlighted in red |
+| **Only** | Only matches are shown         |
+| **Not**  | Matches are hidden             |
+
+A list is a comma-separated set of _specs_; a spot matches the list when it satisfies **any** spec, and it satisfies a spec when it meets **all** of that spec's parts:
+
+- **Bands** — `40M`, `70CM`, or a range `20-10M`
+- **Sub-band modes** — `40CW`, `20SSB`, `30FT8`, `160-10CW`, `10-20DATA`; modes CW, DATA, FT4, FT8, RTTY and SSB are frequency windows from the band plan (the spot comment is never consulted — a CW spot at 14.200 is "20SSB")
+- **Frequencies** in MHz — `14-14.02MHZ`, or a single `14.074MHZ` (±0.5 kHz)
+- **Logbook keywords** evaluated against the native logbook — `NADXCC` (entity not yet worked), `NAPREF` (WPX prefix not yet worked), `NAGRID` (4-character grid not yet worked; the spot must carry a grid), `NABAND` (band not yet worked). With an empty log everything counts as new; an unresolvable entity or a spot without a grid never matches.
+- **Prefixes** — `VP2E`, `3Y`, `K1`. Portable calls are split into a DX portion and a home portion the HamClock way: `/MM`, `/AM`, single characters, digit-only parts (`/7`) and 3+ letter parts without a digit (`/QRP`) are ignored, and of what remains the part that is not a full callsign (or the shorter one) is the DX portion. A plain prefix matches either portion; a prefix with a trailing `/` (`VP2E/`) matches the DX portion only.
+
+Examples: `20M NADXCC` (new entities on 20 m), `40CW VP2E, 3Y/` (VP2E on 40 m CW, or any 3Y activity), `14-14.02MHZ NAPREF`.
+
+An existing simple watchlist (the old list of callsigns) is migrated automatically into the DX list as prefix specs in Red mode (Only mode if "show only watchlist" was on). The watchlist alert feed (Settings → Alerts) follows the DX list.
+
+In the DX Cluster panel, Red matches get a red callsign and row tint. When a Red match sits outside the visible part of the list, a red ▲ / ▼ button appears; click it to scroll to the match.
+
+### Scrolling and the NEW indicator
+
+While the DX Cluster list is scrolled away from the top it stays frozen — new spots are not inserted under your pointer. A green **NEW n** button counts the spots that arrived meanwhile; click it (or scroll back to the top) to resume the live list.
+
+### Cluster login commands and the Cluster Console
+
+With a **Custom Telnet Server** source (self-hosted installs only) you can add native cluster commands that OpenHamClock types once after each login, in order — for example `set/filter dxbm/pass 20,15`, `set/skimmer` or `set/dx/filter by_cont=EU`. Settings → Station → DX Cluster Source → Custom Telnet Server → **Cluster login commands**: up to 10 commands of one line each (120 characters, printable ASCII, no `bye`/`quit`), each with an on/off toggle so you can keep a command without sending it. The stock `sh/dx 25` + `set/dx` pair is always sent first. Changing the list on a live session sends the new commands straight away. HTTP sources (DX Spider Proxy, HamQTH, OHC Cluster) and UDP have no session, so the section explains that nothing is sent.
+
+The **Cluster Console** panel (self-hosted; add it from the ＋ panel picker) shows the raw text of that telnet session — login banner, filter confirmations, `sh/dx` tables, WWV and announcements — the last 500 lines, refreshed every 2 seconds. The input line sends one command per second to the node, with the same validation as login commands. The panel is disabled with an explanation when the active source is not a telnet cluster, and it never opens a connection of its own: keep the DX Cluster panel in your layout, since that is what holds the session.
+
+### Map spot labels
+
+Settings → Map Layers → **Spot labels** chooses what the labels on DX cluster and activation markers show — **None**, **Callsign**, **Prefix** (WPX-style: `K0`, `VP2E`) or **Frequency** (MHz) — and a **Min label distance** in km (HamClock's "Min label dist"): markers closer to DE than that keep their symbol but drop the label, which keeps the area around your station readable. Hovering a DX spot still shows its callsign. The 3D globe shows labels on hover only, so these options apply to the flat and azimuthal maps.
+
+### UDP spots: set DX, only mine
+
+With the **UDP Spots** source (N1MM, DXLog, MacLoggerDX and friends broadcasting spots on port 12060), two HamClock-style options live under Settings → Station → UDP Spot Listener:
+
+- **UDP spots set DX** — each newly received spot becomes the DX target (the batch already present at startup is skipped, so loading never moves your DX marker).
+- **Show UDP spots: All / Only mine** — loggers rebroadcast every cluster spot they receive; _Only mine_ keeps just the spots whose spotter is your own callsign (SSIDs and portable suffixes ignored). "Set DX" follows this filter.
+
 ---
 
 ## The logbook

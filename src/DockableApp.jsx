@@ -68,6 +68,7 @@ import {
 import MeshtasticPanel from './components/MeshtasticPanel.jsx';
 import LogbookPanel from './components/LogbookPanel.jsx';
 import AwardsPanel from './components/AwardsPanel.jsx';
+import ClusterConsolePanel from './components/ClusterConsolePanel.jsx';
 
 import {
   getActiveLayout,
@@ -928,6 +929,8 @@ export const DockableApp = ({
         showDXPaths={mapLayersEff.showDXPaths}
         showDXLabels={mapLayersEff.showDXLabels}
         onToggleDXLabels={mapLayersEff.showDXPaths ? toggleDXLabelsEff : undefined}
+        spotLabelMode={mapLayersEff.spotLabelMode}
+        spotLabelMinKm={mapLayersEff.spotLabelMinKm}
         showPOTA={mapLayersEff.showPOTA}
         showPOTALabels={mapLayersEff.showPOTALabels}
         showWWFF={mapLayersEff.showWWFF}
@@ -1509,6 +1512,10 @@ export const DockableApp = ({
           content = (
             <SatPlannerPanel satellites={satellites} config={config} dxLocation={dxLocation} dxCallsign={dxCallsign} />
           );
+          break;
+
+        case 'cluster-console':
+          content = <ClusterConsolePanel config={config} isLocalInstall={isLocalInstall} />;
           break;
 
         default: {
