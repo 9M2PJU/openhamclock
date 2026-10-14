@@ -161,6 +161,11 @@ const DEFAULT_CONFIG = {
     beaconInterval: 600, // Seconds between position beacons (0 = disabled)
     symbol: '/-', // APRS symbol (/-  = house)
     verbose: false,
+    // Forward received frames to the OpenHamClock server so its station
+    // cache (and every browser) sees RF stations without a browser being
+    // attached to this rig-bridge (#1221).
+    serverForward: true,
+    ohcUrl: 'http://localhost:3000',
   },
   // Rotator control via rotctld (Hamlib)
   rotator: {

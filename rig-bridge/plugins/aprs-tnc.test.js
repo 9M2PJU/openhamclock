@@ -32,3 +32,15 @@ describe('aprs-tnc station identity', () => {
     expect(make({ callsign: 'KE8PLM', ssid: '15' }).call()).toBe('KE8PLM-15');
   });
 });
+
+describe('aprs-tnc server forwarding (#1221)', () => {
+  it('is on by default, reports the server origin, and follows a settings save without restart', () => {
+    const config = { aprs: { enabled: true, protocol: 'kiss-tcp', callsign: 'KE8PLM' } };
+    const inst = plugin.create(config, {});
+    expect(inst.getStatus()).toMatchObject({ serverForward: true, ohcUrl: 'http://localhost:3000' });
+    config.aprs = { ...config.aprs, ohcUrl: 'http://192.168.1.50:8080/' };
+    expect(inst.getStatus().ohcUrl).toBe('http://192.168.1.50:8080');
+    config.aprs = { ...config.aprs, serverForward: false };
+    expect(inst.getStatus()).toMatchObject({ serverForward: false, ohcUrl: undefined });
+  });
+});
