@@ -7,6 +7,8 @@
  */
 
 export const APRS_SELECT_EVENT = 'ohc-aprs-select';
+/** Map popup → "show me this station's message history" (#1216). */
+export const APRS_HISTORY_EVENT = 'ohc-aprs-history';
 
 /** Highlight lifetime, ms. */
 export const APRS_SELECT_HIGHLIGHT_MS = 4000;
@@ -16,6 +18,14 @@ export const APRS_SELECT_HIGHLIGHT_MS = 4000;
  * @param {{ssid?: string, call?: string}} station
  * @returns {boolean} false when the request was dropped (no identity / no window)
  */
+export function requestAprsHistory(call) {
+  if (typeof window === 'undefined') return false;
+  const key = String(call || '').trim();
+  if (!key) return false;
+  window.dispatchEvent(new CustomEvent(APRS_HISTORY_EVENT, { detail: { call: key } }));
+  return true;
+}
+
 export function requestAprsSelect({ ssid, call } = {}) {
   if (typeof window === 'undefined') return false;
   const key = String(ssid || call || '').trim();

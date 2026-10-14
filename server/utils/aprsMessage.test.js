@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseAprsMessage } from './aprsMessage.js';
+import { parseAprsMessage, messagesForStation } from './aprsMessage.js';
 
 const line = (body) => `N8TAG-7>APY5D1,WIDE1-1:${body}`;
 
@@ -86,5 +86,27 @@ describe('parseAprsMessage', () => {
     const m = parseAprsMessage(line(':EMCOMM   :[Beds 12/20] shelter open'));
     expect(m.tokens.map((t) => t.key)).toContain('Beds');
     expect(m.isShelterReport).toBe(true);
+  });
+});
+
+describe('messagesForStation', () => {
+  const msgs = [
+    { from: 'KE8PLM-9', to: 'EMCOMM', text: 'CQ TESTNET', timestamp: 100 },
+    { from: 'K0CJH', to: 'KE8PLM-9', text: 'Acknowledged', timestamp: 300, direction: 'sent' },
+    { from: 'KE8PLM-7', to: 'K0CJH', text: 'from the HT', timestamp: 200 },
+    { from: 'W1AW', to: 'BLN1', text: 'unrelated', timestamp: 400 },
+  ];
+  it("returns both directions for the exact SSID and the operator's other SSIDs, newest first", () => {
+    const h = messagesForStation(msgs, 'ke8plm-9');
+    expect(h.map((m) => [m.text, m.direction])).toEqual([
+      ['Acknowledged', 'sent'],
+      ['from the HT', 'received'],
+      ['CQ TESTNET', 'received'],
+    ]);
+  });
+  it('is empty for an unknown or blank call and respects the limit', () => {
+    expect(messagesForStation(msgs, 'N0XYZ')).toEqual([]);
+    expect(messagesForStation(msgs, '')).toEqual([]);
+    expect(messagesForStation(msgs, 'KE8PLM', 1)).toHaveLength(1);
   });
 });

@@ -20,6 +20,8 @@
  *   beaconInterval: number Beacon interval in seconds (default: 600, 0 = disabled)
  *   symbol:       string   APRS symbol (default: '/-' = house)
  *   verbose:      boolean  Log all packets (default: false)
+ *   serverForward: boolean POST received frames to the OpenHamClock server (default: true)
+ *   ohcUrl:       string   OpenHamClock server URL for that (default: 'http://localhost:3000')
  *
  * Supported TNC interfaces:
  *   - Direwolf (KISS over TCP, default port 8001)
@@ -27,6 +29,9 @@
  */
 
 const net = require('net');
+const http = require('http');
+const https = require('https');
+const { URL } = require('url');
 const { parseAprsPacket } = require('../lib/aprs-parser');
 const {
   decodeKissFrame,
@@ -137,6 +142,52 @@ const descriptor = {
     let lastBeaconTime = null;
     const packetListeners = new Set();
 
+    // Server forwarding (#1221): every received frame is also POSTed to the
+    // OpenHamClock server's /api/aprs/local, batched once a second, so the
+    // server's station cache — and every browser that reads it — sees RF
+    // stations whether or not a browser is connected to this stream. Read
+    // from the live config so the settings page applies without a restart.
+    const forwardQueue = [];
+    let forwardTimer = null;
+    const forwardEnabled = () => live().serverForward !== false;
+    const forwardUrl = () => {
+      const base = String(live().ohcUrl || 'http://localhost:3000').replace(/\/$/, '');
+      try {
+        return new URL(`${base}/api/aprs/local`);
+      } catch (e) {
+        return null;
+      }
+    };
+    function flushForwardQueue() {
+      forwardTimer = null;
+      const packets = forwardQueue.splice(0, 200);
+      if (!packets.length) return;
+      const target = forwardUrl();
+      if (!target) return;
+      const body = JSON.stringify({ packets });
+      const mod = target.protocol === 'https:' ? https : http;
+      const req = mod.request(
+        {
+          hostname: target.hostname,
+          port: target.port || (target.protocol === 'https:' ? 443 : 80),
+          path: target.pathname,
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+        },
+        (res) => res.resume(),
+      );
+      req.on('error', () => {}); // fire-and-forget — a down server never stalls the receive loop
+      req.setTimeout(3000, () => req.destroy());
+      req.write(body);
+      req.end();
+    }
+    function enqueueForward(packet) {
+      if (!forwardEnabled()) return;
+      forwardQueue.push(packet);
+      if (forwardQueue.length > 1000) forwardQueue.splice(0, forwardQueue.length - 1000);
+      if (!forwardTimer) forwardTimer = setTimeout(flushForwardQueue, 1000);
+    }
+
     function addPacketListener(fn) {
       packetListeners.add(fn);
     }
@@ -215,13 +266,15 @@ const descriptor = {
         }
 
         // Notify SSE listeners
-        notifyListeners({
+        const rawFrame = {
           source: packet.source,
           destination: packet.destination,
           digipeaters: packet.digipeaters,
           info: packet.info,
           timestamp: Date.now(),
-        });
+        };
+        notifyListeners(rawFrame);
+        enqueueForward(rawFrame);
       }
     }
 
@@ -360,6 +413,11 @@ const descriptor = {
     }
 
     function disconnect() {
+      if (forwardTimer) {
+        clearTimeout(forwardTimer);
+        forwardTimer = null;
+      }
+      forwardQueue.length = 0;
       if (beaconTimer) {
         clearInterval(beaconTimer);
         beaconTimer = null;
@@ -392,6 +450,8 @@ const descriptor = {
         host: protocol === 'kiss-tcp' ? cfg.host || '127.0.0.1' : undefined,
         port: protocol === 'kiss-tcp' ? cfg.port || 8001 : undefined,
         serialPort: protocol === 'kiss-serial' ? cfg.serialPort : undefined,
+        serverForward: forwardEnabled(),
+        ohcUrl: forwardEnabled() ? String(forwardUrl()?.origin || '') : undefined,
       };
     }
 

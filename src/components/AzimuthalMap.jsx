@@ -123,6 +123,7 @@ export default function AzimuthalMap({
   aprsStations = null,
   aprsWatchlistCalls = null,
   showAPRSLabels = false,
+  aprsIconScale = 1,
   showDXPaths,
   showPOTA,
   showWWFF,
@@ -767,8 +768,9 @@ export default function AzimuthalMap({
     // cyan internet; optional callsign tag beside the dot.
     if (showAPRS && aprsStations?.length > 0) {
       const watch = aprsWatchlistCalls || new Set();
+      const scale = Number(aprsIconScale) > 0 ? Number(aprsIconScale) : 1; // #1214
       ctx.save();
-      ctx.font = '10px "JetBrains Mono", monospace';
+      ctx.font = `${Math.round(10 * scale)}px "JetBrains Mono", monospace`;
       ctx.textAlign = 'left';
       ctx.textBaseline = 'middle';
       aprsStations.forEach((station) => {
@@ -779,7 +781,7 @@ export default function AzimuthalMap({
         const color = isWatched ? '#f59e0b' : station.source === 'local-tnc' ? '#4ade80' : '#22d3ee';
         const p = toCanvas(lat, lon);
         if (!p || !Number.isFinite(p.x) || !Number.isFinite(p.y)) return;
-        const r = isWatched ? 5 : 4;
+        const r = (isWatched ? 5 : 4) * scale;
         ctx.beginPath();
         ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
         ctx.fillStyle = color;
@@ -903,6 +905,7 @@ export default function AzimuthalMap({
     aprsStations,
     aprsWatchlistCalls,
     showAPRSLabels,
+    aprsIconScale,
     hideOverlays,
     toCanvas,
     useTiles,

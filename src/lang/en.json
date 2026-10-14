@@ -128,6 +128,7 @@
   "aprsPanel.groups.title": "Watchlist Groups",
   "aprsPanel.groupsButton": "👥 Groups",
   "aprsPanel.groupsButtonTitle": "Manage watchlist groups",
+  "aprsPanel.iconSizeTitle": "APRS icon and tag size on the map — click to cycle",
   "aprsPanel.labelsButton": "Aa",
   "aprsPanel.labelsOff": "Show APRS callsigns on map",
   "aprsPanel.labelsOn": "Hide APRS callsigns on map",

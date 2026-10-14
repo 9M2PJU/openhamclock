@@ -25,6 +25,8 @@ const APRSPanel = ({
   onToggleMap,
   showLabelsOnMap = false,
   onToggleLabelsOnMap,
+  iconScale = 1,
+  onCycleIconScale,
   onHoverSpot,
   onSpotClick,
   deLocation,
@@ -253,6 +255,27 @@ const APRSPanel = ({
               }}
             >
               {t('aprsPanel.labelsButton')}
+            </button>
+          )}
+          {typeof onCycleIconScale === 'function' && (
+            <button
+              onClick={onCycleIconScale}
+              title={t('aprsPanel.iconSizeTitle')}
+              aria-label={t('aprsPanel.iconSizeTitle')}
+              style={{
+                background: iconScale !== 1 ? 'rgba(34, 211, 238, 0.18)' : 'var(--bg-tertiary)',
+                border: `1px solid ${iconScale !== 1 ? 'var(--accent-cyan)' : 'var(--border-color)'}`,
+                borderRadius: '4px',
+                padding: '3px 6px',
+                fontSize: '11px',
+                fontWeight: '700',
+                color: iconScale !== 1 ? 'var(--accent-cyan)' : 'var(--text-muted)',
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+                minWidth: '38px',
+              }}
+            >
+              {iconScale}×
             </button>
           )}
         </div>
