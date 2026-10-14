@@ -38,6 +38,10 @@ import * as LogbookQsosPlugin from './layers/useLogbookQsos.js';
 import * as DRAPPlugin from './layers/useDRAP.js';
 import * as ZonesPlugin from './layers/useZones.js';
 import * as HistoryPlaybackPlugin from './layers/useHistoryPlayback.js';
+import * as TropicalCyclonesPlugin from './layers/useTropicalCyclones.js';
+import * as FireWeatherAlertsPlugin from './layers/useFireWeatherAlerts.js';
+import * as BuoysPlugin from './layers/useBuoys.js';
+import * as BoundariesPlugin from './layers/useBoundaries.js';
 
 // Auto-discover local/custom plugins (gitignored — survive updates)
 const localPluginModules = import.meta.glob('./local/*.js', { eager: true });
@@ -89,6 +93,10 @@ const layerPlugins = [
   DRAPPlugin,
   ZonesPlugin,
   HistoryPlaybackPlugin,
+  TropicalCyclonesPlugin,
+  FireWeatherAlertsPlugin,
+  BuoysPlugin,
+  BoundariesPlugin,
   ...localPlugins,
 ];
 

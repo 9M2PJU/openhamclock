@@ -311,6 +311,10 @@ require('./server/routes/config-routes')(app, ctx);
 require('./server/routes/geo-time')(app, ctx);
 require('./server/routes/admin')(app, ctx);
 require('./server/routes/push')(app, ctx); // Web Push (dormant without VAPID keys); needs swpc-alerts exports
+require('./server/routes/tropical')(app, ctx); // NHC + JTWC tropical cyclones (Tropical panel + layer)
+require('./server/routes/fire-weather')(app, ctx); // NWS Red Flag / Fire Weather Watch alerts
+require('./server/routes/ndbc')(app, ctx); // NDBC buoy observations (Marine panel + layer)
+require('./server/routes/wefax')(app, ctx); // NWS radiofax chart catalogue + GIF proxy (WEFAX panel)
 
 // Subsystem health background refresher (read by /api/health).
 const health = require('./server/health');

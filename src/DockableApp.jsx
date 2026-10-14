@@ -61,6 +61,11 @@ import {
   SkedPlannerPanel,
   IonosondePanel,
   PropVerifyPanel,
+  TropicalPanel,
+  FireWeatherPanel,
+  MarinePanel,
+  WindyPanel,
+  WefaxPanel,
 } from './components';
 import MeshtasticPanel from './components/MeshtasticPanel.jsx';
 import LogbookPanel from './components/LogbookPanel.jsx';
@@ -1386,6 +1391,47 @@ export const DockableApp = ({
               units={config.allUnits?.dist ?? 'metric'}
             />
           );
+          break;
+
+        case 'tropical':
+          content = (
+            <TropicalPanel
+              deLocation={config.location}
+              units={config.allUnits?.dist}
+              onSetDX={handleDXChange}
+              dxLocked={dxLocked}
+            />
+          );
+          break;
+
+        case 'fire-weather':
+          content = (
+            <FireWeatherPanel
+              deLocation={config.location}
+              units={config.allUnits?.dist}
+              onSetDX={handleDXChange}
+              dxLocked={dxLocked}
+            />
+          );
+          break;
+
+        case 'marine':
+          content = (
+            <MarinePanel
+              deLocation={config.location}
+              units={config.allUnits?.dist}
+              onSetDX={handleDXChange}
+              dxLocked={dxLocked}
+            />
+          );
+          break;
+
+        case 'windy':
+          content = <WindyPanel deLocation={config.location} dxLocation={dxLocation} units={config.allUnits?.dist} />;
+          break;
+
+        case 'wefax':
+          content = <WefaxPanel onTune={handleSpotClick} rigEnabled={enabled} />;
           break;
 
         default: {

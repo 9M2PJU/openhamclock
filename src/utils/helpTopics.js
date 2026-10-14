@@ -28,6 +28,7 @@ export const HELP_TOPICS = {
   'spots-activity': 'spots-and-activity',
   'propagation-panels': 'propagation-and-space-weather',
   'station-rig-panels': 'station-and-rig',
+  'weather-panels': 'weather-marine-and-hazards',
   logging: 'logging',
   'emcomm-mesh': 'emcomm-and-mesh',
   'dx-cluster': 'dx-cluster-in-depth',
@@ -112,6 +113,11 @@ export const PANEL_HELP = {
   'world-clocks': 'utility',
   stopwatch: 'utility',
   'aircraft-nearby': 'utility',
+  tropical: 'weather-panels',
+  'fire-weather': 'weather-panels',
+  marine: 'weather-panels',
+  windy: 'weather-panels',
+  wefax: 'weather-panels',
 };
 
 /**
@@ -135,6 +141,10 @@ export const LAYER_HELP = {
   'winlink-gateways': 'emcomm-mesh',
   'worked-grids': 'logbook',
   'active-users': 'map-layers',
+  'tropical-cyclones': 'weather-panels',
+  'fire-weather-alerts': 'weather-panels',
+  'ndbc-buoys': 'weather-panels',
+  boundaries: 'map-layers',
 };
 
 /** Settings tab id → topic key */

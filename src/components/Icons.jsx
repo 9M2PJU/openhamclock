@@ -865,6 +865,48 @@ export const LiStopwatch = glyph(
   </>,
 );
 
+// Weather, marine and hazards panels (v26.11)
+export const LiCyclone = glyph(
+  <>
+    <circle cx="12" cy="12" r="2.6" />
+    <path d="M12 9.4c0-3.4 2.4-5.6 5.6-6.2" />
+    <path d="M14.6 12c3.4 0 5.6 2.4 6.2 5.6" />
+    <path d="M12 14.6c0 3.4-2.4 5.6-5.6 6.2" />
+    <path d="M9.4 12c-3.4 0-5.6-2.4-6.2-5.6" />
+  </>,
+);
+export const LiFlag = glyph(
+  <>
+    <line x1="5" y1="21" x2="5" y2="3" />
+    <path d="M5 4h12l-2.5 4 2.5 4H5" />
+  </>,
+);
+export const LiBuoy = glyph(
+  <>
+    <circle cx="12" cy="12" r="8" />
+    <circle cx="12" cy="12" r="3" />
+    <line x1="12" y1="4" x2="12" y2="9" />
+    <line x1="12" y1="15" x2="12" y2="20" />
+    <line x1="4" y1="12" x2="9" y2="12" />
+    <line x1="15" y1="12" x2="20" y2="12" />
+  </>,
+);
+export const LiWind = glyph(
+  <>
+    <path d="M3 8h11a2.5 2.5 0 1 0-2.5-2.5" />
+    <path d="M3 12h15a2.5 2.5 0 1 1-2.5 2.5" />
+    <path d="M3 16h8a2 2 0 1 1-2 2" />
+  </>,
+);
+export const LiFax = glyph(
+  <>
+    <rect x="3" y="7" width="18" height="12" rx="2" />
+    <path d="M7 7V4h10v3" />
+    <line x1="7" y1="12" x2="17" y2="12" />
+    <line x1="7" y1="15" x2="13" y2="15" />
+  </>,
+);
+
 /**
  * PANEL_ICONS — panel id → line-icon component.
  *
@@ -937,6 +979,11 @@ export const PANEL_ICONS = {
   'world-clocks': LiGlobeClock,
   stopwatch: LiStopwatch,
   'aircraft-nearby': LiPlane,
+  tropical: LiCyclone,
+  'fire-weather': LiFlag,
+  marine: LiBuoy,
+  windy: LiWind,
+  wefax: LiFax,
 };
 
 /**

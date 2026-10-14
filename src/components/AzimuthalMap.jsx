@@ -8,6 +8,7 @@
  * Leaflet handles pan/zoom; canvas syncs to Leaflet's view state.
  */
 import { useRef, useEffect, useState, useCallback, useMemo } from 'react';
+import { nearestCity, formatPopulation } from '../utils/nearestCity.js';
 import { useTranslation } from 'react-i18next';
 import { getBandColor, getBandFromFreq } from '../utils/callsign.js';
 import { latLonToMaidenhead } from '../utils/geo.js';
@@ -235,10 +236,14 @@ export default function AzimuthalMap({
           DEG +
           360) %
         360;
+      const city = nearestCity(e.latlng.lat, e.latlng.lng, 100);
+      const cityText = city
+        ? `  ${city.name} (${formatPopulation(city.population)})${city.km >= 5 ? ` ${Math.round(city.km)} km` : ''}`
+        : '';
       setTooltip({
         x: e.containerPoint.x,
         y: e.containerPoint.y,
-        text: `${e.latlng.lat.toFixed(1)}°, ${e.latlng.lng.toFixed(1)}°  ${latLonToMaidenhead({ lat: e.latlng.lat, lon: e.latlng.lng })}  ${Math.round(p.dist)} km  ${Math.round(bearing)}°`,
+        text: `${e.latlng.lat.toFixed(1)}°, ${e.latlng.lng.toFixed(1)}°  ${latLonToMaidenhead({ lat: e.latlng.lat, lon: e.latlng.lng })}  ${Math.round(p.dist)} km  ${Math.round(bearing)}°${cityText}`,
       });
     });
     map.on('mouseout', () => setTooltip(null));
