@@ -70,6 +70,17 @@ export const DEFAULT_CONFIG = {
   customDxCluster: { enabled: false, host: '', port: 7300 },
   udpDxCluster: { host: '', port: 12060 },
   wsjtxRelayMulticast: { enabled: false, address: '224.0.0.1' },
+  // KiwiSDR beacon monitor (Rig Bridge plugin kiwi-beacon-monitor). The
+  // browser reads measurements only when enabled; host/port/password are
+  // pushed to the bridge from Settings → Rig Bridge.
+  beaconMonitor: {
+    enabled: false,
+    host: '',
+    port: 8073,
+    password: '',
+    bands: ['20m', '17m', '15m', '12m', '10m'],
+    kiwiName: '',
+  },
 };
 
 // Cache for server config

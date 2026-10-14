@@ -139,6 +139,15 @@ export function formatAlertBody(feedId, item) {
       }
       break;
     }
+    case 'beacon-opening': {
+      // Measured beacon opening: { beacon, band, snrDb }
+      const beacon = item.beacon || '';
+      if (beacon) {
+        const snr = Number.isFinite(item.snrDb) ? `${item.snrDb >= 0 ? '+' : ''}${Math.round(item.snrDb)} dB` : '';
+        parts.push([item.band, beacon, 'heard', snr].filter(Boolean).join(' '));
+      }
+      break;
+    }
     case 'dxpeditions': {
       const call = item.callsign || item.call || '';
       const entity = item.entity || item.dxcc || '';

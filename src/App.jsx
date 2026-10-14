@@ -64,6 +64,7 @@ import useVersionCheck from './hooks/app/useVersionCheck';
 import usePresence from './hooks/app/usePresence';
 import useWavelogSync from './hooks/app/useWavelogSync.js';
 import useAudioAlerts from './hooks/app/useAudioAlerts';
+import { useIBPMeasurements } from './hooks/useIBPMeasurements';
 import { useSatelliteAnnouncements } from './hooks/app/useSatelliteAnnouncements';
 import useSceneRotation from './hooks/app/useSceneRotation';
 import useIdleClock from './hooks/app/useIdleClock';
@@ -480,6 +481,14 @@ const App = () => {
     return upcoming;
   }, [satellites.data]);
 
+  // Measured IBP beacon SNR from a KiwiSDR beacon monitor (Rig Bridge).
+  // Configures the page-wide poller; panels subscribe with no arguments.
+  const ibpMeasured = useIBPMeasurements({
+    enabled: !!config.beaconMonitor?.enabled,
+    rigControl: config.rigControl,
+    callsign: config.callsign,
+  });
+
   // Audio alerts for new items in data feeds
   useAudioAlerts({
     pota: potaSpots.data,
@@ -494,6 +503,7 @@ const App = () => {
     'sat-pass': satPassAlerts,
     'band-openings': bandOpenings.alertItems,
     swpc: severeSwpcAlerts,
+    'beacon-opening': ibpMeasured.openings,
   });
   const localWeather = useWeather(config.location, config.allUnits);
   const dxWeather = useWeather(dxLocation, config.allUnits);

@@ -4,6 +4,7 @@ import {
   observedScore,
   maxAcrossContinents,
   verdictFor,
+  verdictForScore,
   buildComparison,
   pickCellReliability,
   nearestContinent,
@@ -142,5 +143,30 @@ describe('nearestContinent', () => {
     expect(nearestContinent(40.015, -105.27)).toBe('NA'); // Boulder
     expect(nearestContinent(52.5, 13.4)).toBe('EU'); // Berlin
     expect(nearestContinent(-33.9, 151.2)).toBe('OC'); // Sydney
+  });
+});
+
+describe('verdictForScore / beacon third source', () => {
+  it('applies the same ±25 tolerance to a normalized beacon score', () => {
+    expect(verdictForScore(80, 70)).toBe('agrees');
+    expect(verdictForScore(80, 20)).toBe('worse');
+    expect(verdictForScore(10, 60)).toBe('better');
+    expect(verdictForScore(5, 0)).toBe('agrees');
+    expect(verdictForScore(null, 50)).toBe('nodata');
+    expect(verdictForScore(50, undefined)).toBe('nodata');
+  });
+
+  it('buildComparison attaches beacon rows only for bands with measured data', () => {
+    const rows = buildComparison(
+      { '20m': 80, '10m': 10 },
+      { '20m': 3 },
+      { '20m': { maxSnr: 18, score: 69, n: 4 }, '15m': { maxSnr: null, score: null, n: 0 } },
+    );
+    const r20 = rows.find((r) => r.band === '20m');
+    expect(r20.beacon).toEqual({ maxSnr: 18, score: 69, n: 4, verdict: 'agrees' });
+    expect(rows.find((r) => r.band === '15m').beacon).toBeNull();
+    expect(rows.find((r) => r.band === '10m').beacon).toBeNull();
+    // Without the third argument nothing changes for existing callers.
+    expect(buildComparison({ '20m': 80 }, {}).every((r) => r.beacon === null)).toBe(true);
   });
 });

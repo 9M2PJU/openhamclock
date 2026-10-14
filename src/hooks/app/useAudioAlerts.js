@@ -41,6 +41,10 @@ function itemKey(feedId, item) {
       return `${item.band || ''}-${item.from_continent || ''}-${item.to_zone != null ? `Z${item.to_zone}` : item.to_continent || ''}-${item.firstSeenHour ?? ''}`;
     case 'swpc':
       return `${item.productId || ''}-${item.serial || ''}`;
+    case 'beacon-opening':
+      // One alert per opening episode: beacon + band + when the contiguous
+      // heard run began (a beacon re-measured every 15 min does not re-alert).
+      return `${item.beacon || ''}-${item.band || ''}-${item.openedAt ?? ''}`;
     default:
       return JSON.stringify(item).substring(0, 80);
   }
@@ -136,5 +140,6 @@ export default function useAudioAlerts(feeds) {
     feeds['sat-pass'],
     feeds['band-openings'],
     feeds.swpc,
+    feeds['beacon-opening'],
   ]);
 }

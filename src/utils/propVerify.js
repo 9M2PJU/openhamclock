@@ -130,22 +130,44 @@ export function verdictFor(predicted, count, { cap = OBSERVED_CAP, tolerance = V
 }
 
 /**
+ * Verdict for an already-normalized 0-99 observed score (third source:
+ * measured beacon SNR from a KiwiSDR beacon monitor, see ibpMeasured.js).
+ * Same tolerance as verdictFor; "both closed" is score < 15 (≈ SNR ≤ −4 dB).
+ */
+export function verdictForScore(predicted, score, { tolerance = VERDICT_TOLERANCE } = {}) {
+  if (!Number.isFinite(predicted) || !Number.isFinite(score)) return 'nodata';
+  if (predicted < 15 && score < 15) return 'agrees';
+  const diff = score - predicted;
+  if (diff > tolerance) return 'better';
+  if (diff < -tolerance) return 'worse';
+  return 'agrees';
+}
+
+/**
  * Assemble the panel's row model.
  *
  * @param {Object} predictedByBand  { band: reliability|null } (already maxed across continents)
  * @param {Object} counts           { band: spotCount }
- * @returns {Array<{band, predicted, count, observed, verdict}>} in VERIFY_BANDS order
+ * @param {Object} [beaconsByBand]  { band: { maxSnr, score, n } } from measuredBandSummary — optional
+ *                                  third source; rows get `beacon: { maxSnr, score, n, verdict }` or null
+ * @returns {Array<{band, predicted, count, observed, verdict, beacon}>} in VERIFY_BANDS order
  */
-export function buildComparison(predictedByBand = {}, counts = {}) {
+export function buildComparison(predictedByBand = {}, counts = {}, beaconsByBand = null) {
   return VERIFY_BANDS.map((band) => {
     const predicted = Number.isFinite(predictedByBand[band]) ? predictedByBand[band] : null;
     const count = counts[band] ?? 0;
+    const b = beaconsByBand && beaconsByBand[band];
+    const beacon =
+      b && Number.isFinite(b.score)
+        ? { maxSnr: b.maxSnr, score: b.score, n: b.n ?? 0, verdict: verdictForScore(predicted, b.score) }
+        : null;
     return {
       band,
       predicted,
       count,
       observed: observedScore(count),
       verdict: verdictFor(predicted, count),
+      beacon,
     };
   });
 }
@@ -183,6 +205,7 @@ export default {
   observedScore,
   maxAcrossContinents,
   verdictFor,
+  verdictForScore,
   buildComparison,
   pickCellReliability,
 };

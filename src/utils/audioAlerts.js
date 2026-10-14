@@ -46,6 +46,7 @@ export const ALERT_FEEDS = {
   'band-openings': { label: 'Band Openings', defaultTone: 'low-tone', eventful: true },
   lightning: { label: 'Lightning Proximity', defaultTone: 'chirp' },
   swpc: { label: 'Space Weather', defaultTone: 'chime' },
+  'beacon-opening': { label: 'Beacon Openings (KiwiSDR monitor)', defaultTone: 'chirp', eventful: true },
 };
 
 const LS_KEY = 'ohc_audio_alerts';
