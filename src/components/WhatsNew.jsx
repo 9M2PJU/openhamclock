@@ -29,6 +29,34 @@ const ANNOUNCEMENT = {
 
 const CHANGELOG = [
   {
+    version: '26.10.1',
+    date: '2026-10-14',
+    heading:
+      'Same-day follow-up to 26.10.0 with the four requests that were still open: APRS icons and tags you can size up for a big screen, an EmComm-only map that keeps roster stations visible, a per-station message history for whoever is running the net, and RF-heard stations shared with every browser on the server.',
+    features: [
+      {
+        icon: '🔍',
+        title: 'NEW: APRS Icon Size',
+        desc: 'A size button beside the Aa labels toggle — in the dockable APRS panel and the EmComm Stations header — cycles the APRS symbols and callsign tags through 0.75×, 1×, 1.25×, 1.5× and 2× on the flat map, the azimuthal view and the 3D globe. For a laptop in the field or a wall screen in an EOC. Remembered per browser. Requested by Michael, KE8PLM.',
+      },
+      {
+        icon: '🚨',
+        title: 'NEW: EmComm-Only Map',
+        desc: 'An EmComm only toggle in the EmComm Stations header keeps just the stations with a recognised EmComm symbol or a Net Roster entry on the map. A roster station whose beacon has aged out is put back from its last known position, so checking in never makes a station disappear from the map. Remembered per browser. Requested by KE8PLM.',
+      },
+      {
+        icon: '📜',
+        title: 'NEW: Message History per Station',
+        desc: 'Hover a Net Roster row, or press HIST on a roster or EmComm Stations row, and a panel lists every message exchanged with that station — received and sent, newest first, with time and direction — and a MSG button to reply. Messages ↗ in an APRS map popup opens the same panel, so a station that has dropped off the roster is still one click away. The server now keeps your own sent messages too, so both sides of a conversation appear. For the operator taking over a net who needs the last ten minutes in one glance. Requested by KE8PLM.',
+      },
+      {
+        icon: '📡',
+        title: 'RF Stations Shared Across Every Browser',
+        desc: 'On a Raspberry Pi or EOC server, the "Local RF" stations used to exist only in the one browser attached to Rig Bridge; every other computer saw an empty list. Rig Bridge\'s APRS TNC plugin now sends each received frame to the OpenHamClock server as well (server URL and on/off switch in its settings, on by default), so the server\'s station cache — and every browser reading it — sees RF stations whether or not a browser is connected to Rig Bridge. Frames that arrive both ways are counted once. Requested by Jason Taggart.',
+      },
+    ],
+  },
+  {
     version: '26.10.0',
     date: '2026-10-14',
     heading:
