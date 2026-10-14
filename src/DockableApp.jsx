@@ -96,6 +96,10 @@ import './styles/flexlayout-openhamclock.css';
 import useMapLayers from './hooks/app/useMapLayers';
 import { useMapTextData } from './hooks/useMapTextData.js';
 import useRotator from './hooks/useRotator';
+import useRigBridgeRotator from './hooks/useRigBridgeRotator';
+import useDopplerTuning from './hooks/useDopplerTuning';
+import useRotatorAutoTrack from './hooks/useRotatorAutoTrack';
+import { useSatAutomation, setSatAutomationLive, setRotatorMode } from './utils/satAutomationStore.js';
 import { useCallsignPopup } from './components/CallsignPopupManager.jsx';
 
 // Icons
@@ -804,6 +808,99 @@ export const DockableApp = ({
     return data;
   }, []);
 
+  // ── Satellite automation: rotator auto-track + Doppler tuning ──────────
+  // Two rotator backends: Rig Bridge's rotctld plugin (az + el, preferred
+  // when running) and the server's PSTRotator UDP route (az only).
+  const rigForSat = useRig();
+  const rbRotator = useRigBridgeRotator({
+    rigUrl: rigForSat.rigUrl,
+    apiToken: config.rigControl?.apiToken || '',
+    enabled: !!rigForSat.enabled && !rigForSat.isCloudRelay,
+  });
+  const rotatorBackend = useMemo(
+    () =>
+      rbRotator.available
+        ? {
+            kind: 'rig-bridge',
+            available: rbRotator.connected,
+            connected: rbRotator.connected,
+            azimuth: rbRotator.azimuth,
+            elevation: rbRotator.elevation,
+            hasElevation: true,
+          }
+        : {
+            kind: 'server',
+            available: rot.available && rot.status === 'connected',
+            connected: rot.status === 'connected',
+            azimuth: rot.azimuth,
+            elevation: null,
+            hasElevation: false,
+          },
+    [
+      rbRotator.available,
+      rbRotator.connected,
+      rbRotator.azimuth,
+      rbRotator.elevation,
+      rot.available,
+      rot.status,
+      rot.azimuth,
+    ],
+  );
+  const sendRotatorPosition = useCallback(
+    async ({ az, el }) => (rbRotator.available ? rbRotator.setPosition(az, el) : turnRotator(Math.round(az))),
+    [rbRotator.available, rbRotator.setPosition, turnRotator],
+  );
+  const stopAnyRotator = useCallback(async () => {
+    setRotatorMode('off');
+    return rbRotator.available ? rbRotator.stop() : stopRotator();
+  }, [rbRotator.available, rbRotator.stop, stopRotator]);
+  // What the Rotator panel and the map beam read: the live backend.
+  const rotatorView = useMemo(
+    () =>
+      rbRotator.available
+        ? {
+            azimuth: rbRotator.azimuth,
+            lastGoodAzimuth: rbRotator.azimuth,
+            elevation: rbRotator.elevation,
+            isStale: !rbRotator.connected,
+            status: rbRotator.connected ? 'connected' : 'disconnected',
+            lastError: rbRotator.error,
+            source: 'rig-bridge',
+            available: true,
+            reconnect: undefined,
+          }
+        : rot,
+    [rbRotator.available, rbRotator.azimuth, rbRotator.elevation, rbRotator.connected, rbRotator.error, rot],
+  );
+  useEffect(() => {
+    setSatAutomationLive({ rotatorAvailable: rotatorBackend.available });
+  }, [rotatorBackend.available]);
+  const satAuto = useSatAutomation();
+  const trackedSatNames = useMemo(
+    () => (satellites?.data || []).filter((s) => s.omm).map((s) => s.name),
+    [satellites?.data],
+  );
+  // Map beam: the commanded azimuth as a true bearing (un-flipped).
+  const rotatorTargetAzimuth = useMemo(() => {
+    const tgt = satAuto.rotatorTarget;
+    if (!tgt || !Number.isFinite(tgt.az)) return null;
+    return tgt.flip ? (tgt.az + 180) % 360 : tgt.az;
+  }, [satAuto.rotatorTarget]);
+  useDopplerTuning({
+    satellites: satellites?.data,
+    deLocation: config.location,
+    rig: rigForSat,
+    settings: config.satellite,
+  });
+  useRotatorAutoTrack({
+    satellites: satellites?.data,
+    deLocation: config.location,
+    dxLocation,
+    rotator: rotatorBackend,
+    send: sendRotatorPosition,
+    settings: config.satellite,
+  });
+
   // Render World Map
   const renderWorldMap = () => (
     <div style={{ height: '100%', width: '100%', position: 'relative' }}>
@@ -855,11 +952,12 @@ export const DockableApp = ({
         meshcomNodes={meshcomData?.nodes}
         // ✅ Rotator bearing overlay support
         showRotatorBearing={mapLayersEff.showRotatorBearing}
-        rotatorAzimuth={rot.azimuth}
-        rotatorLastGoodAzimuth={rot.lastGoodAzimuth}
-        rotatorIsStale={rot.isStale}
-        rotatorControlEnabled={!rot.isStale}
-        onRotatorTurnRequest={turnRotator}
+        rotatorAzimuth={rotatorView.azimuth}
+        rotatorLastGoodAzimuth={rotatorView.lastGoodAzimuth}
+        rotatorIsStale={rotatorView.isStale}
+        rotatorControlEnabled={!rotatorView.isStale}
+        onRotatorTurnRequest={(az) => sendRotatorPosition({ az, el: 0 })}
+        rotatorTargetAzimuth={rotatorTargetAzimuth}
         hoveredSpot={hoveredSpot}
         leftSidebarVisible={true}
         rightSidebarVisible={true}
@@ -1260,12 +1358,13 @@ export const DockableApp = ({
         case 'rotator':
           return (
             <RotatorPanel
-              state={rot}
+              state={rotatorView}
               overlayEnabled={mapLayersEff.showRotatorBearing}
               onToggleOverlay={toggleRotatorBearingEff}
-              onTurnAzimuth={turnRotator}
-              onStop={stopRotator}
-              controlsEnabled={!rot.isStale}
+              onTurnAzimuth={(az) => sendRotatorPosition({ az, el: 0 })}
+              onStop={stopAnyRotator}
+              controlsEnabled={!rotatorView.isStale}
+              satOptions={trackedSatNames}
             />
           );
 

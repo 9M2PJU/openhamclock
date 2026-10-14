@@ -36,6 +36,9 @@ function itemKey(feedId, item) {
     case 'sat-pass':
       // One alert per pass (satellite + AOS time).
       return `${item.name || ''}-${item.aos || ''}`;
+    case 'sat-alerts':
+      // hams.at alert id (one alert per announced pass).
+      return `${item.id || `${item.name || ''}-${item.aos || ''}`}`;
     case 'band-openings':
       // One alert per opening episode: band + path + hour it was first seen.
       return `${item.band || ''}-${item.from_continent || ''}-${item.to_zone != null ? `Z${item.to_zone}` : item.to_continent || ''}-${item.firstSeenHour ?? ''}`;
@@ -138,6 +141,7 @@ export default function useAudioAlerts(feeds) {
     feeds.contests,
     feeds['contest-start'],
     feeds['sat-pass'],
+    feeds['sat-alerts'],
     feeds['band-openings'],
     feeds.swpc,
     feeds['beacon-opening'],

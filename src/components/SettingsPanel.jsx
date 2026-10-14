@@ -95,6 +95,15 @@ export const SettingsPanel = ({
   const [stationAlt, setStationAlt] = useState(config?.location?.stationAlt ?? 100);
   const [minElev, setMinElev] = useState(config?.satellite?.minElev ?? 5.0);
   const [satTrackDuration, setSatTrackDuration] = useState(config?.satellite?.trackDurationMins ?? 45);
+  // Satellite automation & alerts (Settings → Satellites, bottom section)
+  const [maxTleAgeDays, setMaxTleAgeDays] = useState(config?.satellite?.maxTleAgeDays ?? 7);
+  const [hamsAtApiKey, setHamsAtApiKey] = useState(config?.satellite?.hamsAtApiKey ?? '');
+  const [dopplerStepHz, setDopplerStepHz] = useState(config?.satellite?.dopplerStepHz ?? 20);
+  const [rotatorStepDeg, setRotatorStepDeg] = useState(config?.satellite?.rotatorStepDeg ?? 2);
+  const [rotatorMaxEl, setRotatorMaxEl] = useState(config?.satellite?.rotatorMaxEl ?? 90);
+  const [rotatorStopAz, setRotatorStopAz] = useState(config?.satellite?.rotatorStopAz ?? 0);
+  const [rotatorPrepositionMins, setRotatorPrepositionMins] = useState(config?.satellite?.rotatorPrepositionMins ?? 10);
+  const [tleRefreshState, setTleRefreshState] = useState(null);
   const [layout, setLayout] = useState(config?.layout || 'modern');
   const [mouseZoom, setMouseZoom] = useState(config?.mouseZoom || 50);
   const [timezone, setTimezone] = useState(config?.timezone || '');
@@ -433,6 +442,13 @@ export const SettingsPanel = ({
       setStationAlt(config.location?.stationAlt ?? 100);
       setMinElev(config.satellite?.minElev ?? 5.0);
       setSatTrackDuration(config.satellite?.trackDurationMins ?? 45);
+      setMaxTleAgeDays(config.satellite?.maxTleAgeDays ?? 7);
+      setHamsAtApiKey(config.satellite?.hamsAtApiKey ?? '');
+      setDopplerStepHz(config.satellite?.dopplerStepHz ?? 20);
+      setRotatorStepDeg(config.satellite?.rotatorStepDeg ?? 2);
+      setRotatorMaxEl(config.satellite?.rotatorMaxEl ?? 90);
+      setRotatorStopAz(config.satellite?.rotatorStopAz ?? 0);
+      setRotatorPrepositionMins(config.satellite?.rotatorPrepositionMins ?? 10);
       setLayout(config.layout || 'modern');
       setSceneRotation(config.sceneRotation || { enabled: false, intervalSec: 60, layouts: [] });
       setIdleClock(config.idleClock || { enabled: false, minutes: 10 });
@@ -699,6 +715,13 @@ export const SettingsPanel = ({
       satellite: {
         minElev: isNaN(parseFloat(minElev)) ? 5.0 : parseFloat(minElev),
         trackDurationMins: isNaN(parseInt(satTrackDuration)) ? 45 : parseInt(satTrackDuration),
+        maxTleAgeDays: Math.min(60, Math.max(1, parseFloat(maxTleAgeDays) || 7)),
+        hamsAtApiKey: String(hamsAtApiKey || '').trim(),
+        dopplerStepHz: Math.min(1000, Math.max(1, parseFloat(dopplerStepHz) || 20)),
+        rotatorStepDeg: Math.min(15, Math.max(0.5, parseFloat(rotatorStepDeg) || 2)),
+        rotatorMaxEl: parseInt(rotatorMaxEl, 10) === 180 ? 180 : 90,
+        rotatorStopAz: ((Math.round(parseFloat(rotatorStopAz) || 0) % 360) + 360) % 360,
+        rotatorPrepositionMins: Math.min(60, Math.max(0, parseFloat(rotatorPrepositionMins) || 0)),
       },
       theme,
       customTheme,
@@ -5348,6 +5371,212 @@ export const SettingsPanel = ({
                       </button>
                     );
                   })}
+              </div>
+
+              {/* 4. Automation & alerts: TLE age, hams.at, Doppler, rotator */}
+              <div
+                style={{
+                  marginTop: '20px',
+                  background: 'var(--bg-tertiary)',
+                  border: '1px solid var(--border-color)',
+                  borderRadius: '8px',
+                  padding: '14px',
+                }}
+              >
+                <div
+                  style={{
+                    color: 'var(--text-primary)',
+                    fontSize: '14px',
+                    fontWeight: '600',
+                    fontFamily: 'var(--font-mono)',
+                    marginBottom: '4px',
+                  }}
+                >
+                  🛰 {t('satAuto.settings.title')}
+                </div>
+                <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '12px' }}>
+                  {t('satAuto.settings.help')}
+                </div>
+
+                {(() => {
+                  const field = {
+                    width: '100%',
+                    padding: '8px',
+                    background: 'var(--bg-secondary)',
+                    border: '1px solid var(--border-color)',
+                    borderRadius: '6px',
+                    color: 'var(--text-primary)',
+                    fontSize: '13px',
+                    fontFamily: 'var(--font-mono)',
+                    boxSizing: 'border-box',
+                  };
+                  const label = {
+                    display: 'block',
+                    marginBottom: '4px',
+                    color: 'var(--text-muted)',
+                    fontSize: '10px',
+                    textTransform: 'uppercase',
+                  };
+                  const refreshTles = async () => {
+                    setTleRefreshState({ ok: null, text: '…' });
+                    try {
+                      const res = await fetch('/api/satellites/refresh', { method: 'POST' });
+                      const j = await res.json().catch(() => ({}));
+                      if (res.status === 429)
+                        setTleRefreshState({
+                          ok: false,
+                          text: t('satAuto.refreshTooSoon', { sec: j.retryAfterSec ?? '?' }),
+                        });
+                      else if (!res.ok || j.ok === false)
+                        setTleRefreshState({ ok: false, text: j.error || `HTTP ${res.status}` });
+                      else setTleRefreshState({ ok: true, text: t('satAuto.refreshQueued') });
+                    } catch (e) {
+                      setTleRefreshState({ ok: false, text: String(e?.message || e) });
+                    }
+                  };
+                  return (
+                    <div
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))',
+                        gap: '12px',
+                      }}
+                    >
+                      <div>
+                        <label htmlFor="sat-max-tle-age" style={label}>
+                          {t('satAuto.settings.maxTleAge')}
+                        </label>
+                        <div style={{ display: 'flex', gap: '6px' }}>
+                          <input
+                            id="sat-max-tle-age"
+                            type="number"
+                            min="1"
+                            max="60"
+                            step="1"
+                            value={maxTleAgeDays}
+                            onChange={(e) => setMaxTleAgeDays(e.target.value)}
+                            style={field}
+                          />
+                          <button
+                            type="button"
+                            onClick={refreshTles}
+                            aria-label={t('satAuto.refreshTles')}
+                            title={t('satAuto.settings.refreshHelp')}
+                            style={{ ...field, width: 'auto', whiteSpace: 'nowrap', cursor: 'pointer' }}
+                          >
+                            ⟳ {t('satAuto.refreshTles')}
+                          </button>
+                        </div>
+                        {tleRefreshState && (
+                          <div
+                            style={{
+                              fontSize: '10px',
+                              marginTop: '4px',
+                              color:
+                                tleRefreshState.ok === false
+                                  ? 'var(--accent-red)'
+                                  : tleRefreshState.ok
+                                    ? 'var(--accent-green)'
+                                    : 'var(--text-muted)',
+                            }}
+                          >
+                            {tleRefreshState.text}
+                          </div>
+                        )}
+                      </div>
+                      <div>
+                        <label htmlFor="sat-hamsat-key" style={label}>
+                          {t('satAuto.settings.hamsAtKey')}
+                        </label>
+                        <input
+                          id="sat-hamsat-key"
+                          type="password"
+                          autoComplete="off"
+                          value={hamsAtApiKey}
+                          onChange={(e) => setHamsAtApiKey(e.target.value)}
+                          placeholder={t('satAuto.settings.hamsAtKeyPlaceholder')}
+                          style={field}
+                        />
+                        <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                          {t('satAuto.settings.hamsAtHelp')}
+                        </div>
+                      </div>
+                      <div>
+                        <label htmlFor="sat-doppler-step" style={label}>
+                          {t('satAuto.settings.dopplerStep')}
+                        </label>
+                        <input
+                          id="sat-doppler-step"
+                          type="number"
+                          min="1"
+                          max="1000"
+                          step="1"
+                          value={dopplerStepHz}
+                          onChange={(e) => setDopplerStepHz(e.target.value)}
+                          style={field}
+                        />
+                      </div>
+                      <div>
+                        <label htmlFor="sat-rotator-step" style={label}>
+                          {t('satAuto.settings.rotatorStep')}
+                        </label>
+                        <input
+                          id="sat-rotator-step"
+                          type="number"
+                          min="0.5"
+                          max="15"
+                          step="0.5"
+                          value={rotatorStepDeg}
+                          onChange={(e) => setRotatorStepDeg(e.target.value)}
+                          style={field}
+                        />
+                      </div>
+                      <div>
+                        <label htmlFor="sat-rotator-maxel" style={label}>
+                          {t('satAuto.settings.rotatorMaxEl')}
+                        </label>
+                        <select
+                          id="sat-rotator-maxel"
+                          value={rotatorMaxEl}
+                          onChange={(e) => setRotatorMaxEl(parseInt(e.target.value, 10))}
+                          style={field}
+                        >
+                          <option value={90}>{t('satAuto.settings.rotatorMaxEl90')}</option>
+                          <option value={180}>{t('satAuto.settings.rotatorMaxEl180')}</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label htmlFor="sat-rotator-stop" style={label}>
+                          {t('satAuto.settings.rotatorStopAz')}
+                        </label>
+                        <select
+                          id="sat-rotator-stop"
+                          value={rotatorStopAz}
+                          onChange={(e) => setRotatorStopAz(parseInt(e.target.value, 10))}
+                          style={field}
+                        >
+                          <option value={0}>{t('satAuto.settings.rotatorStopNorth')}</option>
+                          <option value={180}>{t('satAuto.settings.rotatorStopSouth')}</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label htmlFor="sat-rotator-prep" style={label}>
+                          {t('satAuto.settings.preposition')}
+                        </label>
+                        <input
+                          id="sat-rotator-prep"
+                          type="number"
+                          min="0"
+                          max="60"
+                          step="1"
+                          value={rotatorPrepositionMins}
+                          onChange={(e) => setRotatorPrepositionMins(e.target.value)}
+                          style={field}
+                        />
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
             </div>
           )}

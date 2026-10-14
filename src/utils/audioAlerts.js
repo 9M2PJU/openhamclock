@@ -43,6 +43,7 @@ export const ALERT_FEEDS = {
   contests: { label: 'Contests', defaultTone: 'simple' },
   'contest-start': { label: 'Contest Starts', defaultTone: 'chime', eventful: true },
   'sat-pass': { label: 'Satellite Passes', defaultTone: 'ping', eventful: true },
+  'sat-alerts': { label: 'Satellite Alerts (hams.at)', defaultTone: 'two-tone', eventful: true },
   'band-openings': { label: 'Band Openings', defaultTone: 'low-tone', eventful: true },
   lightning: { label: 'Lightning Proximity', defaultTone: 'chirp' },
   swpc: { label: 'Space Weather', defaultTone: 'chime' },

@@ -490,6 +490,27 @@ Two dockable panels build on the tracking:
 - **AMSAT Status** — the community-reported AMSAT status board: which birds have been **Heard**, are **Telemetry Only**, or **Not Heard**, with report counts and recency. Passes tell you when the bird is up; this tells you whether the transponder is worth pointing at.
 - **Satellite Planner** — pick one tracked satellite and see its elevation at DE _and_ at the DX target over the next 24 hours on one chart, with the windows where it is above your minimum elevation at **both** ends shaded green and listed underneath (start, end, length, peak common elevation, each station's own AOS–LOS). Click the chart for a point readout (elevations, sub-point, altitude); click a pass — or the readout's **Show on map** — to set the [display time](#time-shift) to that moment so the map, globe and footprints jump there. Same math as the EME layout's SAT mode.
 
+### Satellite automation: Doppler tuning and rotator tracking
+
+The Satellite Passes panel (and each satellite's info window, in both projections) carries two switches per satellite. Pick the bird from the panel's dropdown or by clicking a pass row.
+
+- **DOPPLER** keeps your rig on the Doppler-corrected **downlink**. Choose the transponder or beacon from the **TX** dropdown — the list comes from the SatNOGS transmitter database and your pick is remembered per satellite. The tuner recomputes the range rate every second from the element set and sends a new frequency through Rig Control only when the correction has moved by more than the **Doppler retune step** (default 20 Hz), together with the transmitter's mode (FM, USB, LSB, CW). The readout shows corrected and nominal RX and TX frequencies live; the corrected **uplink** is shown for you to set by hand — Rig Bridge has no split/sub-VFO command, so only the downlink is tuned. Within the pre-position window before AOS the radio is parked on the AOS frequency. Needs Rig Control enabled (Settings → Rig Bridge).
+- **TRACK** points your rotator at the satellite (azimuth and elevation when the rotator reports elevation). Before each pass it swings to the AOS azimuth (**Pre-position before AOS**, default 10 min). See [Rotator auto-track](#rig-control-and-rig-bridge) below for the rotator side, including flip mode for passes that cross the rotator's stop.
+
+Both switches are also on the satellite info window: the Leaflet window on the flat map and the telemetry window on the 3D globe. Automation never resumes by itself after a reload — you switch it on each session.
+
+### Sky view
+
+The **SKY** tab of the Satellite Passes panel draws a polar sky plot of the selected satellite's next (or current) pass, HamClock style: zenith at the centre, horizon on the rim, N/E/S/W around the edge, with the AOS (green), LOS (red) and maximum-elevation points labelled with their times and a dot for where the bird is right now. A dashed path means the element set is stale (see below).
+
+### Element-set age and Refresh TLEs
+
+Predictions drift as element sets age. **Settings → Satellites → Max TLE age** (default 7 days) sets the limit: satellites whose elements are older are flagged **⚠ 3.2d** in the Satellite Passes list, in their info windows and in the picker, and their tracks are drawn **dashed** on both the flat map and the globe. **Refresh TLEs** (in the SKY tab and in Settings) asks the server to re-fetch every tracked satellite's elements now; the server accepts one forced refresh per 10 minutes and needs the write key on installs that set one.
+
+### Pass alerts from hams.at
+
+The **ALERTS** tab lists upcoming alerted passes announced on [hams.at](https://hams.at): satellite, operator callsign and grids, AOS/LOS, max elevation, mode/frequency and the comment, with **co-visibility** worked out against your own station — "co-visible 9 min · max 34°" means the bird is above your minimum elevation for nine minutes of that alert's window. Without a key you see the public feed; add your personal **hams.at API key** in **Settings → Satellites** to get your own alerts and hams.at's ranking. The key is sent only to your own OpenHamClock server, which forwards it to hams.at and never stores it (responses are cached for five minutes under a hash of the key). A self-hosted server can disable keyed proxying with `HAMS_AT_KEYED_PROXY=false`. The audio feed **Satellite Alerts (hams.at)** in Settings → Alerts sounds 15 minutes before an alerted pass and can raise a browser notification.
+
 ---
 
 ## Rig control and Rig Bridge
@@ -513,6 +534,18 @@ _Settings → Rig Bridge: enable, download for your OS, connect_
 - **Hardware:** Rotator (rotctld)
 - **Monitors:** KiwiSDR Beacon Monitor — automated NCDXF/IBP beacon SNR logging through a KiwiSDR (see [Measured beacon SNR](#measured-beacon-snr-kiwisdr-beacon-monitor))
 - **Cloud:** Cloud Relay
+
+**Rotator auto-track.** The Rotator panel has an **AUTO** row with three modes:
+
+- **OFF** — manual nudges and GO as before.
+- **DX** — keep the antenna on the bearing to the current DX; the **SP/LP** toggle picks short or long path. Click a different spot and the rotator follows.
+- **SAT** — track the satellite chosen in the picker (the same selection the Satellite Passes panel uses): azimuth and elevation while it is above the horizon, pre-positioned to the AOS azimuth before the pass. Satellites with no element set are not offered.
+
+Commands go out at most once per second and only when the target has moved by more than the **Rotator step** (Settings → Satellites, default 2°). **STOP** halts the rotator and always drops back to OFF. The commanded azimuth is drawn on the map as a thin amber dashed beam next to the cyan live-bearing beam until the needle catches up (the MAP toggle controls both).
+
+Two rotator backends are supported and picked automatically: Rig Bridge's **rotctld plugin** (azimuth + elevation; preferred when it is running and Rig Control is enabled in local mode) and the server-side **PSTRotator UDP** route (azimuth only; `ROTATOR_PROVIDER=pstrotator_udp`). The Rotator panel shows whichever is live.
+
+**Flip mode.** Rotators whose elevation axis travels to 180° (Yaesu G-5500 and similar) can follow a pass that crosses the azimuth stop without unwinding through the stop mid-pass: set **Rotator elevation travel** to 0–180° and your **Rotator stop** (north or south) in Settings → Satellites. When the predicted azimuth path of a pass crosses the stop, the whole pass is run "over the top" — azimuth + 180°, elevation mirrored — and the panel labels it **flip**. Standard 0–90° rotators simply track through the stop.
 
 **Cloud Relay (alpha):** using the hosted site or a cloud install? The relay connects your local rig-bridge to the server with a per-session token, enabling click-to-tune, PTT status, WSJT-X decodes, and APRS from anywhere. Connect it from Settings → Rig Bridge; the session credential lives only in your browser.
 
@@ -748,7 +781,7 @@ _Settings → Integrations: basemap key, callbooks, rotator, N3FJP_
 | 🔌 **Integrations** | CARTO basemap key, QRZ.com and HamQTH callbook credentials, and local-only extras: Rotator, DX Weather popups, N3FJP bridge                                                                                                                                           |
 | 🎨 **Display**      | Layout, theme (+ custom theme editor), monospace font, header size, clock order, What's New on startup, mutual-reception star                                                                                                                                         |
 | 🗺️ **Map Layers**   | Every overlay layer with enable + opacity, grouped by category; DE/DX markers, DX Target panel, and DX News ticker toggles                                                                                                                                            |
-| 🛰️ **Satellites**   | Satellite selection, tracks/footprints, station altitude, minimum elevation, track duration                                                                                                                                                                           |
+| 🛰️ **Satellites**   | Satellite selection, tracks/footprints, station altitude, minimum elevation, track duration; automation & alerts: max TLE age + Refresh TLEs, hams.at API key, Doppler retune step, rotator step / elevation travel / stop / pre-position                             |
 | 👤 **Profiles**     | Save/load/rename/export/import named profiles; profile share codes and full backup/restore; weather source picker — Open-Meteo (default, keyless) or OpenWeatherMap with your own key; export current state                                                           |
 | 🌐 **Community**    | GitHub, Facebook group, Reddit; core maintainers and the contributors wall; the privacy statement (no cookies, no tracking, anonymized stats)                                                                                                                         |
 | 🔔 **Alerts**       | Per-feed audio alerts, tones, master volume, browser notifications                                                                                                                                                                                                    |

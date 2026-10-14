@@ -68,6 +68,9 @@ import { useAlarmScheduler } from './hooks/app/useAlarmClock.js';
 import { AlarmBanner } from './components/AlarmIndicator.jsx';
 import { shiftDisplayTime, resetDisplayTime, HOUR_MS, DAY_MS } from './utils/displayTime.js';
 import { useIBPMeasurements } from './hooks/useIBPMeasurements';
+import useHamsAtAlerts from './hooks/useHamsAtAlerts';
+import { annotateCoVisibility, upcomingAlertFeedItems } from './utils/hamsAtAlerts.js';
+import { getAlertSettings, ALERT_SETTINGS_EVENT } from './utils/audioAlerts';
 import { useSatelliteAnnouncements } from './hooks/app/useSatelliteAnnouncements';
 import useSceneRotation from './hooks/app/useSceneRotation';
 import useIdleClock from './hooks/app/useIdleClock';
@@ -514,6 +517,19 @@ const App = () => {
     rigControl: config.rigControl,
     callsign: config.callsign,
   });
+  // hams.at alerted passes (Satellite Passes → Alerts). Polled only while
+  // the `sat-alerts` audio feed is switched on, so idle browsers cost nothing.
+  const [satAlertsOn, setSatAlertsOn] = useState(() => !!getAlertSettings()['sat-alerts']?.enabled);
+  useEffect(() => {
+    const sync = () => setSatAlertsOn(!!getAlertSettings()['sat-alerts']?.enabled);
+    window.addEventListener(ALERT_SETTINGS_EVENT, sync);
+    return () => window.removeEventListener(ALERT_SETTINGS_EVENT, sync);
+  }, []);
+  const hamsAt = useHamsAtAlerts(config.satellite?.hamsAtApiKey || '', { enabled: satAlertsOn });
+  const satAlertItems = useMemo(
+    () => upcomingAlertFeedItems(annotateCoVisibility(hamsAt.alerts, satellites.data || []), Date.now()),
+    [hamsAt.alerts, satellites.data],
+  );
 
   // Audio alerts for new items in data feeds
   useAudioAlerts({
@@ -527,6 +543,7 @@ const App = () => {
     contests: contests.data,
     'contest-start': contestStartAlerts,
     'sat-pass': satPassAlerts,
+    'sat-alerts': satAlertItems,
     'band-openings': bandOpenings.alertItems,
     swpc: severeSwpcAlerts,
     'beacon-opening': ibpMeasured.openings,

@@ -125,6 +125,23 @@ export function formatAlertBody(feedId, item) {
       }
       break;
     }
+    case 'sat-alerts': {
+      // hams.at alerted pass: { name, callsign, aos (ms), grids[], maxElevation }
+      const name = item.name || '';
+      const who = item.callsign || '';
+      if (name || who) {
+        const aosMs = typeof item.aos === 'number' ? item.aos : Date.parse(item.aos || '');
+        const head = [who, name ? `on ${name}` : ''].filter(Boolean).join(' ');
+        if (Number.isFinite(aosMs)) {
+          const mins = Math.max(0, Math.round((aosMs - Date.now()) / 60000));
+          parts.push(mins > 0 ? `${head} in ${mins} min` : `${head} now`);
+        } else {
+          parts.push(head);
+        }
+        if (Array.isArray(item.grids) && item.grids.length) parts.push(item.grids.join(' '));
+      }
+      break;
+    }
     case 'band-openings': {
       // Opening entry: { band, from_continent, to_continent | to_zone, shortCount, factor }
       const band = item.band || '';
