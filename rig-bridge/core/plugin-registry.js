@@ -9,7 +9,9 @@
  *   {
  *     id: string,
  *     name: string,
- *     category: 'rig' | 'rotator' | 'logger' | 'other',
+ *     category: 'rig' | 'integration' | 'monitor' | 'other',
+ *                                 // 'integration' and 'monitor' plugins run in
+ *                                 // parallel with the rig plugin (see PARALLEL_CATEGORIES)
  *     configKey: string,          // which config section the plugin uses
  *     create(config, services),   // factory → returns plugin instance
  *     // Optional:
@@ -21,6 +23,14 @@
  *
  * Non-rig plugins only need connect() / disconnect() and registerRoutes().
  */
+
+/**
+ * Plugin categories that run alongside the active rig plugin (started by
+ * connectIntegrations, restarted by restartIntegration). 'monitor' plugins
+ * are passive receivers (e.g. the KiwiSDR beacon monitor) — same lifecycle,
+ * different label in the setup UI.
+ */
+const PARALLEL_CATEGORIES = new Set(['integration', 'monitor']);
 
 class PluginRegistry {
   constructor(config, services) {
@@ -68,6 +78,7 @@ class PluginRegistry {
       'winlink-express-csv',
       'rotator',
       'cloud-relay',
+      'kiwi-beacon-monitor',
     ]) {
       try {
         const p = require(`../plugins/${file}`);
@@ -156,7 +167,7 @@ class PluginRegistry {
    */
   connectIntegrations() {
     for (const [id, descriptor] of this._descriptors) {
-      if (descriptor.category !== 'integration') continue;
+      if (!PARALLEL_CATEGORIES.has(descriptor.category)) continue;
       const cfgKey = descriptor.configKey;
       if (!this._config[cfgKey] || !this._config[cfgKey].enabled) continue;
       try {

@@ -22,6 +22,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { predictInWorker } from '../services/p533/predictInWorker.js';
+import { useIBPMeasurements } from '../hooks/useIBPMeasurements.js';
+import { measuredBandSummary } from '../utils/ibpMeasured.js';
 import { ANTENNA_PROFILES, modeRequiredSNR } from '../utils/propagationAdjust.js';
 import { getCallsignInfo } from '../utils/callsign.js';
 import {
@@ -193,7 +195,20 @@ export const PropVerifyPanel = ({
     return { counts: c, totalSpots: Object.values(c).reduce((s, n) => s + n, 0) };
   }, [dxSpots, pskReporter?.txReports, pskReporter?.rxReports, deContinent, nowTick]);
 
-  const rows = useMemo(() => buildComparison(maxAcrossContinents(prediction?.matrix), counts), [prediction, counts]);
+  // ── Third source: measured IBP beacon SNR from a KiwiSDR beacon monitor ──
+  // (Rig Bridge plugin; empty unless the user enabled it in Settings → Rig
+  // Bridge). Best SNR per band in the last 20 min, normalized to 0–99.
+  const ibpMeasured = useIBPMeasurements();
+  const beaconsByBand = useMemo(
+    () => (ibpMeasured.measurements.length ? measuredBandSummary(ibpMeasured.measurements, { now: nowTick }) : null),
+    [ibpMeasured.measurements, nowTick],
+  );
+  const hasBeacons = !!beaconsByBand && Object.keys(beaconsByBand).length > 0;
+
+  const rows = useMemo(
+    () => buildComparison(maxAcrossContinents(prediction?.matrix), counts, beaconsByBand),
+    [prediction, counts, beaconsByBand],
+  );
 
   const verdictLabel = (key) =>
     ({
@@ -252,6 +267,12 @@ export const PropVerifyPanel = ({
           <span style={{ color: 'var(--accent-green)' }}>▬</span>{' '}
           {t('propVerify.legendObserved', { defaultValue: 'observed (15-min spots)' })}
         </span>
+        {hasBeacons && (
+          <span>
+            <span style={{ color: 'var(--accent-amber)' }}>▬</span>{' '}
+            {t('propVerify.legendBeacons', { defaultValue: 'beacons (measured SNR, 20 min)' })}
+          </span>
+        )}
       </div>
 
       <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
@@ -325,6 +346,34 @@ export const PropVerifyPanel = ({
                       }}
                     />
                   </span>
+                  {row.beacon && (
+                    <span
+                      title={t('propVerify.beaconTooltip', {
+                        defaultValue:
+                          'KiwiSDR beacon monitor: best {{snr}} dB SNR on {{band}} in the last 20 min → {{verdict}}',
+                        snr: row.beacon.maxSnr >= 0 ? `+${row.beacon.maxSnr}` : row.beacon.maxSnr,
+                        band: row.band,
+                        verdict: verdictLabel(row.beacon.verdict),
+                      })}
+                      style={{
+                        position: 'relative',
+                        height: '5px',
+                        background: 'var(--bg-tertiary)',
+                        borderRadius: '2px',
+                      }}
+                    >
+                      <span
+                        style={{
+                          position: 'absolute',
+                          inset: '0 auto 0 0',
+                          width: `${row.beacon.score}%`,
+                          background: 'var(--accent-amber)',
+                          borderRadius: '2px',
+                          opacity: 0.85,
+                        }}
+                      />
+                    </span>
+                  )}
                 </span>
                 <span
                   style={{

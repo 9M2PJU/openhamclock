@@ -15,6 +15,7 @@ Everything else under `/api/*` is an **internal implementation detail** — see
 [What is NOT a stable contract](#what-is-not-a-stable-contract).
 
 - [QSO Layer API (write)](#qso-layer-api-write)
+- [IBP beacon measurements](#ibp-beacon-measurements)
 - [Public read endpoints](#public-read-endpoints)
 - [Authentication](#authentication)
 - [Rate limits & courtesy](#rate-limits--courtesy)
@@ -115,6 +116,73 @@ Same auth as POST.
 ```bash
 curl -X DELETE http://localhost:3000/api/qso-layer
 ```
+
+---
+
+## IBP beacon measurements
+
+SNR of the 18 NCDXF/IARU International Beacon Project beacons as measured by
+a listening station — normally the Rig Bridge **KiwiSDR Beacon Monitor**
+plugin, but any tool that can measure a beacon may post here. Storage is
+in-memory and bounded: 72 hours, 20 000 measurements per station, 50
+stations (least recently updated evicted first). Nothing is persisted across
+server restarts.
+
+### `POST /api/ibp/measurements`
+
+Gated like the other write endpoints (`Authorization: Bearer <API_WRITE_KEY>`
+when the instance has one; 20 requests/min per IP). At most 500
+measurements per request; the beacon monitor posts once per 3-minute cycle.
+
+```json
+{
+  "station": { "callsign": "KE8PLM", "grid": "EN82", "lat": 42.1, "lon": -83.5 },
+  "kiwi": { "id": "kiwi.example.org:8073", "name": "Home Kiwi" },
+  "measurements": [
+    {
+      "beacon": "4U1UN",
+      "band": "20m",
+      "t": 1760443200000,
+      "snrDb": 14.2,
+      "levelDbm": -86.1,
+      "noiseDbm": -100.3,
+      "n": 183
+    }
+  ]
+}
+```
+
+| Field                                    | Meaning                                                                                               |
+| ---------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `station.callsign`                       | Listening station id (uppercased). Optional when `kiwi.id` is given — then the id is `KIWI:<kiwi.id>` |
+| `measurements[].beacon`                  | One of the 18 IBP callsigns (`4U1UN` … `YV5B`)                                                        |
+| `measurements[].band`                    | `20m`, `17m`, `15m`, `12m` or `10m`                                                                   |
+| `measurements[].t`                       | Slot start, Unix ms (rounded to 10 s; must be within the last 72 h)                                   |
+| `measurements[].snrDb`                   | Signal above the per-band noise floor, dB                                                             |
+| `levelDbm`, `noiseDbm`, `medianDbm`, `n` | Optional diagnostics (S-meter level, noise floor, median, sample count)                               |
+
+Response: `{ "ok": true, "accepted": 1, "rejected": 0, "station": "KE8PLM" }`.
+Re-sending a batch after a failed request is safe — the same (beacon, band,
+slot) replaces rather than duplicates.
+
+### `GET /api/ibp/measurements?station=<id>&band=20m&hours=24`
+
+Measurements for one station, oldest first. `hours` ≤ 72 (default 24);
+`since=<ms>` overrides it; `band` filters. Unknown stations return
+`{ "station": "…", "measurements": [], "known": false }`.
+
+### `GET /api/ibp/stations`
+
+Stations that have posted recently, with callsign, grid, Kiwi id/name, count
+and last-update time.
+
+```bash
+curl -s 'http://localhost:3000/api/ibp/measurements?station=KE8PLM&hours=6' | jq '.measurements | length'
+```
+
+The Rig Bridge also serves its own copy without the server:
+`GET http://localhost:5555/api/beacon-monitor/measurements?hours=24` and
+`GET http://localhost:5555/api/beacon-monitor/status`.
 
 ---
 

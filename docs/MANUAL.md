@@ -269,12 +269,12 @@ _The Solar panel cycling through live imagery, indices, X-ray flux, and the moon
 - **Propagation (VOACAP Chart / Bars)** — per-band reliability between DE and DX, as a 24-hour chart or as bars for right now. Detailed below in [Propagation in depth](#propagation-in-depth).
 - **Sked Planner** — best times to work the current DX target over the next 48 hours: a band × hour grid colored by the same P.533 predictions the VOACAP panel computes (same mode/power/antenna settings — changing them here changes them everywhere), annotated with UTC plus both stations' local hours and sunrise/sunset markers, with the top three contact windows called out ("Best: 20m 02:00–05:00z"). Day 2 tiles the 24-hour monthly-median prediction honestly — HF predictions repeat diurnally, so it's labeled as a repeat, not a fresh forecast.
 - **Ionosondes** — live foF2 and MUF(3000) measured by real GIRO digisondes (via prop.kc2g.com), sorted by distance from your QTH. The nearest station gets a "your local ionosphere" summary: foF2 translated into an NVIS usability hint and MUF(3000) into the highest band worth trying for DX. Measurements, not models — the ground truth the VOACAP predictions try to approximate.
-- **Prediction Check** — per HF band, what the P.533 engine predicts right now (DE to a representative point on each continent, best continent kept) against what's actually being spotted (DX cluster + PSKReporter spots involving your continent in the last 15 minutes), with an agrees / better / worse verdict chip per band. Deliberately heuristic — spot counts measure operator activity, not path reliability — and the panel's footnote says so.
+- **Prediction Check** — per HF band, what the P.533 engine predicts right now (DE to a representative point on each continent, best continent kept) against what's actually being spotted (DX cluster + PSKReporter spots involving your continent in the last 15 minutes), with an agrees / better / worse verdict chip per band. Deliberately heuristic — spot counts measure operator activity, not path reliability — and the panel's footnote says so. With a KiwiSDR beacon monitor running, a third (amber) bar per band shows the best _measured_ beacon SNR of the last 20 minutes — a real receiver's verdict rather than a count of who happened to be on.
 - **Band Conditions** — N0NBH's band-by-band day/night condition ratings, VHF aurora/E-skip status, and geomagnetic summary.
 - **Band Health** — a "what's actually happening" view computed from live DX cluster spot activity per band, with a mode breakdown. Not a model — observed reality.
 - **Band Activity (Continent)** — a DX-Heat-style continent × band heatmap of cluster spots over the last 15/30/60 minutes.
 - **Band Activity (PSKR)** — spot counts per HF band from PSKReporter.
-- **IBP Beacons** — which NCDXF/IARU beacon is transmitting on each of the five beacon bands _right now_ (the schedule is deterministic — no network needed), with countdowns and bearings, plus a listening-log timeline showing which beacons RBN skimmers heard in each 3-minute cycle.
+- **IBP Beacons** — which NCDXF/IARU beacon is transmitting on each of the five beacon bands _right now_ (the schedule is deterministic — no network needed), with countdowns and bearings, plus a listening-log timeline showing which beacons RBN skimmers heard in each 3-minute cycle. A third **MEASURED** view shows the SNR of every beacon on every band as measured by your own KiwiSDR beacon monitor (Rig Bridge plugin) — see [Measured beacon SNR](#measured-beacon-snr-kiwisdr-beacon-monitor).
 - **Solar (all views, or individual panels)** — cycles through: live solar imagery (SDO with LMSAL and Helioviewer fallbacks), solar indices with 30-day history, GOES X-ray flux (6/12/24/48-hour windows with flare classification), and lunar phase with real NASA Dial-A-Moon imagery plus EME moon pointing data (azimuth/elevation, rise/set, distance).
 - **Solar Cycle** — the big picture: monthly observed sunspot numbers (thin line) and the official smoothed SSN (bold line) since 2015, overlaid on NOAA SWPC's cycle-25 predicted range band, with a "you are here" marker on the latest observation and current SSN/SFI readouts. One glance answers "are we past the peak?".
 - **Space Wx Alerts** — recent NOAA SWPC alerts, watches, and warnings with R/S/G severity chips.
@@ -455,6 +455,17 @@ Real-time corrections come from ionosonde data via KC2G/GIRO — measured ionosp
 
 Data acknowledgement: ionosonde data from prop.kc2g.com originates from the [Global Ionospheric Radio Observatory](https://giro.uml.edu) and its worldwide network of contributing stations.
 
+### Measured beacon SNR (KiwiSDR beacon monitor)
+
+Predictions are models; the 18 NCDXF/IARU beacons are the ground truth, transmitting 100 W CW on 14.100, 18.110, 21.150, 24.930 and 28.200 MHz in a fixed 3-minute rota. The **KiwiSDR beacon monitor** is a Rig Bridge plugin that listens to them for you around the clock through any KiwiSDR you own or may park on:
+
+- Every 10-second beacon slot it retunes the Kiwi (CW, 300–700 Hz passband) to the beacon transmitting on the band whose turn it is, reads the receiver's S-meter during seconds 1–9 of the slot, and records SNR against a per-band noise floor (the median of the quietest 20 % of readings on that band over the last cycle). Bands rotate slot by slot, so with all five enabled every beacon/band pair is measured once per 15 minutes.
+- Measurements stay in the bridge (24 h+, readable by the browser directly) and are also posted to your OpenHamClock server once per cycle, so a remote or hosted browser sees them too.
+
+**Setup:** Settings → **Rig Bridge** → _Beacon monitor (KiwiSDR)_: enable it, pick a receiver (**Find nearest public receivers** lists the nearest Kiwis from the public directory with distance and free slots, or type a host and port), add the Kiwi's password if it needs one, choose the bands, then **Push to Rig Bridge** and **Save**. Rig Bridge restarts the monitor live; the same settings are also editable in the bridge's own setup page under Plugins. Prefer a Kiwi you own — the monitor holds one receiver slot continuously, public receivers often cap session length per IP, and the monitor then simply reconnects with backoff.
+
+**Reading it:** the IBP Beacons panel's **MEASURED** view is an 18 × 5 grid — one coloured cell per beacon and band showing the latest SNR (grey = not heard, red → green = +6 … +30 dB, faded = older than an hour), a 24-hour heat strip per beacon (best SNR in each half-hour), and a **P.533** column: how many of that beacon's measured bands agree with the browser's own ITU-R P.533 prediction for the beacon→you path (100 W CW, the beacons' real power and mode). Hover anything for numbers. The **Prediction Check** panel gains the same data as a third, amber bar per band, and the **Alerts** tab offers a _Beacon Openings_ feed that sounds when a beacon on a band goes from unheard to ≥ 10 dB.
+
 ---
 
 ## Satellites
@@ -500,6 +511,7 @@ _Settings → Rig Bridge: enable, download for your OS, connect_
 - **Digital modes:** WSJT-X, JTDX, MSHV, JS8Call — bidirectional (reply to a decode, halt TX, set free text)
 - **Packet:** APRS TNC (KISS/Direwolf), Winlink (Pat client)
 - **Hardware:** Rotator (rotctld)
+- **Monitors:** KiwiSDR Beacon Monitor — automated NCDXF/IBP beacon SNR logging through a KiwiSDR (see [Measured beacon SNR](#measured-beacon-snr-kiwisdr-beacon-monitor))
 - **Cloud:** Cloud Relay
 
 **Cloud Relay (alpha):** using the hosted site or a cloud install? The relay connects your local rig-bridge to the server with a per-session token, enabling click-to-tune, PTT status, WSJT-X decodes, and APRS from anywhere. Connect it from Settings → Rig Bridge; the session credential lives only in your browser.
@@ -585,13 +597,14 @@ DX-side Doppler is deliberately not shown — that belongs to the other operator
 
 _Settings → Alerts: pick what wakes you and how_
 
-**Settings → Alerts** plays a tone when new items appear in a feed. Feeds: POTA, SOTA, WWFF, WWBOTA, DX Cluster, Watchlist Hits, DXpeditions, Contests, Contest Starts, Satellite Passes, Band Openings, Lightning Proximity, Space Weather, and Alarm Clock — all off by default, each with its own tone (nine Web Audio presets — no sound files) and a master volume. (The Alarm Clock entry only picks the alarm's tone and notification; an armed alarm always rings.)
+**Settings → Alerts** plays a tone when new items appear in a feed. Feeds: POTA, SOTA, WWFF, WWBOTA, DX Cluster, Watchlist Hits, DXpeditions, Contests, Contest Starts, Satellite Passes, Band Openings, Lightning Proximity, Space Weather, Beacon Openings, and Alarm Clock — all off by default, each with its own tone (nine Web Audio presets — no sound files) and a master volume. (The Alarm Clock entry only picks the alarm's tone and notification; an armed alarm always rings.)
 
-Four event feeds go beyond "new item in a panel":
+Five event feeds go beyond "new item in a panel":
 
 - **Watchlist Hits** — a spot matching your DX Cluster watchlist (Filters → Watchlist) appeared in the raw cluster feed. Matching happens _before_ your panel filters, so a watched call alerts even when the panel is filtered to something else, and portable calls match their base call (5Z4/OZ6ABL hits a watchlist entry of OZ6ABL). Re-spots of the same call on the same band stay quiet; the same call on a _new_ band alerts again — one alert per band opening.
 - **Contest Starts** — strictly opt-in per contest: click the 🔔 next to a contest in the Contests panel to arm a reminder, and you'll get one alert when that contest is within 15 minutes of starting. With no contests armed, the feed stays silent even when enabled.
 - **Satellite Passes** — one alert when a tracked satellite's next pass begins within 5 minutes, with the pass's max elevation.
+- **Beacon Openings** — needs the KiwiSDR beacon monitor (Rig Bridge). One alert when an NCDXF beacon on a band goes from unheard to at least 10 dB SNR at your receiver — "15m VK6RBP heard +14 dB" — and quiet while the opening persists; a re-measurement every 15 minutes does not re-alert.
 - **Band Openings** — the server watches RBN and cluster spot streams and flags surges against a 3-hour baseline, both per band and continent path and per band and CQ zone of the stations doing the hearing. A **Scope** setting picks what you are told about: **My CQ zone** (default — "20m opening EU→zone 3 (12 spots, 4x baseline)", so a West Coast station is not woken for an East Coast opening), **My continent**, or **Worldwide**. Your zone comes from your callsign; enter it by hand if your call's prefix doesn't match where you actually operate. One alert per opening episode; quiet while the baseline is still warming after a server restart.
 
 Sensible guardrails: no alert storm on page load or when returning to a background tab, a per-feed cooldown, and one tone per batch of new items.

@@ -1041,6 +1041,18 @@ function buildSetupHtml(version, firstRunToken = null) {
         { id: 'bindHost', label: 'Bind Address', type: 'text', default: '0.0.0.0' },
         { id: 'verbose', label: 'Verbose logging', type: 'checkbox', default: false },
       ]},
+      { key: 'beaconMonitor', name: 'KiwiSDR Beacon Monitor', maturity: 'alpha', desc: 'Logs NCDXF/IBP beacon SNR through a KiwiSDR you own or may park on (one receiver slot, 24/7). Measurements show in the IBP Beacons panel and feed Prediction Check.', fields: [
+        { id: 'host', label: 'KiwiSDR Host (no http://)', type: 'text', default: '' },
+        { id: 'port', label: 'KiwiSDR Port', type: 'number', default: 8073 },
+        { id: 'password', label: 'Kiwi Password (if required)', type: 'text', default: '' },
+        { id: 'bands', label: 'Bands (comma list)', type: 'text', default: '20m,17m,15m,12m,10m' },
+        { id: 'callsign', label: 'Listening Station Callsign', type: 'text', default: '' },
+        { id: 'grid', label: 'Receiver Grid Locator', type: 'text', default: '' },
+        { id: 'serverForward', label: 'Forward measurements to OpenHamClock server', type: 'checkbox', default: true },
+        { id: 'ohcUrl', label: 'OpenHamClock server URL', type: 'text', default: 'http://localhost:3000' },
+        { id: 'ohcApiKey', label: 'Server API_WRITE_KEY (if set)', type: 'text', default: '' },
+        { id: 'verbose', label: 'Log every measurement', type: 'checkbox', default: false },
+      ]},
     ];
 
     function maturityBadge(level) {
@@ -2244,7 +2256,30 @@ function createServer(registry, version) {
       config.rtltcp = { ...config.rtltcp, ...newConfig.rtltcp };
     }
     // Deep-merge plugin config sections
-    for (const key of ['mshv', 'jtdx', 'js8call', 'aprs', 'rotator', 'cloudRelay', 'winlink', 'meshcom']) {
+    // KiwiSDR beacon monitor — validate the receiver host/port before merging
+    if (newConfig.beaconMonitor) {
+      const bm = newConfig.beaconMonitor;
+      if (bm.host !== undefined && bm.host !== '' && !isValidRemoteHost(bm.host)) {
+        return res.status(400).json({ success: false, error: 'Invalid host value for beaconMonitor.host' });
+      }
+      if (bm.port !== undefined && bm.port !== '' && !isValidPort(Number(bm.port))) {
+        return res.status(400).json({ success: false, error: 'Invalid port value for beaconMonitor.port' });
+      }
+      if (bm.bands !== undefined && !Array.isArray(bm.bands) && typeof bm.bands !== 'string') {
+        return res.status(400).json({ success: false, error: 'beaconMonitor.bands must be an array or string' });
+      }
+    }
+    for (const key of [
+      'mshv',
+      'jtdx',
+      'js8call',
+      'aprs',
+      'rotator',
+      'cloudRelay',
+      'winlink',
+      'meshcom',
+      'beaconMonitor',
+    ]) {
       if (newConfig[key]) {
         config[key] = { ...(config[key] || {}), ...newConfig[key] };
         // Handle nested objects (e.g. winlink.pat)
@@ -2288,6 +2323,13 @@ function createServer(registry, version) {
     // Restart WSJT-X relay if its config changed
     if (newConfig.wsjtxRelay) {
       registry.restartIntegration('wsjtx-relay');
+    }
+
+    // Restart the KiwiSDR beacon monitor if its config changed — the OHC
+    // Settings → Rig Bridge "Push to Rig Bridge" button relies on this so
+    // the monitor picks up a new receiver without restarting the bridge.
+    if (newConfig.beaconMonitor) {
+      registry.restartIntegration('kiwi-beacon-monitor');
     }
 
     res.json({ success: true, config });

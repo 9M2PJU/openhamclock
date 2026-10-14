@@ -744,6 +744,18 @@ Two features:
 - **Gateway Discovery** — shows nearby Winlink RMS gateways on the map (requires API key from winlink.org)
 - **Pat Client** — integrates with [Pat](https://getpat.io/) for composing and sending Winlink messages over RF
 
+### KiwiSDR Beacon Monitor Plugin _(Alpha)_
+
+Turns a KiwiSDR into an automated NCDXF/IBP beacon logger. The plugin opens one audio channel on the receiver (the same WebSocket handshake kiwiclient uses), follows the beacon schedule in UTC and, every 10-second slot, retunes to the beacon transmitting on the band whose turn it is (CW, 300–700 Hz passband), reads the Kiwi's S-meter during seconds 1–9 and records SNR against a per-band noise floor (median of the quietest 20 % of readings on that band over the last cycle). With all five bands enabled every beacon/band pair is measured once per 15 minutes.
+
+1. Enable **KiwiSDR Beacon Monitor** in the Plugins tab (or push the settings from OpenHamClock's Settings → Rig Bridge → Beacon monitor section, which can also pick the nearest public Kiwi for you).
+2. Set the Kiwi host and port (`8073` by default) and the password if the receiver needs one.
+3. Optional: callsign and grid of the listening station, bands to rotate through, and the OpenHamClock server URL (plus its `API_WRITE_KEY` if set) to forward measurements to.
+
+Measurements are served locally from `GET http://localhost:5555/api/beacon-monitor/measurements?hours=24` (status at `/api/beacon-monitor/status`) and, with forwarding on, POSTed once per 3-minute cycle to the server's `/api/ibp/measurements`. The IBP Beacons panel's **MEASURED** view and the Prediction Check panel read them.
+
+Etiquette: the monitor holds one receiver slot 24/7. Use a Kiwi you own or have permission to park on — public receivers usually cap session length per IP, and the monitor will simply reconnect with backoff when kicked.
+
 ### Cloud Relay Plugin
 
 Bridges a locally-running rig-bridge to a cloud-hosted OpenHamClock instance so cloud users get the same rig control as local users — click-to-tune, PTT, WSJT-X decodes, APRS packets.
@@ -1025,18 +1037,20 @@ Executables are saved to the `dist/` folder.
 
 Rig Bridge exposes a simple HTTP API — compatible with the original rig-daemon format:
 
-| Method | Endpoint      | Description                                               |
-| ------ | ------------- | --------------------------------------------------------- |
-| GET    | `/status`     | Current frequency, mode, PTT state, and connection status |
-| GET    | `/stream`     | Real-time updates via SSE (Server-Sent Events)            |
-| POST   | `/freq`       | Tune radio: `{ "freq": 14074000 }` (frequency in Hz)      |
-| POST   | `/mode`       | Set mode: `{ "mode": "USB" }`                             |
-| POST   | `/ptt`        | Key transmitter: `{ "ptt": true }`                        |
-| GET    | `/api/ports`  | List available serial ports                               |
-| GET    | `/api/config` | Read current configuration                                |
-| POST   | `/api/config` | Save configuration and reconnect                          |
-| POST   | `/api/test`   | Test a serial port without connecting                     |
-| GET    | `/api/status` | Lightweight health check                                  |
+| Method | Endpoint                           | Description                                               |
+| ------ | ---------------------------------- | --------------------------------------------------------- |
+| GET    | `/status`                          | Current frequency, mode, PTT state, and connection status |
+| GET    | `/stream`                          | Real-time updates via SSE (Server-Sent Events)            |
+| POST   | `/freq`                            | Tune radio: `{ "freq": 14074000 }` (frequency in Hz)      |
+| POST   | `/mode`                            | Set mode: `{ "mode": "USB" }`                             |
+| POST   | `/ptt`                             | Key transmitter: `{ "ptt": true }`                        |
+| GET    | `/api/ports`                       | List available serial ports                               |
+| GET    | `/api/config`                      | Read current configuration                                |
+| POST   | `/api/config`                      | Save configuration and reconnect                          |
+| POST   | `/api/test`                        | Test a serial port without connecting                     |
+| GET    | `/api/status`                      | Lightweight health check                                  |
+| GET    | `/api/beacon-monitor/status`       | KiwiSDR beacon monitor connection state                   |
+| GET    | `/api/beacon-monitor/measurements` | Beacon SNR log: `?band=20m&hours=24` or `?since=<ms>`     |
 
 ### Project structure
 

@@ -59,6 +59,19 @@
     "ohcUrl": "http://localhost:8080",
     "verbose": false
   },
+  "beaconMonitor": {
+    "enabled": false,
+    "host": "",
+    "port": 8073,
+    "password": "",
+    "bands": ["20m", "17m", "15m", "12m", "10m"],
+    "callsign": "",
+    "grid": "",
+    "serverForward": true,
+    "ohcUrl": "http://localhost:3000",
+    "ohcApiKey": "",
+    "verbose": false
+  },
   "tls": {
     "enabled": false,
     "certGenerated": false

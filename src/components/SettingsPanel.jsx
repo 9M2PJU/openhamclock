@@ -51,6 +51,7 @@ import { getCallbookCredentials, setCallbookCredentials } from '../utils/callboo
 import { getCartoApiKey, CARTO_KEY_STORAGE } from '../utils/config.js';
 import { listPresets } from '../store/layoutStore.js';
 import LogSyncSettings from './LogSyncSettings.jsx';
+import BeaconMonitorSettings, { DEFAULT_BEACON_MONITOR } from './BeaconMonitorSettings.jsx';
 import { CALLBOOKS, getCallbook } from '../utils/callbook.js';
 import { HELP_EVENT, settingsTabHelpTopic, layerHelpTopic } from '../utils/helpTopics.js';
 import { SETTINGS_TAB_ICONS } from './Icons.jsx';
@@ -125,6 +126,8 @@ export const SettingsPanel = ({
   const [tuneEnabled, setTuneEnabled] = useState(config?.rigControl?.tuneEnabled || false);
   const [autoMode, setAutoMode] = useState(config?.rigControl?.autoMode !== false);
   const [rigApiToken, setRigApiToken] = useState(config?.rigControl?.apiToken || '');
+  // KiwiSDR beacon monitor (Rig Bridge plugin) — see BeaconMonitorSettings.jsx
+  const [beaconMonitor, setBeaconMonitor] = useState({ ...DEFAULT_BEACON_MONITOR, ...(config?.beaconMonitor || {}) });
   const [cloudRelaySession, setCloudRelaySession] = useState(() => {
     // 1. Prefer localStorage — set by "Connect Cloud Relay" in this browser.
     try {
@@ -729,6 +732,11 @@ export const SettingsPanel = ({
         apiToken: rigApiToken.trim(),
         // cloudRelaySession intentionally omitted — session ID belongs in
         // localStorage (per-browser), not in the shared server config.
+      },
+      beaconMonitor: {
+        ...beaconMonitor,
+        host: String(beaconMonitor.host || '').trim(),
+        port: parseInt(String(beaconMonitor.port), 10) || 8073,
       },
       n3fjpHost: String(n3fjpHost || '').trim() || '127.0.0.1',
       n3fjpPort: parseInt(n3fjpPort, 10) || 1100,
@@ -7003,6 +7011,19 @@ export const SettingsPanel = ({
                   </div>
                 </>
               )}
+
+              {/* KiwiSDR beacon monitor — measured IBP beacon SNR via Rig Bridge */}
+              <BeaconMonitorSettings
+                value={beaconMonitor}
+                onChange={setBeaconMonitor}
+                rigEnabled={rigEnabled}
+                rigHost={rigHost}
+                rigPort={rigPort}
+                rigApiToken={rigApiToken}
+                callsign={callsign}
+                deLat={Number.isFinite(parseFloat(lat)) ? parseFloat(lat) : null}
+                deLon={Number.isFinite(parseFloat(lon)) ? parseFloat(lon) : null}
+              />
             </div>
           )}
         </div>
