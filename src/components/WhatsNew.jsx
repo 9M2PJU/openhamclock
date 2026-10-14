@@ -8,8 +8,8 @@ import { useState, useEffect } from 'react';
 // ─── Announcement Banner ────────────────────────────────────
 // Set to null to hide. Shown at the top of the What's New modal.
 const ANNOUNCEMENT = {
-  emoji: '🕐',
-  text: '26.9.0 is a two-week release because the reports were too good to sit on. Michael, KE8PLM, ran DireWolf and OpenHamClock side by side for eleven hours and handed us the list of everything we were missing — that list is why your Yaesu and Kenwood beacons now show up. Jason Taggart sent the Mic-E decoder that started it. SQ8BWM fixed two things in his first two PRs, brstiefel1 diagnosed the stale kiosk weather down to the line, and onzarob confirmed the Yaesu tuning quirk. And someone asked for a big clock to fill the screen between nets, so there is one. 73 de K0CJH.',
+  emoji: '📡',
+  text: '26.10.0 comes six days after 26.9.0 because Michael, KE8PLM, took the new APRS decoder onto the air with a real TNC and filed eleven reports in a week — the first ever RF net check-in to land in the Net Roster happened during his testing, and most of what follows is his list. Koen, KoenVdH, landed three PRs: logbook QSOs on the map, logging the station you just tuned to, and a fixed contributor setup. twicklund76 brought Wavelog pull sync. And the APRS device names come from the aprs-deviceid table Hessu, OH7LZB, keeps for aprs.fi. 73 de K0CJH.',
   color: '#c9d1e6',
   bg: 'rgba(201, 209, 230, 0.10)',
   border: 'rgba(201, 209, 230, 0.30)',
@@ -28,6 +28,49 @@ const ANNOUNCEMENT = {
 // The jump to v26 resets the scheme to something meaningful going forward.
 
 const CHANGELOG = [
+  {
+    version: '26.10.0',
+    date: '2026-10-14',
+    heading:
+      'A one-week release built from on-air testing. Wavelog users can pull their log into OpenHamClock automatically, logbook QSOs draw on the map in all three projections, and logging the station you just tuned to is one click. The APRS panel grew up: sort by call, age or distance; callsign tags on the map; click a marker and the list scrolls to it; the radio or software behind each station is named; and stations now show on the azimuthal and 3D views. EmComm over RF got seven fixes, from net check-ins that never reached the roster to a clock that printed the seconds twice. Plus the sun is live again after NASA froze its images.',
+    features: [
+      {
+        icon: '🔄',
+        title: 'NEW: Wavelog Pull Sync',
+        desc: "If Wavelog is your logbook of record, OpenHamClock can now pull it. Settings → Integrations → Wavelog: paste the URL and API key, pick the station profiles, and the native logbook fills from Wavelog in pages of 2,000 QSOs, advancing its cursor only after each page is safely stored. Point Wavelog's MQTT at the server and a new QSO in Wavelog rings the doorbell so the pull happens within seconds instead of on a timer. Your browser keeps the credentials and the cursor; the server only proxies and listens. Wavelog stays the source of truth. By twicklund76.",
+      },
+      {
+        icon: '🗺️',
+        title: 'NEW: Your Logbook on the Map',
+        desc: "A map button in the Logbook panel toggles a Logbook QSOs layer: a dot per worked position in the band's colour with a great-circle line from your station, on the flat map, the azimuthal view and the 3D globe. It follows the panel's band, mode and search filter, so the map shows exactly the QSOs the table lists; close the panel and the whole log shows. QSOs are placed by logged grid, falling back to the DXCC entity's position (drawn hollow) when there is none, and grouped per position and band with a popup listing the calls. Lines are drawn up to 500 dots; past that only dots, with a note, so a 10,000-QSO log does not become a white web. Measured at 11 ms to build the points for 10,000 QSOs. By Koen, KoenVdH.",
+      },
+      {
+        icon: '📓',
+        title: 'NEW: Log the Station You Just Tuned To',
+        desc: 'Click a spot to tune the rig, work the station, then press +QSO in the Logbook panel: the call and grid are already filled in, as long as the rig is still within 3 kHz of the spot. The Rig button in an open QSO form does the same, and clears a call that came from a spot once you have tuned well away from it — a call you typed yourself is never touched. The memory is dropped the moment a QSO with that call is saved, and nothing is remembered unless rig control is on. By Koen, KoenVdH.',
+      },
+      {
+        icon: '📡',
+        title: 'The APRS Panel Grows Up',
+        desc: "Five requests from a week of on-air testing by Michael, KE8PLM. Sort the station list by call, age or distance from a Sort row, remembered per browser. An Aa button draws callsign tags beside the APRS symbols on the map, in the dockable panel and the EmComm layout. Click a station on the map and the panel scrolls to its row and highlights it; click a row and the map pans and pulses on the station on all three views, not just the flat map. Each station now shows the radio or software that sent it — Yaesu FT5D, Kenwood TM-D710, DireWolf — identified from the packet's tocall or Mic-E type code using the aprs-deviceid table Hessu, OH7LZB, maintains for aprs.fi; the raw Mic-E type bytes that used to trail the comment are gone. And APRS stations finally draw on the azimuthal and 3D views, which only ever had the flat map.",
+      },
+      {
+        icon: '🚨',
+        title: 'FIX: EmComm Over RF, Seven Ways',
+        desc: 'All found by KE8PLM with a real TNC. Net check-ins sent over RF never reached the Net Roster: the browser dropped every non-position frame, and even the server path never applied the command — RF frames are now forwarded to the server and both paths apply check-ins and check-outs, so CQ NETNAME over the air works for the first time. A Yaesu\'s message id ({02 plus a carriage return) no longer trails the status text. Replies went out under the SSID rig-bridge started with rather than the one you saved; the APRS TNC plugin now reads your callsign and SSID live. The Event Log\'s Clear button really clears instead of re-logging the whole board. The header printed the seconds twice and no date; it shows the UTC date and time once. An ordinary message containing the word "open" no longer turns its sender into a Nearby Shelter. And FEMA disaster declarations, which arrived as one identical row per county, are grouped per declaration with dates, counties, a link to fema.gov and a source line.',
+      },
+      {
+        icon: '☀️',
+        title: 'FIX: Solar Images Are Live Again',
+        desc: 'NASA\'s "latest" SDO images stopped updating on September 21 while still answering requests, so every instance showed a three-week-old sun. Each image source now reports its date; anything older than three hours is skipped for the next source (LMSAL, then SOHO), and if nothing fresh answers the freshest stale image is served rather than a broken panel. This went to the hosted site as a silent hotfix on October 8 and ships to self-hosters here.',
+      },
+      {
+        icon: '🧹',
+        title: 'Fixes and Housekeeping',
+        desc: "The daily satellite transmitter refresh no longer pages the uptime monitor every afternoon. October security advisories cleared across the packages. Under the Vite dev server the P.533 propagation engine loads again, the vendor download script works on macOS, and CONTRIBUTING's quick start includes the step it was missing — all by Koen, KoenVdH, from a fresh clone. The HF propagation service image builds natively per architecture instead of under emulation. Two APRS parser regexes CodeQL flagged are bounded. Dead code in the Rig Bridge APRS TNC plugin removed.",
+      },
+    ],
+  },
   {
     version: '26.9.0',
     date: '2026-10-08',
