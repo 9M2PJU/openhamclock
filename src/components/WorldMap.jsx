@@ -167,6 +167,9 @@ export const WorldMap = ({
   rotatorIsStale = false,
   rotatorControlEnabled,
   onRotatorTurnRequest,
+  // Auto-track: azimuth the rotator was last commanded to (drawn as a second
+  // beam until the needle catches up); null when auto-track is off.
+  rotatorTargetAzimuth = null,
   onMapReady,
   // Purpose-built layouts (EME) can pin a projection without touching the
   // user's saved choice; the projection toggle hides while pinned.
@@ -212,6 +215,7 @@ export const WorldMap = ({
   const touchPendingRef = useRef(null);
   const rotatorLineRef = useRef(null);
   const rotatorGlowRef = useRef(null);
+  const rotatorTargetRef = useRef(null);
   const rotatorTurnRef = useRef(onRotatorTurnRequest);
   const rotatorEnabledRef = useRef(rotatorControlEnabled);
   const deRef = useRef(deLocation);
@@ -1495,6 +1499,10 @@ export const WorldMap = ({
           map.removeLayer(rotatorLineRef.current);
           rotatorLineRef.current = null;
         }
+        if (rotatorTargetRef.current) {
+          map.removeLayer(rotatorTargetRef.current);
+          rotatorTargetRef.current = null;
+        }
         if (rotatorGlowRef.current) {
           map.removeLayer(rotatorGlowRef.current);
           rotatorGlowRef.current = null;
@@ -1866,6 +1874,47 @@ export const WorldMap = ({
       rotatorLineRef.current.setStyle({ opacity: rotatorIsStale ? 0.55 : 1 });
     }
   }, [showRotatorBearing, deLocation?.lat, deLocation?.lon, rotatorAzimuth, rotatorLastGoodAzimuth, rotatorIsStale]);
+
+  // Commanded azimuth (auto-track) — same bearing geometry as the live beam,
+  // amber, only while it differs from where the rotator actually points.
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!map || typeof L === 'undefined') return;
+    const lat = deLocation?.lat;
+    const lon = deLocation?.lon;
+    const target = Number.isFinite(rotatorTargetAzimuth) ? ((rotatorTargetAzimuth % 360) + 360) % 360 : null;
+    const actualRaw = rotatorAzimuth ?? rotatorLastGoodAzimuth;
+    const actual = Number.isFinite(actualRaw) ? ((actualRaw % 360) + 360) % 360 : null;
+    const delta = target != null && actual != null ? Math.abs(((target - actual + 540) % 360) - 180) : 999;
+
+    if (!showRotatorBearing || target == null || !Number.isFinite(lat) || !Number.isFinite(lon) || delta < 1) {
+      if (rotatorTargetRef.current) {
+        map.removeLayer(rotatorTargetRef.current);
+        rotatorTargetRef.current = null;
+      }
+      return;
+    }
+    const points = unwrapLonPath(buildBearingPoints(lat, lon, target, 95, 2));
+    if (!rotatorTargetRef.current) {
+      rotatorTargetRef.current = L.polyline(points, {
+        color: 'rgba(255, 191, 0, 0.8)',
+        weight: 1.6,
+        opacity: 1,
+        dashArray: '4 8',
+        className: 'ohc-rotator-target',
+        interactive: false,
+      }).addTo(map);
+    } else {
+      rotatorTargetRef.current.setLatLngs(points);
+    }
+  }, [
+    showRotatorBearing,
+    deLocation?.lat,
+    deLocation?.lon,
+    rotatorTargetAzimuth,
+    rotatorAzimuth,
+    rotatorLastGoodAzimuth,
+  ]);
 
   const unwrapLonPath = (latlngs) => {
     if (!Array.isArray(latlngs) || latlngs.length < 2) return latlngs;

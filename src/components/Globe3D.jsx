@@ -2922,18 +2922,30 @@ export default function Globe3D({
           fade[i * 3 + 2] = base.b * k;
         }
         pastGeo.setAttribute('color', new THREE.BufferAttribute(fade, 3));
-        s.satGroup.add(
-          new THREE.Line(
-            pastGeo,
-            new THREE.LineBasicMaterial({
-              vertexColors: true,
-              transparent: true,
-              opacity: isSelected ? 0.9 : 0.25,
-              blending,
-              depthWrite: false,
-            }),
-          ),
+        // Stale element sets (Settings → Satellites → max TLE age) draw the
+        // whole orbit dashed, matching the flat map.
+        const pastLine = new THREE.Line(
+          pastGeo,
+          sat.tleStale
+            ? new THREE.LineDashedMaterial({
+                vertexColors: true,
+                dashSize: 0.025,
+                gapSize: 0.035,
+                transparent: true,
+                opacity: isSelected ? 0.9 : 0.25,
+                blending,
+                depthWrite: false,
+              })
+            : new THREE.LineBasicMaterial({
+                vertexColors: true,
+                transparent: true,
+                opacity: isSelected ? 0.9 : 0.25,
+                blending,
+                depthWrite: false,
+              }),
         );
+        if (sat.tleStale) pastLine.computeLineDistances();
+        s.satGroup.add(pastLine);
 
         const leadPts = sat.track.slice(mid).map(toVec);
         const leadGeo = new THREE.BufferGeometry().setFromPoints(leadPts);

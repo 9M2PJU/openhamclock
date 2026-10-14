@@ -21,7 +21,17 @@ export const DEFAULT_CONFIG = {
   headerSize: 1.0, // Float multiplies base px size (0.1 to 2.0)
   locator: '',
   location: { lat: 40.015, lon: -105.2705, stationAlt: 1630 }, // Boulder, CO (default), altitude [m]
-  satellite: { minElev: 5, trackDurationMins: 45 }, // Min elevation for visibility (degrees); orbit track window (± minutes around now)
+  satellite: {
+    minElev: 5, // Min elevation for visibility (degrees)
+    trackDurationMins: 45, // orbit track window (± minutes around now)
+    maxTleAgeDays: 7, // element sets older than this are flagged stale (dashed tracks)
+    hamsAtApiKey: '', // optional hams.at personal API key (Satellite Passes → Alerts)
+    dopplerStepHz: 20, // Doppler tuning: retune the rig when the correction moves by this much
+    rotatorStepDeg: 2, // Rotator auto-track: command when the target moves by this much
+    rotatorMaxEl: 90, // Rotator elevation travel: 90 = normal, 180 = flip-capable (G-5500 style)
+    rotatorStopAz: 0, // Rotator mechanical stop azimuth (0 = north stop, 180 = south stop)
+    rotatorPrepositionMins: 10, // Swing to the AOS azimuth this many minutes before a pass
+  },
   defaultDX: { lat: 35.6762, lon: 139.6503 }, // Tokyo
   units: 'imperial', // 'imperial' or 'metric'
   allUnits: { dist: 'imperial', temp: 'imperial', press: 'imperial' },

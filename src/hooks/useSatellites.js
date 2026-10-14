@@ -7,6 +7,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import * as satellite from 'satellite.js';
 import Orbit from '../utils/orbit.js';
 import { computeOrbitTrack } from '../utils/satelliteTrack.js';
+import { tleAgeDays, isTleStale } from '../utils/tleAge.js';
 import { getDebugConfig } from '../debug/debugConfig.js';
 
 function round(value, decimals) {
@@ -160,6 +161,13 @@ export const useSatellites = (observerLocation, satelliteConfig, filteredNames =
               // Repeaters/transponders (uplink + downlink) from SatNOGS — the
               // EME layout's relay mode picks satellites by these.
               relayTransmitters: Array.isArray(satData.relayTransmitters) ? satData.relayTransmitters : [],
+              // Every active SatNOGS transmitter (beacons too) — the Doppler
+              // tuner's picker. Empty until the server's SatNOGS refresh lands.
+              transmitters: Array.isArray(satData.transmitters) ? satData.transmitters : [],
+              // Element-set age vs Settings → Satellites → max TLE age: stale
+              // birds are flagged in the panels and drawn with dashed tracks.
+              tleAgeDays: tleAgeDays(satData.omm, now.getTime()),
+              tleStale: isTleStale(satData.omm, satelliteConfig?.maxTleAgeDays, now.getTime()),
               lat,
               lon,
               alt: round(alt, 1),

@@ -224,3 +224,17 @@ describe('showAlertNotification', () => {
     expect(constructed).toHaveLength(0);
   });
 });
+
+describe('formatAlertBody sat-alerts (hams.at)', () => {
+  it('names the operator, satellite, lead time and grids', () => {
+    const aos = Date.now() + 12 * 60 * 1000;
+    expect(formatAlertBody('sat-alerts', { name: 'RS-44', callsign: 'KB5FHK', aos, grids: ['CM96'] })).toBe(
+      'KB5FHK on RS-44 in 12 min · CM96',
+    );
+    expect(formatAlertBody('sat-alerts', { name: 'AO-7', callsign: 'WH6WR', aos: Date.now() - 1000 })).toBe(
+      'WH6WR on AO-7 now',
+    );
+    expect(formatAlertBody('sat-alerts', { name: 'SO-50' })).toBe('on SO-50');
+    expect(formatAlertBody('sat-alerts', {})).toBe('');
+  });
+});
