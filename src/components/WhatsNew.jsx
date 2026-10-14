@@ -1943,6 +1943,7 @@ const LS_KEY = 'openhamclock_lastSeenVersion';
 export default function WhatsNew({ showWhatsNew }) {
   const [visible, setVisible] = useState(false);
   const [currentVersion, setCurrentVersion] = useState(null);
+  const [lastSeenVersion, setLastSeenVersion] = useState(null);
 
   useEffect(() => {
     // Fetch the running version from the server
@@ -1956,6 +1957,7 @@ export default function WhatsNew({ showWhatsNew }) {
         setCurrentVersion(version);
 
         const lastSeen = localStorage.getItem(LS_KEY);
+        setLastSeenVersion(lastSeen);
         // Show if never seen, or if the stored version differs from current
         if (!lastSeen || lastSeen !== version) {
           // Only show if we actually have changelog entries for this version
@@ -1993,7 +1995,16 @@ export default function WhatsNew({ showWhatsNew }) {
 
   if (!visible || !currentVersion) return null;
 
-  const entry = CHANGELOG.find((c) => c.version === currentVersion) || CHANGELOG[0];
+  // Every entry newer than the version this browser last saw, newest first.
+  // Someone who updated 26.10.0 → 26.10.1 within the hour never saw the
+  // 26.10.0 notes; showing only the running version's entry lost them.
+  // CHANGELOG is newest-first, so the slice runs from the current entry up
+  // to (not including) the last-seen one. Unknown last-seen (fresh install,
+  // or opened from the header link) shows just the current entry.
+  const ci = CHANGELOG.findIndex((c) => c.version === currentVersion);
+  const li = lastSeenVersion ? CHANGELOG.findIndex((c) => c.version === lastSeenVersion) : -1;
+  const entries = ci >= 0 && li > ci ? CHANGELOG.slice(ci, li) : [CHANGELOG[Math.max(ci, 0)]].filter(Boolean);
+  const entry = entries[0];
   if (!entry) return null;
 
   return (
@@ -2052,7 +2063,9 @@ export default function WhatsNew({ showWhatsNew }) {
                 marginBottom: '8px',
               }}
             >
-              OpenHamClock v{entry.version}
+              {entries.length > 1
+                ? `OpenHamClock v${entries[entries.length - 1].version} → v${entry.version}`
+                : `OpenHamClock v${entry.version}`}
             </div>
             <div
               style={{
@@ -2114,48 +2127,70 @@ export default function WhatsNew({ showWhatsNew }) {
 
           {/* Feature list */}
           <div style={{ padding: '0 24px 16px' }}>
-            {entry.features.map((f, i) => (
-              <div
-                key={i}
-                style={{
-                  display: 'flex',
-                  gap: '12px',
-                  padding: '10px 0',
-                  borderBottom: i < entry.features.length - 1 ? '1px solid rgba(255,255,255,0.06)' : 'none',
-                }}
-              >
-                <div
-                  style={{
-                    fontSize: '20px',
-                    lineHeight: '28px',
-                    flexShrink: 0,
-                    width: '28px',
-                    textAlign: 'center',
-                  }}
-                >
-                  {f.icon}
-                </div>
-                <div>
+            {entries.map((en, idx) => (
+              <div key={en.version}>
+                {idx > 0 && (
+                  <div style={{ marginTop: '14px', paddingTop: '10px', borderTop: '1px solid rgba(255,255,255,0.12)' }}>
+                    <div
+                      style={{
+                        fontSize: '12px',
+                        fontFamily: 'var(--font-mono)',
+                        color: 'var(--accent-cyan, #00ffcc)',
+                        letterSpacing: '0.1em',
+                        textTransform: 'uppercase',
+                      }}
+                    >
+                      v{en.version} · {en.date}
+                    </div>
+                    <div style={{ fontSize: '12px', color: 'var(--text-muted, #888)', marginTop: '4px' }}>
+                      {en.heading}
+                    </div>
+                  </div>
+                )}
+                {en.features.map((f, i) => (
                   <div
+                    key={i}
                     style={{
-                      fontWeight: '600',
-                      fontSize: '14px',
-                      color: 'var(--text-primary, #e0e0e0)',
-                      marginBottom: '3px',
+                      display: 'flex',
+                      gap: '12px',
+                      padding: '10px 0',
+                      borderBottom: i < en.features.length - 1 ? '1px solid rgba(255,255,255,0.06)' : 'none',
                     }}
                   >
-                    {f.title}
+                    <div
+                      style={{
+                        fontSize: '20px',
+                        lineHeight: '28px',
+                        flexShrink: 0,
+                        width: '28px',
+                        textAlign: 'center',
+                      }}
+                    >
+                      {f.icon}
+                    </div>
+                    <div>
+                      <div
+                        style={{
+                          fontWeight: '600',
+                          fontSize: '14px',
+                          color: 'var(--text-primary, #e0e0e0)',
+                          marginBottom: '3px',
+                        }}
+                      >
+                        {f.title}
+                      </div>
+                      <div
+                        style={{
+                          fontSize: '12px',
+                          lineHeight: '1.5',
+                          color: 'var(--text-muted, #999)',
+                        }}
+                      >
+                        {f.desc}
+                      </div>
+                    </div>
                   </div>
-                  <div
-                    style={{
-                      fontSize: '12px',
-                      lineHeight: '1.5',
-                      color: 'var(--text-muted, #999)',
-                    }}
-                  >
-                    {f.desc}
-                  </div>
-                </div>
+                ))}
               </div>
             ))}
           </div>
