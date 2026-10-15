@@ -657,19 +657,23 @@ export default function MobileLayout(props) {
             aria-hidden={i !== activeIdx}
             data-card={card.id}
           >
-            <button
-              type="button"
-              className="ohc-mobile-card-head"
-              onClick={() => openCard(card.id)}
-              aria-label={t('mobileLayout.expand', { defaultValue: 'Open {{name}} full screen', name })}
-              tabIndex={i === activeIdx ? 0 : -1}
-            >
-              <span aria-hidden="true">{card.icon}</span>
-              <span className="ohc-mobile-card-title">{name}</span>
-              <span aria-hidden="true" className="ohc-mobile-card-expand">
-                ⤢
-              </span>
-            </button>
+            {/* Panels that draw their own titled header get no second title;
+                the full-screen button under the cards covers every card. */}
+            {!card.ownHeader && (
+              <button
+                type="button"
+                className="ohc-mobile-card-head"
+                onClick={() => openCard(card.id)}
+                aria-label={t('mobileLayout.expand', { defaultValue: 'Open {{name}} full screen', name })}
+                tabIndex={i === activeIdx ? 0 : -1}
+              >
+                <span aria-hidden="true">{card.icon}</span>
+                <span className="ohc-mobile-card-title">{name}</span>
+                <span aria-hidden="true" className="ohc-mobile-card-expand">
+                  ⤢
+                </span>
+              </button>
+            )}
             <div className="ohc-mobile-card-body">
               {live ? (
                 panelFor(card.id)
@@ -685,25 +689,41 @@ export default function MobileLayout(props) {
     </div>
   );
 
+  const activeCard = cards[activeIdx];
+  const activeName = activeCard ? cardLabel(activeCard.id) : '';
   const dots = (
-    <nav className="ohc-mobile-dots" aria-label={t('mobileLayout.cards', { defaultValue: 'Panel cards' })}>
-      {cards.map((card, i) => {
-        const name = cardLabel(card.id);
-        return (
-          <button
-            key={card.id}
-            type="button"
-            className={`ohc-mobile-dot${i === activeIdx ? ' is-active' : ''}`}
-            onClick={() => goToCard(i)}
-            aria-label={t('mobileLayout.showCard', { defaultValue: 'Show {{name}}', name })}
-            aria-current={i === activeIdx ? 'true' : undefined}
-            title={name}
-          >
-            <span />
-          </button>
-        );
-      })}
-    </nav>
+    <div className="ohc-mobile-dots-row">
+      <span className="ohc-mobile-dots-spacer" aria-hidden="true" />
+      <nav className="ohc-mobile-dots" aria-label={t('mobileLayout.cards', { defaultValue: 'Panel cards' })}>
+        {cards.map((card, i) => {
+          const name = cardLabel(card.id);
+          return (
+            <button
+              key={card.id}
+              type="button"
+              className={`ohc-mobile-dot${i === activeIdx ? ' is-active' : ''}`}
+              onClick={() => goToCard(i)}
+              aria-label={t('mobileLayout.showCard', { defaultValue: 'Show {{name}}', name })}
+              aria-current={i === activeIdx ? 'true' : undefined}
+              title={name}
+            >
+              <span />
+            </button>
+          );
+        })}
+      </nav>
+      {activeCard && (
+        <button
+          type="button"
+          className="ohc-mobile-expand-btn"
+          onClick={() => openCard(activeCard.id)}
+          aria-label={t('mobileLayout.expand', { defaultValue: 'Open {{name}} full screen', name: activeName })}
+          title={t('mobileLayout.expand', { defaultValue: 'Open {{name}} full screen', name: activeName })}
+        >
+          <span aria-hidden="true">⤢</span>
+        </button>
+      )}
+    </div>
   );
 
   const expandedCard = expanded ? cards.find((c) => c.id === expanded) : null;
@@ -735,9 +755,12 @@ export default function MobileLayout(props) {
             <button type="button" className="ohc-mobile-back" onClick={closeCard}>
               <span aria-hidden="true">‹</span> {t('mobileLayout.back', { defaultValue: 'Back' })}
             </button>
-            <span className="ohc-mobile-card-title">
-              <span aria-hidden="true">{expandedCard.icon}</span> {cardLabel(expandedCard.id)}
-            </span>
+            {/* The panel's own header names it; only plain cards need a title here */}
+            {!expandedCard.ownHeader && (
+              <span className="ohc-mobile-card-title">
+                <span aria-hidden="true">{expandedCard.icon}</span> {cardLabel(expandedCard.id)}
+              </span>
+            )}
           </div>
           <div className="ohc-mobile-fullscreen-body">{panelFor(expandedCard.id)}</div>
         </div>

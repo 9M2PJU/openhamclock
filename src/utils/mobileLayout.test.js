@@ -50,8 +50,11 @@ describe('buildMobileCards', () => {
     expect(ids).toContain('solar');
   });
 
-  it('returns id + icon only', () => {
-    for (const c of buildMobileCards()) expect(Object.keys(c).sort()).toEqual(['icon', 'id']);
+  it('returns id, icon and whether the panel draws its own header', () => {
+    for (const c of buildMobileCards()) expect(Object.keys(c).sort()).toEqual(['icon', 'id', 'ownHeader']);
+    const byId = Object.fromEntries(buildMobileCards().map((c) => [c.id, c.ownHeader]));
+    expect(byId['dx-cluster']).toBe(true);
+    expect(byId.weather).toBe(false); // plain weather block — the card supplies the title
   });
 });
 

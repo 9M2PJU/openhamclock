@@ -2107,11 +2107,37 @@ html[data-grayscale='map'] [data-map-surface] {
   font-size: 32px;
   opacity: 0.25;
 }
-.ohc-mobile-dots {
+.ohc-mobile-dots-row {
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 40px;
+}
+.ohc-mobile-dots-spacer {
+  flex: 0 0 40px;
+}
+.ohc-mobile-dots {
+  flex: 1 1 auto;
+  min-width: 0;
   display: flex;
   justify-content: center;
   height: 32px;
+}
+.ohc-mobile-expand-btn {
+  flex: 0 0 40px;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  font-size: 18px;
+  cursor: pointer;
 }
 .ohc-mobile-dot {
   flex: 0 1 36px;

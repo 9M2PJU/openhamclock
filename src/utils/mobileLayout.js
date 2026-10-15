@@ -21,18 +21,19 @@ export const PHONE_MAX_WIDTH = 600;
  * The full card catalogue, in display order. `panelKey` is the key under
  * config.panels that hides the card when `visible === false` (cards without
  * one are always offered). `when` names a context flag that must be truthy
- * for the card to appear at all.
+ * for the card to appear at all. `ownHeader` marks panels that already draw
+ * their own titled header, so the card adds no second title above it.
  */
 export const MOBILE_CARD_DEFS = [
-  { id: 'dx-cluster', icon: '📻', panelKey: 'dxCluster' },
-  { id: 'activations', icon: '▲', panelKey: 'pota' },
-  { id: 'propagation', icon: '📡', panelKey: 'propagation' },
-  { id: 'solar', icon: '☀️', panelKey: 'solar' },
+  { id: 'dx-cluster', icon: '📻', panelKey: 'dxCluster', ownHeader: true },
+  { id: 'activations', icon: '▲', panelKey: 'pota', ownHeader: true },
+  { id: 'propagation', icon: '📡', panelKey: 'propagation', ownHeader: true },
+  { id: 'solar', icon: '☀️', panelKey: 'solar', ownHeader: true },
   { id: 'satellites', icon: '🛰️', panelKey: 'satellites' },
-  { id: 'logbook', icon: '📓', panelKey: 'logbook' },
+  { id: 'logbook', icon: '📓', panelKey: 'logbook', ownHeader: true },
   { id: 'weather', icon: '🌦️', panelKey: 'weather' },
-  { id: 'psk', icon: '📶', panelKey: 'pskReporter' },
-  { id: 'aprs', icon: '📍', panelKey: 'aprs', when: 'showAPRS' },
+  { id: 'psk', icon: '📶', panelKey: 'pskReporter', ownHeader: true },
+  { id: 'aprs', icon: '📍', panelKey: 'aprs', when: 'showAPRS', ownHeader: true },
 ];
 
 /**
@@ -41,7 +42,7 @@ export const MOBILE_CARD_DEFS = [
  * @param {object} opts
  * @param {object} [opts.panels]   config.panels — `{ key: { visible } }`
  * @param {boolean} [opts.showAPRS] the APRS map layer is on (APRS card)
- * @returns {{ id: string, icon: string }[]}
+ * @returns {{ id: string, icon: string, ownHeader: boolean }[]}
  */
 export function buildMobileCards({ panels = {}, showAPRS = false } = {}) {
   const flags = { showAPRS: !!showAPRS };
@@ -49,7 +50,7 @@ export function buildMobileCards({ panels = {}, showAPRS = false } = {}) {
     if (def.when && !flags[def.when]) return false;
     if (def.panelKey && panels?.[def.panelKey]?.visible === false) return false;
     return true;
-  }).map(({ id, icon }) => ({ id, icon }));
+  }).map(({ id, icon, ownHeader }) => ({ id, icon, ownHeader: !!ownHeader }));
 }
 
 /**
