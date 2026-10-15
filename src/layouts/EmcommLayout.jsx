@@ -199,7 +199,9 @@ const FIELD_REPORTS_DOCS_URL =
   'https://github.com/accius/openhamclock/blob/main/rig-bridge/README.md#winlink-express-csv-ingest-beta';
 
 /** Field reports from the fldigi plugin's flmsg watcher (vs Winlink Express CSV). */
-const isNbemsReport = (r) => r?.source === 'nbems-flmsg' || /\(NBEMS\)/.test(r?.formType || '');
+const isNbemsReport = (r) => /^nbems-flmsg/.test(r?.source || '') || /\(NBEMS\)/.test(r?.formType || '');
+/** An NBEMS draft or sent form (only forwarded when the plugin's flmsgIncludeLocal is on). */
+const isLocalNbems = (r) => r?.source === 'nbems-flmsg-local' || r?.extra?.origin === 'local';
 
 const EVENT_BTN_STYLE = {
   background: '#1a1f2e',
@@ -1079,7 +1081,12 @@ export default function EmcommLayout(props) {
   }, [config.callsign, config.location, incidentJoined, incident.events]);
 
   const clearEventLog = useCallback(() => {
-    if (!window.confirm('Clear the entire EmComm event log? This cannot be undone.')) return;
+    if (
+      !window.confirm(
+        'Clear the entire EmComm event log? This cannot be undone. Station message numbers keep counting — reset them under ICS Forms → 309.',
+      )
+    )
+      return;
     clearEvents();
     // Two earlier behaviours were both wrong. Leaving the diff snapshots
     // alone meant nothing could log again until a brand-new station appeared
@@ -1760,7 +1767,12 @@ export default function EmcommLayout(props) {
           </PanelSection>
 
           {/* NBEMS — fldigi status / RX / send and ICS-213 via the rig-bridge fldigi plugin */}
-          <PanelSection title="NBEMS" color="#38bdf8" panels={panels}>
+          <PanelSection
+            title={t('emcomm.panel.nbems', { defaultValue: 'NBEMS' })}
+            panelKey="NBEMS"
+            color="#38bdf8"
+            panels={panels}
+          >
             <NbemsPanel apiToken={config.rigControl?.apiToken || ''} />
           </PanelSection>
 
@@ -1810,6 +1822,16 @@ export default function EmcommLayout(props) {
                       >
                         {isNbemsReport(r) ? 'NBEMS' : 'WINLINK'}
                       </span>
+                      {isLocalNbems(r) && (
+                        <span
+                          title={t('emcomm.fieldReports.localTitle', {
+                            defaultValue: 'A draft or sent form from this station’s flmsg, not received traffic',
+                          })}
+                          style={{ marginLeft: '4px', fontSize: '8px', fontWeight: 700, color: '#888' }}
+                        >
+                          {t('emcomm.fieldReports.local', { defaultValue: 'LOCAL' })}
+                        </span>
+                      )}
                     </div>
                     <span style={{ color: '#888', fontSize: '10px', flexShrink: 0 }}>
                       {r.age < 1 ? 'now' : r.age < 60 ? `${r.age}m ago` : `${Math.floor(r.age / 60)}h ago`}
@@ -2391,10 +2413,16 @@ function ResourceSummary({ stations, panels }) {
 }
 
 /** Collapsible panel section wrapper */
-function PanelSection({ title, count, color, extra, panels, bodyMaxHeight = '250px', children }) {
+/**
+ * Collapsible sidebar section. The collapsed state is remembered under
+ * `panelKey` — a fixed, untranslated name — falling back to `title`, so a
+ * translated title does not lose the setting when the language changes.
+ */
+function PanelSection({ title, panelKey, count, color, extra, panels, bodyMaxHeight = '250px', children }) {
+  const key = panelKey || title;
   const [localCollapsed, setLocalCollapsed] = useState(false);
-  const collapsed = panels ? panels.collapsedFor(title) : localCollapsed;
-  const setCollapsed = panels ? () => panels.toggle(title) : setLocalCollapsed;
+  const collapsed = panels ? panels.collapsedFor(key) : localCollapsed;
+  const setCollapsed = panels ? () => panels.toggle(key) : setLocalCollapsed;
   return (
     <div style={{ background: '#0d0d0d', borderRadius: '6px', overflow: 'hidden' }}>
       <div
