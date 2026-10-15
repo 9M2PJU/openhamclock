@@ -114,6 +114,7 @@ import { mapDefs as POTADefs } from './POTAPanel.jsx';
 import { mapDefs as SOTADefs } from './SOTAPanel.jsx';
 import { mapDefs as WWBOTADefs } from './WWBOTAPanel.jsx';
 import { mapDefs as WWFFDefs } from './WWFFPanel.jsx';
+import { useHistoryScrubbing } from '../hooks/useHistoryScrubbing.js';
 
 const POPUP_AUTO_CLOSE_MS = 20_000;
 
@@ -209,6 +210,8 @@ export const WorldMap = ({
   const wwbotaMarkersRef = useRef([]);
   const dxPathsLinesRef = useRef([]);
   const dxPathsMarkersRef = useRef([]);
+  // History Playback scrubbed into the past → hide live DX paths
+  const historyScrubbing = useHistoryScrubbing();
   const pskMarkersRef = useRef([]);
   const wsjtxMarkersRef = useRef([]);
   const aprsMarkersRef = useRef([]);
@@ -1727,8 +1730,8 @@ export const WorldMap = ({
     dxPathsMarkersRef.current.forEach((m) => map.removeLayer(m));
     dxPathsMarkersRef.current = [];
 
-    // Add new DX paths if enabled
-    if (showDXPaths && dxPaths && dxPaths.length > 0) {
+    // Add new DX paths if enabled (and not replaying history)
+    if (showDXPaths && !historyScrubbing && dxPaths && dxPaths.length > 0) {
       const filteredPaths = filterDXPaths(dxPaths, dxFilters);
 
       filteredPaths.forEach((path) => {
@@ -1862,6 +1865,7 @@ export const WorldMap = ({
     dxPaths,
     dxFilters,
     showDXPaths,
+    historyScrubbing,
     showDXLabels,
     hoveredSpot,
     bandColorVersion,

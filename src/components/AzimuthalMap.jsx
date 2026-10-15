@@ -18,6 +18,7 @@ import { createTileReprojector } from '../utils/tileReproject.js';
 import { createAzimuthalCRS } from '../utils/azimuthalCRS.js';
 import { matchesDXSpotPath } from '../utils/dxClusterSpotMatcher';
 import { ACTIVITY_COLORS } from '../utils/activityColors.js';
+import { useHistoryScrubbing } from '../hooks/useHistoryScrubbing.js';
 
 // ── Projection Math ────────────────────────────────────────
 const DEG = Math.PI / 180;
@@ -546,8 +547,8 @@ export default function AzimuthalMap({
       ctx.fillText(bearingLabels[b / 30], lx, ly);
     }
 
-    // ── DX Cluster paths ─────────────────────────────────
-    if (showDXPaths && dxPaths?.length > 0) {
+    // ── DX Cluster paths (hidden while History Playback replays the past) ──
+    if (showDXPaths && !historyScrubbing && dxPaths?.length > 0) {
       dxPaths.forEach((path) => {
         if (!path.dxLat || !path.dxLon) return;
         const band = bandFromAnyFrequency(path.freq);
@@ -889,6 +890,7 @@ export default function AzimuthalMap({
     deLocation,
     dxLocation,
     dxPaths,
+    historyScrubbing,
     dxFilters,
     mapBandFilter,
     showDXPaths,

@@ -1519,6 +1519,9 @@ export const DockableApp = ({
             <PropVerifyPanel
               deLocation={config.location}
               deCallsign={config.callsign}
+              dxLocation={dxLocation}
+              dxCallsign={dxCallsign}
+              units={config.allUnits?.dist}
               dxSpots={dxClusterData.spots}
               pskReporter={pskReporter}
               solarIndices={solarIndices}

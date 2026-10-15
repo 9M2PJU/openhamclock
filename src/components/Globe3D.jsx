@@ -42,6 +42,7 @@ import {
   subscribe as subscribeHistory,
   buildTransportControl as buildHistoryTransportControl,
 } from '../services/historyPlaybackStore.js';
+import { useHistoryScrubbing } from '../hooks/useHistoryScrubbing.js';
 import { makeDraggable } from '../plugins/layers/makeDraggable.js';
 import { addMinimizeToggle } from '../plugins/layers/addMinimizeToggle.js';
 import { ACTIVITY_COLORS } from '../utils/activityColors.js';
@@ -451,6 +452,8 @@ export default function Globe3D({
   // non-English operators got English labels only in 3D.
   const mapLang = i18n.language?.split('-')[0] || 'en';
   const containerRef = useRef(null);
+  // History Playback scrubbed into the past → hide the live DX cluster arcs
+  const historyScrubbing = useHistoryScrubbing();
   const gl = useRef({}); // three.js objects, kept off React state
   // Mirrors the nightDarkness prop so a scene rebuild seeds the shader uniform
   // with the current value instead of snapping back to the material default.
@@ -684,7 +687,7 @@ export default function Globe3D({
     if (showSOTA) pushSimple(sotaSpots, ACTIVITY_COLORS.sota, 'SOTA');
     if (showWWBOTA) pushSimple(wwbotaSpots, ACTIVITY_COLORS.wwbota, 'WWBOTA');
 
-    if (showDXPaths && dxPaths?.length) {
+    if (showDXPaths && !historyScrubbing && dxPaths?.length) {
       dxPaths.forEach((p) => {
         if (!Number.isFinite(p.dxLat) || !Number.isFinite(p.dxLon)) return;
         const band = bandFromAnyFrequency(p.freq);
@@ -788,6 +791,7 @@ export default function Globe3D({
     sotaSpots,
     wwbotaSpots,
     dxPaths,
+    historyScrubbing,
     pskReporterSpots,
     wsjtxSpots,
     showPOTA,
@@ -805,7 +809,7 @@ export default function Globe3D({
   const arcs = useMemo(() => {
     const out = [];
 
-    if (showDXPaths && dxPaths?.length) {
+    if (showDXPaths && !historyScrubbing && dxPaths?.length) {
       dxPaths.forEach((p) => {
         if (!Number.isFinite(p.dxLat) || !Number.isFinite(p.dxLon)) return;
         if (!Number.isFinite(p.spotterLat) || !Number.isFinite(p.spotterLon)) return;
@@ -874,6 +878,7 @@ export default function Globe3D({
     logbookOpacity,
     hasDE,
     dxPaths,
+    historyScrubbing,
     showDXPaths,
     bandPassesMapFilter,
     dxLocation,
