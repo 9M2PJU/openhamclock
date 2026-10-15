@@ -42,11 +42,6 @@ import {
   scriptContext,
   stationFromLogbook,
   stationFromLookup,
-  loadRunningNet,
-  saveRunningNet,
-  clearRunningNet,
-  loadHistory,
-  saveHistory,
   pushHistory,
   loadScript,
   saveScript,
@@ -60,6 +55,7 @@ import {
 import { loadNetSchedule, sortByNextOccurrence } from '../utils/netSchedule.js';
 import { formatMemoryFreq } from '../utils/freqMemories.js';
 import { recordEvent } from '../utils/emcommEventLog.js';
+import { loadDoc, saveDoc, subscribeDocs } from '../utils/incidentDocs.js';
 import { apiFetch } from '../utils/apiFetch.js';
 import { callbookAuthHeaders } from '../utils/callbookAuth.js';
 import { spellPhonetic } from '../utils/phonetics.js';
@@ -168,8 +164,10 @@ export default function NetControlPanel({ callsign = '', embedded = false }) {
   const { t } = useTranslation();
 
   // ── State ─────────────────────────────────────────────────────────────
-  const [net, setNet] = useState(loadRunningNet);
-  const [history, setHistory] = useState(loadHistory);
+  // Running net and history: the shared incident's while joined (src/utils/incidentDocs.js),
+  // this browser's own otherwise.
+  const [net, setNet] = useState(() => loadDoc('net-running'));
+  const [history, setHistory] = useState(() => loadDoc('net-history'));
   const [script, setScript] = useState(loadScript);
   const [view, setView] = useState('roster'); // roster | script | report | history
   const [reportNet, setReportNet] = useState(null); // closed net shown in the report view
@@ -209,10 +207,29 @@ export default function NetControlPanel({ callsign = '', embedded = false }) {
   // Persist the running net + mirror it into the EmComm roster store
   useEffect(() => {
     if (net) {
-      saveRunningNet(net);
+      saveDoc('net-running', net);
       saveRosterSnapshot(net, { active: true });
     }
   }, [net]);
+
+  // Another station changed the shared net or history, or this browser joined
+  // or left an incident. A net that went away (closed elsewhere, or not part
+  // of the incident just left) is taken off this browser's roster too.
+  const netRef = useRef(net);
+  netRef.current = net;
+  useEffect(
+    () =>
+      subscribeDocs((id) => {
+        if (id === 'net-running') {
+          const next = loadDoc('net-running');
+          if (!next && netRef.current) saveRosterSnapshot(netRef.current, { active: false });
+          setNet(next);
+        } else if (id === 'net-history') {
+          setHistory(loadDoc('net-history'));
+        }
+      }),
+    [],
+  );
 
   useEffect(() => () => clearTimeout(flashTimer.current), []);
 
@@ -476,7 +493,7 @@ export default function NetControlPanel({ callsign = '', embedded = false }) {
     const rep = buildReport(closed);
     const nextHistory = pushHistory(history, closed);
     setHistory(nextHistory);
-    saveHistory(nextHistory);
+    saveDoc('net-history', nextHistory);
     saveRosterSnapshot(closed, { active: false });
     for (const s of closed.stations) if (s.name || s.location) remember(s.call, s);
     recordEvent('net_close', {
@@ -485,7 +502,7 @@ export default function NetControlPanel({ callsign = '', embedded = false }) {
       details: `${formatDuration(rep.durationMs)}${closed.frequency ? ` · ${closed.frequency}` : ''}`,
       ts: closed.endTime,
     });
-    clearRunningNet();
+    saveDoc('net-running', null);
     setNet(null);
     setReportNet(closed);
     setView('report');
@@ -511,14 +528,14 @@ export default function NetControlPanel({ callsign = '', embedded = false }) {
   const deleteHistory = (id) => {
     const next = history.filter((h) => h.id !== id);
     setHistory(next);
-    saveHistory(next);
+    saveDoc('net-history', next);
     if (reportNet?.id === id) setReportNet(null);
   };
 
   const clearAllHistory = () => {
     if (!window.confirm(t('netControl.confirmClearHistory', { defaultValue: 'Delete all past nets?' }))) return;
     setHistory([]);
-    saveHistory([]);
+    saveDoc('net-history', []);
   };
 
   const beginEditScript = () => {

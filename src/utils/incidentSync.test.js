@@ -16,6 +16,9 @@ import {
   outboxBatch,
   outboxSize,
   ackOutbox,
+  dropOutboxDocs,
+  messageHistoryFromEvents,
+  mergeMessageHistory,
   buildJoinUrl,
   parseJoinUrl,
   formatCode,
@@ -85,6 +88,96 @@ describe('applyIncidentDelta', () => {
   });
 });
 
+describe('edits, deletions, full snapshots and documents', () => {
+  const seeded = () =>
+    applyIncidentDelta(emptyIncidentState(), {
+      seq: 5,
+      events: [
+        { id: 'a', ts: 1, type: 'incident_note', summary: 'typo' },
+        { id: 'b', ts: 2, type: 'incident_note', summary: 'keep' },
+      ],
+      reports: [{ id: 'f1', kind: 'field', timestamp: 1, text: 'x' }],
+    });
+
+  it('an admin edit (higher rev) replaces the record; an equal rev replay does not', () => {
+    const s = applyIncidentDelta(seeded(), {
+      events: [{ id: 'a', ts: 1, type: 'incident_note', summary: 'fixed', rev: 1 }],
+    });
+    expect(s.events.a.summary).toBe('fixed');
+    const replay = applyIncidentDelta(s, { events: [{ id: 'a', ts: 1, type: 'incident_note', summary: 'typo' }] });
+    expect(replay.events.a.summary).toBe('fixed');
+  });
+
+  it('tombstones remove events and reports', () => {
+    const s = applyIncidentDelta(seeded(), {
+      seq: 7,
+      deleted: [
+        { kind: 'event', id: 'a', seq: 6 },
+        { kind: 'report', id: 'f1', seq: 7 },
+        { kind: 'event', id: 'missing', seq: 7 },
+      ],
+    });
+    expect(Object.keys(s.events)).toEqual(['b']);
+    expect(s.reports).toEqual({});
+  });
+
+  it('a full snapshot replaces everything, dropping records deleted while away', () => {
+    const s = applyIncidentDelta(
+      { ...seeded(), seq: 50, participants: 3, role: 'admin' },
+      { full: true, seq: 9, events: [{ id: 'b', ts: 2, type: 'incident_note', summary: 'keep' }] },
+    );
+    expect(Object.keys(s.events)).toEqual(['b']);
+    expect(s.reports).toEqual({});
+    expect(s.seq).toBe(9);
+    expect(s.role).toBe('admin');
+    expect(s.participants).toBe(3);
+  });
+
+  it('keeps the newest shared document and takes the role', () => {
+    let s = applyIncidentDelta(emptyIncidentState(), {
+      role: 'operator',
+      docs: [{ id: 'net-running', data: { name: 'B' }, updatedAt: 2 }],
+    });
+    s = applyIncidentDelta(s, { docs: [{ id: 'net-running', data: { name: 'A' }, updatedAt: 1 }] });
+    expect(s.docs['net-running'].data.name).toBe('B');
+    expect(s.role).toBe('operator');
+  });
+});
+
+describe('message history from the shared log', () => {
+  const events = [
+    {
+      id: '1',
+      type: 'aprs_msg_rx',
+      callsign: 'W1AW-9',
+      summary: 'Message to K0CJH',
+      details: 'hello',
+      ts: 1000,
+      site: 'EOC',
+    },
+    { id: '2', type: 'aprs_msg_sent', callsign: 'K1ABC', summary: 'Message to W1AW', details: 'reply', ts: 2000 },
+    { id: '3', type: 'aprs_msg_rx', callsign: 'N0X', summary: 'Message to K0CJH', details: 'other', ts: 3000 },
+    { id: '4', type: 'nws_alert', summary: 'x', ts: 4000 },
+  ];
+
+  it('collects both directions for a station, matching on the base call', () => {
+    const out = messageHistoryFromEvents(events, 'W1AW');
+    expect(out.map((m) => [m.direction, m.text])).toEqual([
+      ['received', 'hello'],
+      ['sent', 'reply'],
+    ]);
+    expect(out[0]).toMatchObject({ from: 'W1AW-9', to: 'K0CJH', source: 'incident', site: 'EOC' });
+    expect(messageHistoryFromEvents(events, '')).toEqual([]);
+  });
+
+  it('merges lists without duplicates, newest first', () => {
+    const server = [{ direction: 'received', text: 'hello', timestamp: 1000, source: 'server' }];
+    const merged = mergeMessageHistory(server, messageHistoryFromEvents(events, 'W1AW'));
+    expect(merged.map((m) => m.text)).toEqual(['reply', 'hello']);
+    expect(merged[1].source).toBe('server');
+  });
+});
+
 describe('roster display', () => {
   const state = applyIncidentDelta(emptyIncidentState(), {
     roster: [
@@ -125,7 +218,7 @@ describe('diffRosterForPush', () => {
     const { push, next } = diffRosterForPush(null, [op], emptyIncidentState(), NOW);
     expect(push).toHaveLength(1);
     expect(push[0]).toMatchObject({ call: 'W1AW', updatedAt: NOW - 1000, checkedOut: false });
-    expect(next.has('W1AW')).toBe(true);
+    expect(next.entries.has('W1AW')).toBe(true);
   });
 
   it('sends nothing when nothing changed (lastHeard alone is not a change)', () => {
@@ -159,10 +252,32 @@ describe('diffRosterForPush', () => {
     expect(diffRosterForPush(next, [], inc, NOW).push).toEqual([]);
   });
 
-  it('treats a local roster that empties all at once as a server reset, not mass check-out', () => {
+  it('without a boot id, treats a roster that empties all at once as a server reset', () => {
     const two = [op, { ...op, call: 'K1ABC' }];
     const { next } = diffRosterForPush(null, two, emptyIncidentState(), NOW);
     expect(diffRosterForPush(next, [], emptyIncidentState(), NOW + 10).push).toEqual([]);
+  });
+
+  it('with a boot id, a restart is ignored but a real mass check-out on the same boot is sent', () => {
+    const two = [op, { ...op, call: 'K1ABC' }];
+    const { next } = diffRosterForPush(null, two, emptyIncidentState(), NOW, 'boot-a');
+    expect(next.bootId).toBe('boot-a');
+    // restart: new boot id, empty roster → nothing sent, re-baselined
+    const restart = diffRosterForPush(next, [], emptyIncidentState(), NOW + 10, 'boot-b');
+    expect(restart.push).toEqual([]);
+    expect(restart.next.bootId).toBe('boot-b');
+    // same boot, everyone gone → every station checked out
+    const cleared = diffRosterForPush(next, [], emptyIncidentState(), NOW + 10, 'boot-a');
+    expect(cleared.push.map((e) => [e.call, e.checkedOut])).toEqual([
+      ['W1AW', true],
+      ['K1ABC', true],
+    ]);
+  });
+
+  it('after a restart, stations still present are not re-sent as new check-ins', () => {
+    const { next } = diffRosterForPush(null, [op], emptyIncidentState(), NOW, 'boot-a');
+    const again = diffRosterForPush(next, [op], emptyIncidentState(), NOW + 10, 'boot-b');
+    expect(again.push).toEqual([]);
   });
 
   it('a re-check-in (new check-in time) is sent as a fresh check-in', () => {
@@ -239,6 +354,17 @@ describe('outbox', () => {
     expect(o.roster.W1AW.updatedAt).toBe(5);
     expect(o.board).toBeNull();
     expect(outboxBatch(ackOutbox(o, outboxBatch(o)))).toBeNull();
+  });
+
+  it('buffers only the newest copy of each shared document and acks it', () => {
+    let o = queueOutbox(emptyOutbox(), { docs: [{ id: 'ics-drafts', data: { v: 2 }, updatedAt: 2 }] });
+    o = queueOutbox(o, { docs: [{ id: 'ics-drafts', data: { v: 1 }, updatedAt: 1 }] });
+    expect(o.docs['ics-drafts'].data.v).toBe(2);
+    expect(outboxSize(o)).toBe(1);
+    const batch = outboxBatch(o);
+    expect(batch.docs).toHaveLength(1);
+    expect(outboxSize(ackOutbox(o, batch))).toBe(0);
+    expect(dropOutboxDocs(o).docs).toEqual({});
   });
 
   it('caps the buffer, dropping the oldest events', () => {

@@ -31,16 +31,28 @@ export const STALE_MINUTES = 10;
 const VOICE_SOURCES = new Set(['manual', 'net-control']);
 
 export function emptyIncidentState() {
-  return { seq: 0, board: null, participants: 0, roster: {}, events: {}, reports: {} };
+  return { seq: 0, board: null, participants: 0, role: null, roster: {}, events: {}, reports: {}, docs: {} };
 }
+
+/** Keep an incoming record when it is new, or an admin edit (higher rev) of one we have. */
+const newerRecord = (cur, rec) => !cur || (rec.rev || 0) > (cur.rev || 0);
 
 /**
  * Merge a server snapshot or change event into state. Returns a new object
  * (React-friendly); untouched collections keep their identity.
+ *
+ * - `full: true` (a complete snapshot) replaces every collection, so records
+ *   deleted while this browser was away disappear;
+ * - `deleted: [{ kind, id }]` tombstones remove events / reports;
+ * - an event or report with a higher `rev` (an admin edit) replaces ours;
+ * - `docs` are whole shared documents, newest `updatedAt` wins.
  */
 export function applyIncidentDelta(state, delta) {
-  const base = state || emptyIncidentState();
-  if (!delta || typeof delta !== 'object') return base;
+  const prev = state || emptyIncidentState();
+  if (!delta || typeof delta !== 'object') return prev;
+  const base = delta.full
+    ? { ...emptyIncidentState(), participants: prev.participants, role: prev.role, board: prev.board }
+    : prev;
   const next = { ...base };
 
   if (Array.isArray(delta.roster) && delta.roster.length) {
@@ -57,7 +69,7 @@ export function applyIncidentDelta(state, delta) {
   if (Array.isArray(delta.events) && delta.events.length) {
     let events = base.events;
     for (const ev of delta.events) {
-      if (!ev || !ev.id || events[ev.id]) continue;
+      if (!ev || !ev.id || !newerRecord(events[ev.id], ev)) continue;
       if (events === base.events) events = { ...base.events };
       events[ev.id] = ev;
     }
@@ -67,15 +79,36 @@ export function applyIncidentDelta(state, delta) {
   if (Array.isArray(delta.reports) && delta.reports.length) {
     let reports = base.reports;
     for (const r of delta.reports) {
-      if (!r || !r.id || reports[r.id]) continue;
+      if (!r || !r.id || !newerRecord(reports[r.id], r)) continue;
       if (reports === base.reports) reports = { ...base.reports };
       reports[r.id] = r;
     }
     next.reports = reports;
   }
 
+  if (Array.isArray(delta.deleted) && delta.deleted.length) {
+    for (const d of delta.deleted) {
+      const key = d?.kind === 'event' ? 'events' : d?.kind === 'report' ? 'reports' : null;
+      if (!key || !next[key][d.id]) continue;
+      if (next[key] === base[key]) next[key] = { ...base[key] };
+      delete next[key][d.id];
+    }
+  }
+
+  if (Array.isArray(delta.docs) && delta.docs.length) {
+    const docs = { ...base.docs };
+    for (const d of delta.docs) {
+      if (!d?.id) continue;
+      const cur = docs[d.id];
+      if (cur && (cur.updatedAt || 0) > (d.updatedAt || 0)) continue;
+      docs[d.id] = d;
+    }
+    next.docs = docs;
+  }
+  if (delta.role === 'admin' || delta.role === 'operator') next.role = delta.role;
+
   if (delta.board && (!base.board || (delta.board.seq || 0) >= (base.board.seq || 0))) next.board = delta.board;
-  if (Number.isFinite(delta.seq)) next.seq = Math.max(base.seq || 0, delta.seq);
+  if (Number.isFinite(delta.seq)) next.seq = delta.full ? delta.seq : Math.max(base.seq || 0, delta.seq);
   if (Number.isFinite(delta.participants)) next.participants = delta.participants;
   return next;
 }
@@ -172,11 +205,12 @@ export function rosterEntryForPush(op, updatedAt) {
 /**
  * Which local roster changes to send to the incident.
  *
- * @param {Map|null} prev  call → { checkinTime, fp } from the previous pass (null = first pass)
- * @param {Array} localRoster  /api/aprs/net entries
+ * @param {{ bootId, entries: Map }|null} prev  the previous pass (null = first pass)
+ * @param {Array} localRoster  /api/aprs/net entries (plus voice-net entries)
  * @param {object} incidentState
  * @param {number} now
- * @returns {{ push: object[], next: Map }}
+ * @param {string|null} bootId  /api/aprs/net `bootId` — changes when that server restarts
+ * @returns {{ push: object[], next: { bootId, entries: Map } }}
  *
  * - new local check-in → pushed with updatedAt = its check-in time, so an
  *   older check-in can never override a newer check-out from another site;
@@ -185,11 +219,16 @@ export function rosterEntryForPush(op, updatedAt) {
  *   check-in (a remote check-out wins over local beacon noise);
  * - gone from the local roster → a check-out, unless already checked out.
  * The first pass sends every current entry (the server ignores unchanged ones).
- * A roster that empties all at once (this server restarted and lost its
- * in-memory net) is treated as a reset, not as everyone checking out.
+ *
+ * A server restart empties its in-memory roster. When the boot id changed
+ * since the last pass, stations missing now are not checked out — the pass
+ * only re-baselines. On the same boot, a roster that empties (even all at
+ * once) is real and every station is checked out. Servers too old to send a
+ * boot id fall back to treating a sudden total wipe as a restart.
  */
-export function diffRosterForPush(prev, localRoster, incidentState, now = Date.now()) {
+export function diffRosterForPush(prev, localRoster, incidentState, now = Date.now(), bootId = null) {
   const inc = incidentState?.roster || {};
+  const prevEntries = prev?.entries || null;
   const next = new Map();
   const push = [];
   for (const op of localRoster || []) {
@@ -197,7 +236,7 @@ export function diffRosterForPush(prev, localRoster, incidentState, now = Date.n
     const call = String(op.call).toUpperCase();
     const fp = rosterFingerprint(op);
     next.set(call, { checkinTime: op.checkinTime || 0, fp, op });
-    const before = prev?.get(call);
+    const before = prevEntries?.get(call);
     const shared = inc[call];
     if (!before || before.checkinTime !== (op.checkinTime || 0)) {
       push.push(rosterEntryForPush(op, op.checkinTime || now));
@@ -206,9 +245,10 @@ export function diffRosterForPush(prev, localRoster, incidentState, now = Date.n
       push.push(rosterEntryForPush(op, now));
     }
   }
-  const reset = prev && prev.size > 1 && next.size === 0;
-  if (prev && !reset) {
-    for (const [call, before] of prev) {
+  const restarted =
+    prev && (bootId || prev.bootId) ? bootId !== prev.bootId : !!prevEntries && prevEntries.size > 1 && next.size === 0;
+  if (prevEntries && !restarted) {
+    for (const [call, before] of prevEntries) {
       if (next.has(call)) continue;
       const shared = inc[call];
       if (shared?.checkedOut) continue;
@@ -219,7 +259,7 @@ export function diffRosterForPush(prev, localRoster, incidentState, now = Date.n
       });
     }
   }
-  return { push, next };
+  return { push, next: { bootId: bootId || null, entries: next } };
 }
 
 // ─── Reports ────────────────────────────────────────────────────────────────
@@ -283,6 +323,70 @@ export function mergeShelterReports(localReports, incidentState) {
   return out;
 }
 
+/**
+ * Messages exchanged with `call`, from the shared event log: received ones
+ * (aprs_msg_rx from that station) and sent ones ("Message to <call>"), from
+ * every joined site, in the message-history panel's shape. SSIDs match on the
+ * base call, as the panel does for its own server's history.
+ */
+export function messageHistoryFromEvents(events, call) {
+  const upper = String(call || '').toUpperCase();
+  if (!upper) return [];
+  const base = upper.split('-')[0];
+  const same = (c) => {
+    const u = String(c || '').toUpperCase();
+    return u === upper || u.split('-')[0] === base;
+  };
+  const out = [];
+  for (const ev of events || []) {
+    if (ev.type === 'aprs_msg_rx' && same(ev.callsign)) {
+      const to = String(ev.summary || '').replace(/^(Message|Bulletin) to\s+/i, '');
+      out.push({
+        from: ev.callsign,
+        to,
+        text: ev.details || '',
+        timestamp: ev.ts,
+        direction: 'received',
+        source: 'incident',
+        site: ev.site || '',
+      });
+    } else if (ev.type === 'aprs_msg_sent') {
+      const to = String(ev.summary || '')
+        .replace(/^Message to\s+/i, '')
+        .trim();
+      if (!same(to)) continue;
+      out.push({
+        from: ev.callsign,
+        to: to.toUpperCase(),
+        text: ev.details || '',
+        timestamp: ev.ts,
+        direction: 'sent',
+        source: 'incident',
+        site: ev.site || '',
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * Merge message lists (server history, local log, shared incident) into one,
+ * newest first, dropping copies of the same message (direction + text + minute).
+ */
+export function mergeMessageHistory(...lists) {
+  const seen = new Set();
+  const out = [];
+  for (const list of lists) {
+    for (const m of list || []) {
+      const k = `${m.direction}|${m.text}|${Math.round((m.timestamp || 0) / 60000)}`;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      out.push(m);
+    }
+  }
+  return out.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+}
+
 /** Local event-log entry → incident event (drops local-only bookkeeping). */
 export function eventForPush(ev) {
   const out = {
@@ -300,7 +404,7 @@ export function eventForPush(ev) {
 // ─── Outbox (offline buffer) ────────────────────────────────────────────────
 
 export function emptyOutbox() {
-  return { roster: {}, events: {}, reports: {}, board: null };
+  return { roster: {}, events: {}, reports: {}, docs: {}, board: null };
 }
 
 export function outboxSize(o) {
@@ -309,6 +413,7 @@ export function outboxSize(o) {
     Object.keys(o.roster || {}).length +
     Object.keys(o.events || {}).length +
     Object.keys(o.reports || {}).length +
+    Object.keys(o.docs || {}).length +
     (o.board ? 1 : 0)
   );
 }
@@ -328,9 +433,15 @@ function capRecord(map, max, orderKey) {
  * the same call (the newest state is all the server needs); events and
  * reports dedupe by id. Each collection is capped, oldest dropped.
  */
-export function queueOutbox(outbox, { roster = [], events = [], reports = [], board = null } = {}) {
+export function queueOutbox(outbox, { roster = [], events = [], reports = [], docs = [], board = null } = {}) {
   const o = outbox || emptyOutbox();
-  const next = { roster: { ...o.roster }, events: { ...o.events }, reports: { ...o.reports }, board: o.board };
+  const next = {
+    roster: { ...o.roster },
+    events: { ...o.events },
+    reports: { ...o.reports },
+    docs: { ...(o.docs || {}) },
+    board: o.board,
+  };
   for (const r of roster) {
     if (!r?.call) continue;
     const cur = next.roster[r.call];
@@ -338,6 +449,11 @@ export function queueOutbox(outbox, { roster = [], events = [], reports = [], bo
   }
   for (const e of events) if (e?.id) next.events[e.id] = e;
   for (const r of reports) if (r?.id) next.reports[r.id] = r;
+  for (const d of docs) {
+    if (!d?.id) continue;
+    const cur = next.docs[d.id];
+    if (!cur || (d.updatedAt || 0) >= (cur.updatedAt || 0)) next.docs[d.id] = d; // only the newest copy matters
+  }
   if (board && (!next.board || (board.updatedAt || 0) >= (next.board.updatedAt || 0))) next.board = board;
   next.roster = capRecord(next.roster, OUTBOX_LIMITS.roster, 'updatedAt');
   next.events = capRecord(next.events, OUTBOX_LIMITS.events, 'ts');
@@ -353,6 +469,8 @@ export function outboxBatch(outbox) {
     events: Object.values(outbox.events).sort((a, b) => a.ts - b.ts),
     reports: Object.values(outbox.reports),
   };
+  const docs = Object.values(outbox.docs || {});
+  if (docs.length) batch.docs = docs;
   if (outbox.board) batch.board = outbox.board;
   return batch;
 }
@@ -363,12 +481,23 @@ export function outboxBatch(outbox) {
  */
 export function ackOutbox(outbox, sent) {
   if (!outbox || !sent) return outbox || emptyOutbox();
-  const next = { roster: { ...outbox.roster }, events: { ...outbox.events }, reports: { ...outbox.reports } };
+  const next = {
+    roster: { ...outbox.roster },
+    events: { ...outbox.events },
+    reports: { ...outbox.reports },
+    docs: { ...(outbox.docs || {}) },
+  };
   for (const r of sent.roster || []) if (next.roster[r.call] === r) delete next.roster[r.call];
+  for (const d of sent.docs || []) if (next.docs[d.id] === d) delete next.docs[d.id];
   for (const e of sent.events || []) delete next.events[e.id];
   for (const r of sent.reports || []) delete next.reports[r.id];
   next.board = outbox.board && outbox.board !== sent.board ? outbox.board : null;
   return next;
+}
+
+/** The outbox minus its shared documents (after the server refused one as too large). */
+export function dropOutboxDocs(outbox) {
+  return { ...(outbox || emptyOutbox()), docs: {} };
 }
 
 // ─── Join link ──────────────────────────────────────────────────────────────
