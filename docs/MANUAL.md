@@ -786,6 +786,8 @@ OpenHamClock is an installable PWA with a real offline mode:
 - **Limitations:** service workers require a secure context. On the hosted site (HTTPS) and `localhost` everything works; a self-hosted install reached over **plain http on a LAN IP** silently skips offline mode (that's a browser rule, not ours). The Electron app updates via its installer instead.
 - **Escape hatch:** load the app with **`?nosw`** in the URL (e.g. `https://openhamclock.com/?nosw`) to unregister the worker and clear its caches — handy if a bad cache ever wedges things. Remove the parameter and reload to re-register.
 
+**Install it on a phone or tablet.** In Safari use Share → **Add to Home Screen**; in Chrome use the menu → **Install app** (or **Add to Home screen**). The installed app opens full screen in its own window, and the [Mobile layout](#layouts-settings--display) is built to fit around the notch and home bar in that mode.
+
 Separately from the PWA, the app polls the server version and — on the hosted site — reloads automatically when a new release lands.
 
 ---
@@ -809,6 +811,7 @@ Separately from the PWA, the app polls the server version and — on the hosted 
 | **Weather**     | Radar, lightning, natural-hazard, and aurora overlays on a big map, with terrestrial + space weather panels                           |
 | **Air Traffic** | Live aircraft and ATC sector overlays over a dominant map, with the Aircraft Nearby list and world clocks                             |
 | **EME**         | Moonbounce and satellite relay on the 3D globe — DE→Moon→DX or DE→satellite→DX legs, mutual windows and passes, activity feeds (beta) |
+| **Mobile**      | A phone or tablet as the main display — compact header, a touch-sized map, and swipeable panel cards. Go-boxes and the field          |
 
 <table>
 <tr><td width="50%" valign="top"><img src="images/manual/layout-modern.jpg" alt="Modern"><br><sub>Modern</sub></td><td width="50%" valign="top"><img src="images/manual/layout-classic.jpg" alt="Classic"><br><sub>Classic</sub></td></tr>
@@ -822,6 +825,15 @@ Separately from the PWA, the app polls the server version and — on the hosted 
 The four focus layouts (Activator/Hunter/Weather/Air Traffic) fully reset the overlays each time you switch into one: the layout's own preset is applied exhaustively, and when you leave, your previous layer setup is restored exactly as it was.
 
 **Named dockable layouts.** The Dockable layout can hold more than one arrangement. In the sidebar's layout controls (next to the lock and reset buttons), **⧉ Duplicate** saves the current arrangement as a named preset — up to 10 — and the dropdown switches between them live. Rename (✎) and delete (✕) manage your presets; the built-in **Default** is your original layout and can't be renamed or deleted. Presets are included in profiles, backups, and settings sync like everything else.
+
+**Mobile layout.** Built for a phone or small tablet that _is_ the station display — in a go-box, on a picnic table at a park, or clipped to the dash. Pick **Mobile** in Settings → Display (on a phone-sized screen the app also offers it once on your first visit; answer either way and it won't ask again).
+
+- **Portrait.** A compact header on top: your callsign (tap it for Settings), UTC with seconds, a gear button, and on the second line your local time (tap it to flip 12/24-hour) followed by one line of chips — SFI, K (green, amber at 4, red at 5+), SSN, A, and the local temperature. If the chips don't fit, that one line scrolls sideways; the page itself never does. The map sits below at a usable height, with all its normal controls — the map lock, projection (flat, azimuthal or 3D globe) and the eye button that hides the map controls when you just want the picture.
+- **Panel cards.** Under the map is a row of cards you swipe left and right: **DX Cluster**, **POTA / SOTA**, **Propagation**, **Solar**, **Satellites**, **Logbook** (with **+QSO**), **Weather**, **PSK / WSJT-X**, and **APRS** whenever the APRS map layer is on. Panels hidden in your saved configuration are left out, the same as in the Modern layout. The dots underneath show where you are — tap one to jump straight to that card. The app remembers the last card you looked at.
+- **Full screen.** Tap a card's title bar to open that panel full screen. **‹ Back** (or your phone's back gesture) returns to the map.
+- **Landscape.** Turn the phone sideways and the header becomes a single row, with the map on the left and one card on the right — swipe or tap the dots to change it.
+- **Notches and home bars.** Content stays clear of the notch, the rounded corners and the home indicator, with 16 px side margins, and works down to 360 px wide. Installed to the home screen (see [Offline mode (PWA)](#offline-mode-pwa)) it runs full screen with no browser bars. On Android, outside the installed app, a full-screen button sits next to the gear.
+- To save data and battery on a phone, only the card you're looking at and its two neighbours are running; the others start when you swipe to them.
 
 **Clock layout and the idle clock.** The **Clock** layout is a full-screen digital clock in your theme and font: UTC very large with seconds, local time beneath it (tap the big time to swap which one is large — the choice sticks), the date, and your callsign and grid in the corner. Pick it like any layout, add it to a Scene Rotation, or let it appear on its own: Settings → Display → **Idle Clock** shows it after 2 to 60 minutes with no input, and the first touch, mouse movement or key press brings the previous layout straight back. The idle clock never interferes with a Clock layout you chose yourself, waits while a dialog is open, and turning it on turns Scene Rotation off (and vice versa) so the two never fight over the screen.
 
