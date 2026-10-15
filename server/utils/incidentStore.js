@@ -50,6 +50,8 @@ const EVENT_TYPES = new Set([
   'net_open',
   'net_close',
   'net_traffic',
+  // Net Control's Undo: withdraws the event named by `ref` (kept below)
+  'net_withdrawn',
   'ics213_sent',
   'aprs_msg_sent',
   'aprs_msg_rx',
@@ -146,6 +148,7 @@ function sanitiseEvent(raw, now) {
     site: cleanStr(raw.site, 40),
   };
   if (raw.dedupeKey != null && raw.dedupeKey !== '') ev.dedupeKey = cleanStr(raw.dedupeKey, 120);
+  if (raw.ref != null && raw.ref !== '') ev.ref = cleanStr(raw.ref, ID_MAX);
   return ev;
 }
 

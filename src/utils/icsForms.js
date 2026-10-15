@@ -26,7 +26,8 @@
  * helpers to derive rows, CSV and the print document.
  */
 import { esc } from './escapeHtml.js';
-import { EVENT_TYPE_META, csvEscape, messageNumbers } from './emcommEventLog.js';
+import { EVENT_TYPE_META, csvEscape, messageNumbers, activeEvents } from './emcommEventLog.js';
+import { parseNetFrequency } from './netControl.js';
 
 export const ICS_DRAFTS_KEY = 'openhamclock_icsForms';
 /** Maximum APRS message text length (bytes after the addressee field). */
@@ -199,7 +200,9 @@ export function saveDrafts(drafts) {
  * oldest first.
  */
 export function eventsInRange(events, { from = null, to = null } = {}) {
-  return (events || [])
+  // Entries withdrawn by Net Control's Undo (and the withdrawal records
+  // themselves) never reach a form.
+  return activeEvents(events)
     .filter((ev) => Number.isFinite(ev?.ts) && (from == null || ev.ts >= from) && (to == null || ev.ts <= to))
     .slice()
     .sort((a, b) => a.ts - b.ts);
@@ -238,6 +241,7 @@ const L = (tr, key, def, vars = {}) => (tr || defaultTr)(`icsForms.print.${key}`
 export const ICS309_DEFAULT_TYPES = [
   'net_checkin',
   'net_checkout',
+  'net_traffic',
   'aprs_msg_sent',
   'aprs_msg_rx',
   'ics213_sent',
@@ -664,6 +668,30 @@ export function ics205RowFromNet(net) {
     modeName: String(net?.mode || ''),
     remarks: [when, net?.mode || '', net?.notes || ''].filter(Boolean).join(' · '),
     source: 'net',
+  });
+}
+
+/**
+ * Row from the voice net running in Net Control (its roster snapshot:
+ * { net, ncs, frequency (free text), freqMhz?, mode? }). The frequency text
+ * is read for an offset and tone ("146.940 − PL 100.0"): RX is the listed
+ * frequency, TX the listed frequency plus the offset, the tone goes on TX.
+ */
+export function ics205RowFromVoiceNet(snapshot) {
+  const parsed = parseNetFrequency(snapshot?.frequency) || {};
+  const rx = Number(snapshot?.freqMhz) > 0 ? Number(snapshot.freqMhz) : parsed.mhz;
+  const tx = parsed.mhz != null && parsed.mhz === rx ? parsed.txMhz : rx;
+  return newIcs205Row({
+    function: 'Net',
+    name: String(snapshot?.net || ''),
+    assignment: 'All stations',
+    rxFreq: formatPlanFreq(rx),
+    txFreq: formatPlanFreq(tx),
+    txTone: parsed.tone || '',
+    mode: ics205ModeCode(snapshot?.mode || parsed.mode),
+    modeName: String(snapshot?.mode || parsed.mode || ''),
+    remarks: [snapshot?.ncs ? `NCS ${snapshot.ncs}` : '', snapshot?.frequency || ''].filter(Boolean).join(' · '),
+    source: 'net-control',
   });
 }
 

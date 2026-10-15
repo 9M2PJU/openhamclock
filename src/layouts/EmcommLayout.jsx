@@ -1805,7 +1805,7 @@ export default function EmcommLayout(props) {
             panels={panels}
             bodyMaxHeight="none"
           >
-            <NetControlPanel callsign={config.callsign} embedded />
+            <NetControlPanel callsign={config.callsign} timeZone={config.timezone} embedded />
           </PanelSection>
 
           {/* Net Operations Panel */}

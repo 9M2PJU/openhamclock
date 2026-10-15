@@ -3,13 +3,21 @@
  * (dockable panel `net-control`, also in the EmComm layout's rail).
  *
  *   • Start: pick a net from the Net Schedule or type name / frequency /
- *     net control callsign. Running timer and check-in counter.
+ *     net control callsign, and a script template. Running timer and
+ *     check-in counter.
  *   • Check-in line: type a callsign (+ optional flag letters) and Enter.
  *     Name/location fill from remembered stations, the logbook, then the
  *     callbook. Re-checks move a station to the top; duplicates are ignored.
  *   • Traffic queue with Next / Passed, logged to the EmComm event log.
- *   • Net script (preamble / closing) with placeholders, read-aloud view.
- *   • Close → report (copy text, CSV, print), history of past nets.
+ *     Undo of a logged action writes a compensating "withdrawn" entry.
+ *   • Named script templates (preamble / closing) with placeholders and a
+ *     read-aloud view.
+ *   • Close → report (copy text, CSV, print; UTC or UTC + local time),
+ *     history of past nets.
+ *   • Every change goes through commit(): the running net carries a
+ *     revision counter, and other tabs / panels are told through `storage`
+ *     events and a BroadcastChannel, so they stay in step and a stale panel
+ *     can never overwrite a newer net.
  *
  * All logic lives in utils/netControl.js; this component only wires state,
  * storage and side effects (event log, callbook lookups, downloads).
@@ -26,6 +34,9 @@ import {
   updateStation,
   removeStation,
   undoLast,
+  peekUndo,
+  attachEvent,
+  withdrawalSummary,
   trafficQueue,
   passTraffic,
   nextTraffic,
@@ -38,24 +49,37 @@ import {
   flagsToText,
   formatElapsed,
   formatDuration,
+  fmtLocalDateTime,
   fillTemplate,
   scriptContext,
   stationFromLogbook,
   stationFromLookup,
   loadRunningNet,
-  saveRunningNet,
-  clearRunningNet,
+  readRunningNetRecord,
+  commitRunningNet,
+  pickNewer,
+  livePeerCount,
+  PEER_TTL_MS,
+  NET_CONTROL_KEY,
+  NET_CONTROL_HISTORY_KEY,
+  NET_CONTROL_SCRIPTS_KEY,
+  NET_CONTROL_CHANNEL,
   loadHistory,
   saveHistory,
   pushHistory,
-  loadScript,
-  saveScript,
+  loadScriptTemplates,
+  saveScriptTemplates,
+  getTemplate,
+  addTemplate,
+  duplicateTemplate,
+  renameTemplate,
+  updateTemplate,
+  deleteTemplate,
+  builtinDefault,
   loadStationCache,
   saveStationCache,
   rememberStation,
   saveRosterSnapshot,
-  DEFAULT_PREAMBLE,
-  DEFAULT_CLOSING,
 } from '../utils/netControl.js';
 import { loadNetSchedule, sortByNextOccurrence } from '../utils/netSchedule.js';
 import { formatMemoryFreq } from '../utils/freqMemories.js';
@@ -66,6 +90,8 @@ import { spellPhonetic } from '../utils/phonetics.js';
 import { init as initLogbook, getAll as getLogbookQsos } from '../services/logbookStore.js';
 
 const ACCENT = '#14b8a6';
+const REPORT_TIMES_KEY = 'openhamclock_netControlReportTimes';
+const HEARTBEAT_MS = 5000;
 
 const inputStyle = {
   padding: '4px 6px',
@@ -96,13 +122,14 @@ const primaryBtn = { ...btnStyle, borderColor: ACCENT, color: ACCENT, fontWeight
 const dangerBtn = { ...btnStyle, borderColor: '#ef4444', color: '#ef4444' };
 
 const fmtUtcHHMM = (ts) => (ts == null ? '' : new Date(ts).toISOString().substring(11, 16));
-const fmtDateTime = (ts) => {
+const fmtDateTime = (ts, timeZone) => {
   try {
     return new Date(ts).toLocaleString(undefined, {
       month: 'short',
       day: 'numeric',
       hour: '2-digit',
       minute: '2-digit',
+      ...(timeZone ? { timeZone } : {}),
     });
   } catch {
     return new Date(ts).toISOString().substring(0, 16).replace('T', ' ');
@@ -110,6 +137,21 @@ const fmtDateTime = (ts) => {
 };
 
 const baseCallOf = (call) => String(call || '').split('/')[0];
+
+const readLocal = (key, fallback) => {
+  try {
+    return localStorage.getItem(key) ?? fallback;
+  } catch {
+    return fallback;
+  }
+};
+const writeLocal = (key, value) => {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    /* storage unavailable */
+  }
+};
 
 const downloadText = (text, filename, type = 'text/csv;charset=utf-8') => {
   const blob = new Blob([text], { type });
@@ -139,6 +181,8 @@ const fileSlug = (s) =>
     .replace(/^-|-$/g, '')
     .slice(0, 40) || 'net';
 
+const newInstanceId = () => `ncp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+
 function FlagPill({ def, active, onClick, title }) {
   return (
     <button
@@ -164,34 +208,97 @@ function FlagPill({ def, active, onClick, title }) {
   );
 }
 
-export default function NetControlPanel({ callsign = '', embedded = false }) {
+export default function NetControlPanel({ callsign = '', embedded = false, timeZone = '' }) {
   const { t } = useTranslation();
+  const tz = timeZone || undefined;
 
   // ── State ─────────────────────────────────────────────────────────────
   const [net, setNet] = useState(loadRunningNet);
+  const netRef = useRef(net);
   const [history, setHistory] = useState(loadHistory);
-  const [script, setScript] = useState(loadScript);
+  const [scripts, setScripts] = useState(loadScriptTemplates);
   const [view, setView] = useState('roster'); // roster | script | report | history
   const [reportNet, setReportNet] = useState(null); // closed net shown in the report view
+  const [reportTimes, setReportTimes] = useState(() =>
+    readLocal(REPORT_TIMES_KEY, 'utc') === 'both' ? 'both' : 'utc',
+  );
   const [input, setInput] = useState('');
   const [pendingFlags, setPendingFlags] = useState([]);
   const [flash, setFlash] = useState(null); // { text, color }
   const [now, setNow] = useState(() => Date.now());
   const [scriptPart, setScriptPart] = useState('preamble');
-  const [editingScript, setEditingScript] = useState(false);
-  const [scriptDraft, setScriptDraft] = useState(null);
+  const [scriptDraft, setScriptDraft] = useState(null); // { id, name, preamble, closing } while editing
   const [readAloud, setReadAloud] = useState(false);
-  const [startForm, setStartForm] = useState(() => ({ scheduleId: '', name: '', frequency: '', ncs: callsign || '' }));
+  const [startForm, setStartForm] = useState(() => ({
+    scheduleId: '',
+    name: '',
+    frequency: '',
+    ncs: callsign || '',
+    freqMhz: null,
+    mode: '',
+  }));
   const [schedule, setSchedule] = useState(loadNetSchedule);
+  const [peers, setPeers] = useState({}); // other Net Control panels: { instanceId: lastSeenMs }
   const inputRef = useRef(null);
   const flashTimer = useRef(null);
   const stationCacheRef = useRef(null);
   const lookupsInFlight = useRef(new Set());
+  const channelRef = useRef(null);
+  const instanceId = useRef(null);
+  if (!instanceId.current) instanceId.current = newInstanceId();
   const running = !!net;
-  // Docked, the panel has a fixed height and its lists flex to fill it. In the
-  // EmComm rail the height is auto, where flex:1 would collapse a scrolling
-  // list to nothing — there the lists get a max height instead.
-  const grow = embedded ? {} : { flex: 1, minHeight: 0 };
+
+  const showFlash = useCallback((text, color = ACCENT) => {
+    setFlash({ text, color });
+    clearTimeout(flashTimer.current);
+    flashTimer.current = setTimeout(() => setFlash(null), 4000);
+  }, []);
+
+  const broadcast = useCallback((type) => {
+    try {
+      channelRef.current?.postMessage({ type, from: instanceId.current });
+    } catch {
+      /* channel closed */
+    }
+  }, []);
+
+  /**
+   * The single write path for the running net. Refused (and replaced by the
+   * newer stored net) when another tab or panel wrote since this one last
+   * read — returns { ok, net }.
+   */
+  const commit = useCallback(
+    (next) => {
+      const base = netRef.current;
+      if (next === base) return { ok: true, net: base };
+      const res = commitRunningNet(base, next);
+      netRef.current = res.net;
+      setNet(res.net);
+      if (res.conflict) {
+        showFlash(
+          t('netControl.conflict', { defaultValue: 'Changed in another tab — updated, please try again' }),
+          '#f59e0b',
+        );
+        return { ok: false, net: res.net };
+      }
+      if (res.net) saveRosterSnapshot(res.net, { active: true });
+      broadcast('net');
+      return { ok: true, net: res.net };
+    },
+    [broadcast, showFlash, t],
+  );
+
+  /** Pick up a newer running net written elsewhere. */
+  const syncFromStorage = useCallback(() => {
+    const { net: next, changed } = pickNewer(netRef.current, readRunningNetRecord());
+    if (!changed) return;
+    const closedHere = netRef.current && !next;
+    netRef.current = next;
+    setNet(next);
+    if (closedHere) {
+      showFlash(t('netControl.closedElsewhere', { defaultValue: 'The net was closed in another tab' }), '#f59e0b');
+    }
+  }, [showFlash, t]);
 
   // ── Effects ───────────────────────────────────────────────────────────
   // Logbook feeds name/location fills; init is idempotent.
@@ -206,15 +313,83 @@ export default function NetControlPanel({ callsign = '', embedded = false }) {
     return () => clearInterval(id);
   }, [running]);
 
-  // Persist the running net + mirror it into the EmComm roster store
-  useEffect(() => {
-    if (net) {
-      saveRunningNet(net);
-      saveRosterSnapshot(net, { active: true });
-    }
-  }, [net]);
-
   useEffect(() => () => clearTimeout(flashTimer.current), []);
+
+  // The channel effect below runs once per mount; it reaches the current
+  // sync function through a ref (re-subscribing on every render would re-send
+  // "hello" and ping-pong with the other panels).
+  const syncRef = useRef(syncFromStorage);
+  syncRef.current = syncFromStorage;
+
+  // Other tabs: storage events. Other panels (this tab too): BroadcastChannel,
+  // which also carries the presence hello / ping / bye.
+  useEffect(() => {
+    const sync = () => syncRef.current();
+    const onStorage = (e) => {
+      if (e.key === NET_CONTROL_KEY || e.key === null) sync();
+      if (e.key === NET_CONTROL_HISTORY_KEY || e.key === null) setHistory(loadHistory());
+      if (e.key === NET_CONTROL_SCRIPTS_KEY || e.key === null) setScripts(loadScriptTemplates());
+    };
+    window.addEventListener('storage', onStorage);
+    let channel = null;
+    if (typeof BroadcastChannel !== 'undefined') {
+      try {
+        channel = new BroadcastChannel(NET_CONTROL_CHANNEL);
+      } catch {
+        channel = null;
+      }
+    }
+    channelRef.current = channel;
+    const me = instanceId.current;
+    const seen = (from) => setPeers((p) => ({ ...p, [from]: Date.now() }));
+    if (channel) {
+      channel.onmessage = (e) => {
+        const msg = e.data || {};
+        if (!msg.from || msg.from === me) return;
+        if (msg.type === 'net') sync();
+        else if (msg.type === 'history') setHistory(loadHistory());
+        else if (msg.type === 'scripts') setScripts(loadScriptTemplates());
+        if (msg.type === 'bye') {
+          setPeers((p) => {
+            const { [msg.from]: _gone, ...rest } = p;
+            return rest;
+          });
+          return;
+        }
+        seen(msg.from);
+        if (msg.type === 'hello') channel.postMessage({ type: 'ping', from: me });
+      };
+      channel.postMessage({ type: 'hello', from: me });
+    }
+    const heartbeat = setInterval(() => {
+      try {
+        channel?.postMessage({ type: 'ping', from: me });
+      } catch {
+        /* closed */
+      }
+      setPeers((p) => {
+        const cutoff = Date.now() - PEER_TTL_MS;
+        const live = Object.fromEntries(Object.entries(p).filter(([, ts]) => ts > cutoff));
+        return Object.keys(live).length === Object.keys(p).length ? p : live;
+      });
+    }, HEARTBEAT_MS);
+    const onUnload = () => {
+      try {
+        channel?.postMessage({ type: 'bye', from: me });
+      } catch {
+        /* closed */
+      }
+    };
+    window.addEventListener('pagehide', onUnload);
+    return () => {
+      window.removeEventListener('storage', onStorage);
+      window.removeEventListener('pagehide', onUnload);
+      clearInterval(heartbeat);
+      onUnload();
+      channel?.close();
+      channelRef.current = null;
+    };
+  }, []);
 
   // Esc closes the read-aloud view
   useEffect(() => {
@@ -231,6 +406,7 @@ export default function NetControlPanel({ callsign = '', embedded = false }) {
     setStartForm((f) => (f.ncs ? f : { ...f, ncs: callsign || '' }));
   }, [callsign]);
 
+  const peerCount = livePeerCount(peers, now);
   const sortedSchedule = useMemo(() => sortByNextOccurrence(schedule), [schedule]);
   const queue = useMemo(() => trafficQueue(net), [net]);
   // The called station only counts while it is still queued (not removed / checked out)
@@ -238,18 +414,15 @@ export default function NetControlPanel({ callsign = '', embedded = false }) {
   const activeCount = useMemo(() => (net?.stations || []).filter((s) => s.checkoutTime == null).length, [net]);
   const totalCheckins = useMemo(() => (net?.stations || []).reduce((n, s) => n + 1 + (s.recheckCount || 0), 0), [net]);
   const report = useMemo(() => (reportNet ? buildReport(reportNet) : null), [reportNet]);
+  const templateId = net?.scriptId || scripts.lastId;
+  const template = getTemplate(scripts.templates, templateId);
   const scriptText = useMemo(() => {
-    const raw = scriptPart === 'closing' ? script.closing : script.preamble;
-    return fillTemplate(raw, scriptContext(net || { name: startForm.name, ncs: startForm.ncs }, now));
-  }, [script, scriptPart, net, startForm.name, startForm.ncs, now]);
+    const raw = scriptPart === 'closing' ? template.closing : template.preamble;
+    return fillTemplate(raw, scriptContext(net || { name: startForm.name, ncs: startForm.ncs }, now, tz));
+  }, [template, scriptPart, net, startForm.name, startForm.ncs, now, tz]);
+  const reportOpts = { times: reportTimes, timeZone: tz };
 
   // ── Helpers ───────────────────────────────────────────────────────────
-  const showFlash = useCallback((text, color = ACCENT) => {
-    setFlash({ text, color });
-    clearTimeout(flashTimer.current);
-    flashTimer.current = setTimeout(() => setFlash(null), 4000);
-  }, []);
-
   const getStationCache = () => {
     if (!stationCacheRef.current) stationCacheRef.current = loadStationCache();
     return stationCacheRef.current;
@@ -285,15 +458,11 @@ export default function NetControlPanel({ callsign = '', embedded = false }) {
       if (!res || !res.ok) return;
       const info = stationFromLookup(await res.json());
       if (!info) return;
-      setNet((prev) => {
-        if (!prev) return prev;
-        const s = prev.stations.find((x) => x.call === call);
-        if (!s) return prev;
-        return updateStation(prev, call, {
-          name: s.name || info.name,
-          location: s.location || info.location,
-        });
-      });
+      const cur = netRef.current;
+      const s = cur?.stations.find((x) => x.call === call);
+      if (s) {
+        commit(updateStation(cur, call, { name: s.name || info.name, location: s.location || info.location }));
+      }
       if (info.name) remember(call, info);
     } catch {
       /* offline / timeout — the row just stays without a name */
@@ -302,11 +471,75 @@ export default function NetControlPanel({ callsign = '', embedded = false }) {
     }
   };
 
+  /** Log an event for the action just committed and tie it to that action (for Undo) and the station. */
+  const logFor = (committed, type, data) => {
+    const ev = recordEvent(type, data);
+    if (ev && committed) commit(attachEvent(committed, ev.id, data.callsign || null));
+  };
+
+  // ── Templates ─────────────────────────────────────────────────────────
+  const persistScripts = (next) => {
+    setScripts(next);
+    saveScriptTemplates(next);
+    broadcast('scripts');
+  };
+
+  const chooseTemplate = (id) => {
+    if (netRef.current) commit({ ...netRef.current, scriptId: id });
+    persistScripts({ ...scripts, lastId: id });
+  };
+
+  const beginEditScript = (tpl = template) =>
+    setScriptDraft({ id: tpl.id, name: tpl.name, preamble: tpl.preamble, closing: tpl.closing });
+
+  const saveScriptDraft = () => {
+    let list = updateTemplate(scripts.templates, scriptDraft.id, scriptDraft);
+    list = renameTemplate(list, scriptDraft.id, scriptDraft.name);
+    persistScripts({ templates: list, lastId: scriptDraft.id });
+    setScriptDraft(null);
+  };
+
+  const newTemplate = () => {
+    const res = addTemplate(scripts.templates, {
+      name: t('netControl.newScriptName', { defaultValue: 'New script' }),
+      preamble: '',
+      closing: '',
+    });
+    persistScripts({ templates: res.templates, lastId: res.id });
+    if (netRef.current) commit({ ...netRef.current, scriptId: res.id });
+    beginEditScript(getTemplate(res.templates, res.id));
+  };
+
+  const copyTemplate = () => {
+    const res = duplicateTemplate(scripts.templates, template.id);
+    persistScripts({ templates: res.templates, lastId: res.id });
+    if (netRef.current) commit({ ...netRef.current, scriptId: res.id });
+    beginEditScript(getTemplate(res.templates, res.id));
+  };
+
+  const removeTemplate = () => {
+    if (scripts.templates.length <= 1) return;
+    if (
+      !window.confirm(
+        t('netControl.confirmDeleteScript', { defaultValue: 'Delete the script "{{name}}"?', name: template.name }),
+      )
+    )
+      return;
+    const list = deleteTemplate(scripts.templates, template.id);
+    persistScripts({ templates: list, lastId: list[0].id });
+    if (netRef.current?.scriptId === template.id) commit({ ...netRef.current, scriptId: list[0].id });
+  };
+
+  const resetScriptPart = () => {
+    const def = builtinDefault(getTemplate(scripts.templates, scriptDraft?.id));
+    if (def) setScriptDraft((d) => ({ ...d, [scriptPart]: def[scriptPart] }));
+  };
+
   // ── Actions ───────────────────────────────────────────────────────────
   const pickSchedule = (id) => {
     const entry = schedule.find((n) => n.id === id);
     if (!entry) {
-      setStartForm((f) => ({ ...f, scheduleId: '' }));
+      setStartForm((f) => ({ ...f, scheduleId: '', freqMhz: null, mode: '' }));
       return;
     }
     const freq = entry.freq_mhz != null ? `${formatMemoryFreq(entry.freq_mhz)} MHz` : '';
@@ -315,6 +548,8 @@ export default function NetControlPanel({ callsign = '', embedded = false }) {
       scheduleId: id,
       name: entry.name,
       frequency: [freq, entry.mode].filter(Boolean).join(' '),
+      freqMhz: entry.freq_mhz ?? null,
+      mode: entry.mode || '',
     }));
   };
 
@@ -325,12 +560,17 @@ export default function NetControlPanel({ callsign = '', embedded = false }) {
       frequency: startForm.frequency,
       ncs: startForm.ncs || callsign,
       scheduleId: startForm.scheduleId || null,
+      scriptId: scripts.lastId,
+      // Only trust the schedule's numbers while the typed text is what it filled in
+      freqMhz: startForm.scheduleId ? startForm.freqMhz : null,
+      mode: startForm.scheduleId ? startForm.mode : '',
     });
     if (!created) {
       showFlash(t('netControl.needName', { defaultValue: 'Give the net a name first' }), '#ef4444');
       return;
     }
-    setNet(created);
+    const res = commit(created);
+    if (!res.ok) return;
     setView('roster');
     setReportNet(null);
     recordEvent('net_open', {
@@ -343,7 +583,8 @@ export default function NetControlPanel({ callsign = '', embedded = false }) {
   };
 
   const submitCheckin = () => {
-    if (!net) return;
+    const cur = netRef.current;
+    if (!cur) return;
     const parsed = parseCheckin(input);
     if (!parsed) {
       if (input.trim()) showFlash(t('netControl.notCall', { defaultValue: 'Not a callsign' }), '#ef4444');
@@ -351,25 +592,27 @@ export default function NetControlPanel({ callsign = '', embedded = false }) {
     }
     const fill = localFill(parsed.call) || {};
     const flags = [...new Set([...parsed.flags, ...pendingFlags])];
-    const res = checkIn(net, {
+    const res = checkIn(cur, {
       call: parsed.call,
       flags,
       note: parsed.note,
       name: fill.name || '',
       location: fill.location || '',
     });
-    setInput('');
-    setPendingFlags([]);
     const st = res.station;
     if (res.result === 'duplicate') {
+      setInput('');
+      setPendingFlags([]);
       showFlash(
         t('netControl.flashDuplicate', { defaultValue: '{{call}} is already checked in', call: st.call }),
         '#f59e0b',
       );
       return;
     }
-    setNet(res.net);
-    const label = [flagsToText(st.flags), st.name].filter(Boolean).join(' · ');
+    const committed = commit(res.net);
+    if (!committed.ok) return; // input kept so the operator can press Enter again
+    setInput('');
+    setPendingFlags([]);
     if (res.result === 'new') {
       showFlash(
         t('netControl.flashNew', {
@@ -383,13 +626,38 @@ export default function NetControlPanel({ callsign = '', embedded = false }) {
     } else {
       showFlash(t('netControl.flashReturn', { defaultValue: '↩ {{call}} back in the net', call: st.call }));
     }
-    recordEvent('net_checkin', {
+    logFor(committed.net, 'net_checkin', {
       callsign: st.call,
-      summary: `${res.result === 'new' ? 'Checked into' : 'Re-checked into'} ${net.name} (voice)`,
-      details: label,
+      summary: `${res.result === 'new' ? 'Checked into' : 'Re-checked into'} ${cur.name} (voice)`,
+      details: [flagsToText(st.flags), st.name].filter(Boolean).join(' · '),
     });
     if (fill.name || fill.location) remember(st.call, fill);
     if (!st.name) lookupCallbook(st.call);
+  };
+
+  const togglePending = (key) =>
+    setPendingFlags((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]));
+
+  /**
+   * Undo the last action. Event-log entries it wrote stay in the log (it is
+   * a record of what happened) and get a compensating net_withdrawn entry,
+   * which the ICS forms skip.
+   */
+  const doUndo = () => {
+    const cur = netRef.current;
+    const top = peekUndo(cur);
+    if (!top) return;
+    const res = commit(undoLast(cur));
+    if (!res.ok) return;
+    for (const id of top.eventIds || []) {
+      recordEvent('net_withdrawn', {
+        callsign: top.action?.call || '',
+        summary: withdrawalSummary(top.action, cur.name),
+        details: 'Undo in Net Control',
+        ref: id,
+      });
+    }
+    showFlash(t('netControl.flashUndo', { defaultValue: 'Undone' }), '#f59e0b');
   };
 
   const onInputKeyDown = (e) => {
@@ -422,61 +690,79 @@ export default function NetControlPanel({ callsign = '', embedded = false }) {
     }
   };
 
-  const togglePending = (key) =>
-    setPendingFlags((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]));
-
-  const doUndo = () => {
-    if (!net?.undo?.length) return;
-    setNet(undoLast(net));
-    showFlash(t('netControl.flashUndo', { defaultValue: 'Undone' }), '#f59e0b');
-  };
-
   const doCheckOut = (call) => {
-    const next = checkOut(net, call);
-    if (next === net) return;
-    setNet(next);
-    recordEvent('net_checkout', { callsign: call, summary: `Checked out of ${net.name} (voice)` });
+    const cur = netRef.current;
+    const next = checkOut(cur, call);
+    if (next === cur) return;
+    const res = commit(next);
+    if (!res.ok) return;
+    logFor(res.net, 'net_checkout', { callsign: call, summary: `Checked out of ${cur.name} (voice)` });
   };
 
-  const doToggleFlag = (call, key) => setNet((prev) => (prev ? toggleFlag(prev, call, key) : prev));
+  const doToggleFlag = (call, key) => {
+    if (netRef.current) commit(toggleFlag(netRef.current, call, key));
+  };
 
+  /** Remove a mistyped call — its logged entries are withdrawn (and reinstated by Undo). */
   const doRemove = (call) => {
-    setNet((prev) => (prev ? removeStation(prev, call) : prev));
+    const cur = netRef.current;
+    const st = cur?.stations.find((s) => s.call === call);
+    if (!st) return;
+    const res = commit(removeStation(cur, call));
+    if (!res.ok) return;
+    let tagged = res.net;
+    for (const id of st.logIds || []) {
+      const ev = recordEvent('net_withdrawn', {
+        callsign: call,
+        summary: `Removed from ${cur.name} (mistyped call)`,
+        details: 'Net Control',
+        ref: id,
+      });
+      if (ev) tagged = attachEvent(tagged, ev.id);
+    }
+    commit(tagged);
     showFlash(t('netControl.flashRemoved', { defaultValue: '{{call}} removed — Undo to restore', call }), '#f59e0b');
   };
 
   const callNext = () => {
-    if (!net) return;
-    const next = nextTraffic(net);
-    if (next !== net) setNet(next);
+    const cur = netRef.current;
+    if (!cur) return;
+    const next = nextTraffic(cur);
+    commit(next);
     if (!next.calling) showFlash(t('netControl.queueEmpty', { defaultValue: 'No traffic waiting' }), '#f59e0b');
   };
 
   const doPassTraffic = (call) => {
-    const next = passTraffic(net, call);
-    if (next === net) return;
-    setNet(next);
-    const s = next.stations.find((x) => x.call === call);
-    recordEvent('net_traffic', {
+    const cur = netRef.current;
+    const next = passTraffic(cur, call);
+    if (next === cur) return;
+    const res = commit(next);
+    if (!res.ok) return;
+    const s = res.net.stations.find((x) => x.call === call);
+    logFor(res.net, 'net_traffic', {
       callsign: call,
-      summary: `Traffic passed on ${net.name}`,
+      summary: `Traffic passed on ${cur.name}`,
       details: [s?.name, s?.note].filter(Boolean).join(' · '),
     });
   };
 
   const doCloseNet = () => {
-    if (!net) return;
+    const cur = netRef.current;
+    if (!cur) return;
     if (
       !window.confirm(
-        t('netControl.confirmClose', { defaultValue: 'Close {{name}} and produce the net report?', name: net.name }),
+        t('netControl.confirmClose', { defaultValue: 'Close {{name}} and produce the net report?', name: cur.name }),
       )
     )
       return;
-    const closed = closeNet(net);
+    const closed = closeNet(cur);
+    const res = commit(null);
+    if (!res.ok) return;
     const rep = buildReport(closed);
-    const nextHistory = pushHistory(history, closed);
+    const nextHistory = pushHistory(loadHistory(), closed);
     setHistory(nextHistory);
     saveHistory(nextHistory);
+    broadcast('history');
     saveRosterSnapshot(closed, { active: false });
     for (const s of closed.stations) if (s.name || s.location) remember(s.call, s);
     recordEvent('net_close', {
@@ -485,15 +771,18 @@ export default function NetControlPanel({ callsign = '', embedded = false }) {
       details: `${formatDuration(rep.durationMs)}${closed.frequency ? ` · ${closed.frequency}` : ''}`,
       ts: closed.endTime,
     });
-    clearRunningNet();
-    setNet(null);
     setReportNet(closed);
     setView('report');
   };
 
+  const setTimesMode = (mode) => {
+    setReportTimes(mode);
+    writeLocal(REPORT_TIMES_KEY, mode);
+  };
+
   const copyReport = async () => {
     if (!report) return;
-    const text = reportToText(report);
+    const text = reportToText(report, reportOpts);
     try {
       await navigator.clipboard.writeText(text);
       showFlash(t('netControl.copied', { defaultValue: 'Report copied' }));
@@ -505,13 +794,14 @@ export default function NetControlPanel({ callsign = '', embedded = false }) {
   const downloadReportCsv = () => {
     if (!report) return;
     const day = new Date(report.startTime).toISOString().substring(0, 10);
-    downloadText(reportToCsv(report), `${fileSlug(report.name)}-${day}.csv`);
+    downloadText(reportToCsv(report, { timeZone: tz }), `${fileSlug(report.name)}-${day}.csv`);
   };
 
   const deleteHistory = (id) => {
     const next = history.filter((h) => h.id !== id);
     setHistory(next);
     saveHistory(next);
+    broadcast('history');
     if (reportNet?.id === id) setReportNet(null);
   };
 
@@ -519,24 +809,14 @@ export default function NetControlPanel({ callsign = '', embedded = false }) {
     if (!window.confirm(t('netControl.confirmClearHistory', { defaultValue: 'Delete all past nets?' }))) return;
     setHistory([]);
     saveHistory([]);
+    broadcast('history');
   };
-
-  const beginEditScript = () => {
-    setScriptDraft({ ...script });
-    setEditingScript(true);
-  };
-  const saveScriptDraft = () => {
-    setScript(scriptDraft);
-    saveScript(scriptDraft);
-    setEditingScript(false);
-  };
-  const resetScriptPart = () =>
-    setScriptDraft((d) => ({
-      ...d,
-      [scriptPart]: scriptPart === 'closing' ? DEFAULT_CLOSING : DEFAULT_PREAMBLE,
-    }));
 
   // ── Render pieces ─────────────────────────────────────────────────────
+  // In the EmComm rail the height is auto; flex:1 would collapse a scrolling
+  // list to nothing there, so lists get a max height instead.
+  const grow = embedded ? {} : { flex: 1, minHeight: 0 };
+
   const tabBtn = (id, label) => (
     <button
       key={id}
@@ -583,10 +863,41 @@ export default function NetControlPanel({ callsign = '', embedded = false }) {
     </div>
   );
 
+  const peerNote = peerCount > 0 && (
+    <div
+      style={{ color: 'var(--text-muted)', fontSize: '10px', marginBottom: '4px' }}
+      title={t('netControl.peersTitle', {
+        defaultValue: 'Changes made in any of them show up in all of them.',
+      })}
+    >
+      ⧉{' '}
+      {t('netControl.peers', {
+        defaultValue: 'Also open in another tab or panel ({{count}})',
+        count: peerCount,
+      })}
+    </div>
+  );
+
   const flashLine = flash && (
     <div style={{ color: flash.color, fontSize: '11px', fontWeight: 600, minHeight: '14px', marginTop: '3px' }}>
       {flash.text}
     </div>
+  );
+
+  const templateSelect = (
+    <select
+      style={{ ...inputStyle, width: 'auto', flex: 1 }}
+      value={template.id}
+      onChange={(e) => chooseTemplate(e.target.value)}
+      aria-label={t('netControl.scriptTemplate', { defaultValue: 'Script template' })}
+      title={t('netControl.scriptTemplate', { defaultValue: 'Script template' })}
+    >
+      {scripts.templates.map((tpl) => (
+        <option key={tpl.id} value={tpl.id}>
+          {tpl.name}
+        </option>
+      ))}
+    </select>
   );
 
   const renderStart = () => (
@@ -636,6 +947,10 @@ export default function NetControlPanel({ callsign = '', embedded = false }) {
         placeholder={t('netControl.ncsPlaceholder', { defaultValue: 'Net control callsign' })}
         aria-label={t('netControl.ncsPlaceholder', { defaultValue: 'Net control callsign' })}
       />
+      <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+        <span style={{ color: 'var(--text-muted)' }}>{t('netControl.script', { defaultValue: 'Script' })}</span>
+        {templateSelect}
+      </div>
       <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
         <button type="submit" style={{ ...primaryBtn, padding: '4px 12px', fontSize: '11px' }}>
           ▶ {t('netControl.start', { defaultValue: 'Start net' })}
@@ -851,7 +1166,7 @@ export default function NetControlPanel({ callsign = '', embedded = false }) {
               >
                 <span
                   style={{ color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontSize: '10px' }}
-                  title="UTC"
+                  title={`UTC · ${fmtLocalDateTime(s.checkinTime, tz)}`}
                 >
                   {fmtUtcHHMM(s.checkinTime)}
                 </span>
@@ -933,98 +1248,141 @@ export default function NetControlPanel({ callsign = '', embedded = false }) {
     </div>
   );
 
-  const renderScript = () => (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', ...grow }}>
-      <div style={{ display: 'flex', gap: '4px', alignItems: 'center', flexWrap: 'wrap' }}>
-        {['preamble', 'closing'].map((part) => (
-          <button
-            key={part}
-            type="button"
-            onClick={() => setScriptPart(part)}
-            style={{
-              ...btnStyle,
-              borderColor: scriptPart === part ? ACCENT : 'var(--border-color)',
-              color: scriptPart === part ? ACCENT : 'var(--text-secondary)',
-            }}
-          >
-            {part === 'closing'
-              ? t('netControl.closing', { defaultValue: 'Closing' })
-              : t('netControl.preamble', { defaultValue: 'Preamble' })}
-          </button>
-        ))}
-        <span style={{ flex: 1 }} />
-        {editingScript ? (
-          <>
-            <button type="button" style={btnStyle} onClick={resetScriptPart}>
-              {t('netControl.resetDefault', { defaultValue: 'Default' })}
-            </button>
-            <button type="button" style={btnStyle} onClick={() => setEditingScript(false)}>
-              {t('netControl.cancel', { defaultValue: 'Cancel' })}
-            </button>
-            <button type="button" style={primaryBtn} onClick={saveScriptDraft}>
-              {t('netControl.save', { defaultValue: 'Save' })}
-            </button>
-          </>
-        ) : (
-          <>
-            <button type="button" style={btnStyle} onClick={beginEditScript}>
-              {t('netControl.edit', { defaultValue: 'Edit' })}
-            </button>
+  const partLabel = (part) =>
+    part === 'closing'
+      ? t('netControl.closing', { defaultValue: 'Closing' })
+      : t('netControl.preamble', { defaultValue: 'Preamble' });
+
+  const renderScript = () => {
+    const editing = !!scriptDraft;
+    const draftTpl = editing ? getTemplate(scripts.templates, scriptDraft.id) : null;
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', ...grow }}>
+        <div style={{ display: 'flex', gap: '4px', alignItems: 'center', flexWrap: 'wrap' }}>
+          {editing ? (
+            <input
+              style={{ ...inputStyle, flex: 1, width: 'auto' }}
+              value={scriptDraft.name}
+              maxLength={60}
+              onChange={(e) => setScriptDraft((d) => ({ ...d, name: e.target.value }))}
+              aria-label={t('netControl.scriptName', { defaultValue: 'Script name' })}
+              placeholder={t('netControl.scriptName', { defaultValue: 'Script name' })}
+            />
+          ) : (
+            templateSelect
+          )}
+          {['preamble', 'closing'].map((part) => (
             <button
+              key={part}
               type="button"
-              style={primaryBtn}
-              onClick={() => {
-                setNow(Date.now());
-                setReadAloud(true);
+              onClick={() => setScriptPart(part)}
+              style={{
+                ...btnStyle,
+                borderColor: scriptPart === part ? ACCENT : 'var(--border-color)',
+                color: scriptPart === part ? ACCENT : 'var(--text-secondary)',
               }}
             >
-              ⛶ {t('netControl.readAloud', { defaultValue: 'Read aloud' })}
+              {partLabel(part)}
             </button>
+          ))}
+        </div>
+        <div style={{ display: 'flex', gap: '4px', alignItems: 'center', flexWrap: 'wrap' }}>
+          {editing ? (
+            <>
+              {builtinDefault(draftTpl) && (
+                <button type="button" style={btnStyle} onClick={resetScriptPart}>
+                  {t('netControl.resetDefault', { defaultValue: 'Default' })}
+                </button>
+              )}
+              <span style={{ flex: 1 }} />
+              <button type="button" style={btnStyle} onClick={() => setScriptDraft(null)}>
+                {t('netControl.cancel', { defaultValue: 'Cancel' })}
+              </button>
+              <button type="button" style={primaryBtn} onClick={saveScriptDraft}>
+                {t('netControl.save', { defaultValue: 'Save' })}
+              </button>
+            </>
+          ) : (
+            <>
+              <button type="button" style={btnStyle} onClick={() => beginEditScript()}>
+                {t('netControl.edit', { defaultValue: 'Edit' })}
+              </button>
+              <button type="button" style={btnStyle} onClick={newTemplate}>
+                + {t('netControl.newScript', { defaultValue: 'New' })}
+              </button>
+              <button type="button" style={btnStyle} onClick={copyTemplate}>
+                {t('netControl.copyScript', { defaultValue: 'Copy' })}
+              </button>
+              <button
+                type="button"
+                style={{ ...btnStyle, opacity: scripts.templates.length > 1 ? 1 : 0.4 }}
+                disabled={scripts.templates.length <= 1}
+                onClick={removeTemplate}
+              >
+                {t('netControl.deleteScript', { defaultValue: 'Delete' })}
+              </button>
+              <span style={{ flex: 1 }} />
+              <button
+                type="button"
+                style={primaryBtn}
+                onClick={() => {
+                  setNow(Date.now());
+                  setReadAloud(true);
+                }}
+              >
+                ⛶ {t('netControl.readAloud', { defaultValue: 'Read aloud' })}
+              </button>
+            </>
+          )}
+        </div>
+        {editing ? (
+          <>
+            <textarea
+              style={{
+                ...inputStyle,
+                flex: 1,
+                minHeight: '220px',
+                resize: 'vertical',
+                fontFamily: 'inherit',
+                fontSize: '12px',
+                lineHeight: 1.5,
+              }}
+              value={scriptDraft[scriptPart]}
+              onChange={(e) => setScriptDraft((d) => ({ ...d, [scriptPart]: e.target.value }))}
+              aria-label={t('netControl.scriptLabel', { defaultValue: 'Net script' })}
+            />
+            <div style={{ color: 'var(--text-muted)', fontSize: '10px' }}>
+              {t('netControl.placeholders', {
+                defaultValue: 'Placeholders: {net} {ncs} {freq} {date} {time} {count}',
+              })}
+            </div>
           </>
+        ) : (
+          <div
+            style={{
+              whiteSpace: 'pre-wrap',
+              fontSize: '14px',
+              lineHeight: 1.6,
+              color: 'var(--text-primary)',
+              overflowY: 'auto',
+              ...grow,
+              maxHeight: embedded ? '360px' : undefined,
+            }}
+          >
+            {scriptText || (
+              <span style={{ color: 'var(--text-muted)', fontSize: '11px' }}>
+                {t('netControl.emptyScript', { defaultValue: 'This part of the script is empty — Edit to write it.' })}
+              </span>
+            )}
+          </div>
         )}
       </div>
-      {editingScript ? (
-        <>
-          <textarea
-            style={{
-              ...inputStyle,
-              flex: 1,
-              minHeight: '220px',
-              resize: 'vertical',
-              fontFamily: 'inherit',
-              fontSize: '12px',
-              lineHeight: 1.5,
-            }}
-            value={scriptDraft?.[scriptPart] ?? ''}
-            onChange={(e) => setScriptDraft((d) => ({ ...d, [scriptPart]: e.target.value }))}
-            aria-label={t('netControl.scriptLabel', { defaultValue: 'Net script' })}
-          />
-          <div style={{ color: 'var(--text-muted)', fontSize: '10px' }}>
-            {t('netControl.placeholders', {
-              defaultValue: 'Placeholders: {net} {ncs} {freq} {date} {time} {count}',
-            })}
-          </div>
-        </>
-      ) : (
-        <div
-          style={{
-            whiteSpace: 'pre-wrap',
-            fontSize: '14px',
-            lineHeight: 1.6,
-            color: 'var(--text-primary)',
-            overflowY: 'auto',
-            ...grow,
-            maxHeight: embedded ? '360px' : undefined,
-          }}
-        >
-          {scriptText}
-        </div>
-      )}
-    </div>
-  );
+    );
+  };
 
   const renderReport = () => {
     if (!report) return null;
+    const both = reportTimes === 'both';
     const stat = (label, value) => (
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px' }}>
         <span style={{ color: 'var(--text-muted)' }}>{label}</span>
@@ -1043,6 +1401,11 @@ export default function NetControlPanel({ callsign = '', embedded = false }) {
             t('netControl.rTimes', { defaultValue: 'Opened – closed (UTC)' }),
             `${fmtUtcHHMM(report.startTime)} – ${fmtUtcHHMM(report.endTime)}`,
           )}
+          {both &&
+            stat(
+              t('netControl.rTimesLocal', { defaultValue: 'Opened – closed (local)' }),
+              `${fmtLocalDateTime(report.startTime, tz)} – ${fmtLocalDateTime(report.endTime, tz).slice(11)}`,
+            )}
           {stat(t('netControl.rDuration', { defaultValue: 'Duration' }), formatDuration(report.durationMs))}
           {stat(t('netControl.rCheckins', { defaultValue: 'Check-ins' }), report.totalCheckins)}
           {stat(t('netControl.rUnique', { defaultValue: 'Unique stations' }), report.uniqueStations)}
@@ -1051,14 +1414,14 @@ export default function NetControlPanel({ callsign = '', embedded = false }) {
             `${report.trafficCount} / ${report.trafficPassed}`,
           )}
         </div>
-        <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', alignItems: 'center' }}>
           <button type="button" style={primaryBtn} onClick={copyReport}>
             {t('netControl.copyText', { defaultValue: 'Copy text' })}
           </button>
           <button type="button" style={btnStyle} onClick={downloadReportCsv}>
             CSV
           </button>
-          <button type="button" style={btnStyle} onClick={() => printHtml(reportToPrintHtml(report))}>
+          <button type="button" style={btnStyle} onClick={() => printHtml(reportToPrintHtml(report, reportOpts))}>
             {t('netControl.print', { defaultValue: 'Print' })}
           </button>
           {!running && (
@@ -1066,6 +1429,19 @@ export default function NetControlPanel({ callsign = '', embedded = false }) {
               {t('netControl.newNet', { defaultValue: 'New net' })}
             </button>
           )}
+          <span style={{ flex: 1 }} />
+          <select
+            style={{ ...inputStyle, width: 'auto', fontSize: '10px', padding: '1px 4px' }}
+            value={reportTimes}
+            onChange={(e) => setTimesMode(e.target.value)}
+            aria-label={t('netControl.reportTimes', { defaultValue: 'Times in the report' })}
+            title={t('netControl.reportTimesTitle', {
+              defaultValue: 'Times shown in the copied text and the printed report (the CSV always has both)',
+            })}
+          >
+            <option value="utc">{t('netControl.timesUtc', { defaultValue: 'UTC' })}</option>
+            <option value="both">{t('netControl.timesBoth', { defaultValue: 'UTC + local' })}</option>
+          </select>
         </div>
         {flashLine}
         <div style={{ overflowY: 'auto', ...grow, maxHeight: embedded ? '300px' : undefined }}>
@@ -1076,6 +1452,7 @@ export default function NetControlPanel({ callsign = '', embedded = false }) {
             >
               <span style={{ color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontSize: '10px' }}>
                 {fmtUtcHHMM(s.checkinTime)}
+                {both ? ` ${fmtLocalDateTime(s.checkinTime, tz).slice(11, 16)}` : ''}
               </span>
               <span
                 style={{
@@ -1113,7 +1490,10 @@ export default function NetControlPanel({ callsign = '', embedded = false }) {
           style={{ ...btnStyle, opacity: history.length ? 1 : 0.4 }}
           disabled={!history.length}
           onClick={() =>
-            downloadText(historyToCsv(history), `net-history-${new Date().toISOString().substring(0, 10)}.csv`)
+            downloadText(
+              historyToCsv(history, { timeZone: tz }),
+              `net-history-${new Date().toISOString().substring(0, 10)}.csv`,
+            )
           }
         >
           {t('netControl.exportAll', { defaultValue: 'Export all (CSV)' })}
@@ -1166,7 +1546,7 @@ export default function NetControlPanel({ callsign = '', embedded = false }) {
                   {h.name}
                 </div>
                 <div style={{ color: 'var(--text-muted)', fontSize: '10px' }}>
-                  {fmtDateTime(h.startTime)} · {h.stations.length}{' '}
+                  {fmtDateTime(h.startTime, tz)} · {h.stations.length}{' '}
                   {t('netControl.stations', { defaultValue: 'stations' })} ·{' '}
                   {formatDuration((h.endTime ?? h.startTime) - h.startTime)}
                 </div>
@@ -1210,6 +1590,7 @@ export default function NetControlPanel({ callsign = '', embedded = false }) {
       }}
     >
       {header}
+      {peerNote}
       {body}
       {readAloud && (
         <div
@@ -1230,10 +1611,8 @@ export default function NetControlPanel({ callsign = '', embedded = false }) {
         >
           <div style={{ maxWidth: '900px', margin: '0 auto' }}>
             <div style={{ color: ACCENT, fontSize: '14px', fontWeight: 700, marginBottom: '16px' }}>
-              {scriptPart === 'closing'
-                ? t('netControl.closing', { defaultValue: 'Closing' })
-                : t('netControl.preamble', { defaultValue: 'Preamble' })}{' '}
-              · {t('netControl.escToClose', { defaultValue: 'click or Esc to close' })}
+              {template.name} · {partLabel(scriptPart)} ·{' '}
+              {t('netControl.escToClose', { defaultValue: 'click or Esc to close' })}
             </div>
             <div style={{ whiteSpace: 'pre-wrap', fontSize: 'clamp(20px, 2.6vw, 32px)', lineHeight: 1.55 }}>
               {scriptText}

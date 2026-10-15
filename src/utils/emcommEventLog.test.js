@@ -15,6 +15,9 @@ import {
   diffAdded,
   buildPrintHtml,
   _resetForTests,
+  withdrawnEventIds,
+  activeEvents,
+  reloadFromStorage,
   MSG_SEQ_KEY,
   messageNumbers,
 } from './emcommEventLog.js';
@@ -207,6 +210,34 @@ describe('buildPrintHtml', () => {
   });
 });
 
+describe('withdrawn entries', () => {
+  it('records a ref and resolves withdrawals in order, including reinstatement', () => {
+    const a = recordEvent('net_checkin', { callsign: 'W1AW', ts: 1 });
+    const w = recordEvent('net_withdrawn', { callsign: 'W1AW', ref: a.id, ts: 2 });
+    expect(w.ref).toBe(a.id);
+    expect([...withdrawnEventIds(getEvents())]).toEqual([a.id]);
+    expect(activeEvents(getEvents())).toEqual([]);
+    recordEvent('net_withdrawn', { callsign: 'W1AW', ref: w.id, ts: 3 });
+    expect(withdrawnEventIds(getEvents()).size).toBe(0);
+    expect(activeEvents(getEvents()).map((e) => e.id)).toEqual([a.id]);
+    expect(activeEvents(null)).toEqual([]);
+  });
+  it('reloads from storage when another tab wrote the log', () => {
+    recordEvent('net_checkin', { callsign: 'W1AW' });
+    const other = [
+      ...JSON.parse(localStorage.getItem(STORAGE_KEY)),
+      { id: 'x', ts: 5, type: 'net_checkin', callsign: 'K0CJH' },
+    ];
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(other));
+    window.dispatchEvent(new StorageEvent('storage', { key: STORAGE_KEY }));
+    expect(getEvents()).toHaveLength(2);
+    recordEvent('net_checkout', { callsign: 'K0CJH' });
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY))).toHaveLength(3);
+    reloadFromStorage();
+    expect(getEvents()).toHaveLength(3);
+  });
+});
+
 describe('message numbers', () => {
   it('numbers message traffic sequentially at record time and persists the sequence', () => {
     const a = recordEvent('aprs_msg_sent', { callsign: 'K0CJH', summary: 'Message to N0EOC' });
@@ -247,5 +278,31 @@ describe('message numbers', () => {
     recordEvent('aprs_msg_sent', { summary: 'Message to X' });
     clearEvents();
     expect(recordEvent('aprs_msg_sent', { summary: 'Message to X' }).msgNo).toBe(1);
+  });
+});
+
+describe('message numbers and withdrawals together', () => {
+  it('withdrawal records take no number; a withdrawn message keeps its number and later ones do not shift', () => {
+    const a = recordEvent('net_checkin', { callsign: 'W1AW' });
+    const b = recordEvent('net_checkin', { callsign: 'K0CJH' });
+    const w = recordEvent('net_withdrawn', { callsign: 'K0CJH', ref: b.id });
+    const c = recordEvent('net_checkin', { callsign: 'KE8PLM' });
+    expect([a.msgNo, b.msgNo, c.msgNo]).toEqual([1, 2, 3]);
+    expect(w.msgNo).toBeUndefined();
+    expect(w.ref).toBe(b.id);
+    const nums = messageNumbers(getEvents());
+    expect(nums.has(w.id)).toBe(false);
+    expect(activeEvents(getEvents()).map((e) => nums.get(e.id))).toEqual([1, 3]);
+  });
+  it("a reload after another tab recorded continues that tab's numbering", () => {
+    recordEvent('net_checkin', { callsign: 'W1AW' }); // #1 here
+    const other = [
+      ...JSON.parse(localStorage.getItem(STORAGE_KEY)),
+      { id: 'x', ts: Date.now(), type: 'net_checkin', callsign: 'K0CJH', msgNo: 2 },
+    ];
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(other));
+    localStorage.setItem(MSG_SEQ_KEY, '2');
+    window.dispatchEvent(new StorageEvent('storage', { key: STORAGE_KEY }));
+    expect(recordEvent('net_checkin', { callsign: 'KE8PLM' }).msgNo).toBe(3);
   });
 });
