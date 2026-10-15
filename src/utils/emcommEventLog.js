@@ -20,6 +20,9 @@ export const MAX_EVENTS = 2000;
 export const EVENT_TYPE_META = {
   net_checkin: { label: 'Net Check-In', color: '#22c55e' },
   net_checkout: { label: 'Net Check-Out', color: '#f59e0b' },
+  net_open: { label: 'Net Opened', color: '#14b8a6' },
+  net_close: { label: 'Net Closed', color: '#14b8a6' },
+  net_traffic: { label: 'Traffic Passed', color: '#ef4444' },
   aprs_msg_sent: { label: 'APRS Msg Sent', color: '#22d3ee' },
   aprs_msg_rx: { label: 'APRS Msg Rcvd', color: '#3b82f6' },
   nws_alert: { label: 'NWS Alert', color: '#dc2626' },
