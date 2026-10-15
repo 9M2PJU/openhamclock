@@ -263,8 +263,21 @@ const DEFAULT_CONFIG = {
     // Lightning relay: invert lightningOut so the relay is energised to keep
     // the antenna connected (power loss / crash / bridge stop → disconnected)
     lightningFailSafe: false,
-    // Keep the lightning relay engaged when the browser stops reporting
+    // A display that asked for the relay and then went quiet keeps its claim
+    // for its all-clear time (sent with each report)
     lightningHoldWhenStale: true,
+    // The guard running inside the bridge — protects with no browser open
+    lightningHeadless: {
+      enabled: false,
+      lat: '',
+      lon: '',
+      warnKm: 50,
+      alarmKm: 25,
+      allClearMin: 30,
+      minStrikes: 1,
+      hysteresisPct: 20,
+      relayOn: 'alarm',
+    },
     verbose: false,
   },
   // Ambient light → display brightness (LTR-329 / HTTP lux / mock) + backlight control
@@ -370,6 +383,10 @@ function loadConfig() {
           ...DEFAULT_CONFIG.gpio,
           ...(raw.gpio || {}),
           pins: { ...DEFAULT_CONFIG.gpio.pins, ...((raw.gpio || {}).pins || {}) },
+          lightningHeadless: {
+            ...DEFAULT_CONFIG.gpio.lightningHeadless,
+            ...((raw.gpio || {}).lightningHeadless || {}),
+          },
         },
         brightness: {
           ...DEFAULT_CONFIG.brightness,

@@ -1099,17 +1099,24 @@ function buildSetupHtml(version, firstRunToken = null) {
       { key: 'gpio', name: 'Raspberry Pi GPIO', maturity: 'alpha', desc: 'ON-AIR / alarm / countdown / satellite / lightning-relay lines and PTT, countdown-restart and alarm-silence buttons — classic shack-display header pinout, no native modules (gpiod CLI or sysfs)', fields: [
         { id: 'backend', label: 'Backend', type: 'select', options: ['auto', 'gpiod', 'sysfs', 'mock'], default: 'auto' },
         { id: 'chip', label: 'gpiochip', type: 'text', default: 'gpiochip0' },
-        { id: 'pins.pttIn', label: 'PTT / ON-AIR input (BCM)', type: 'number', default: 16 },
-        { id: 'pins.countdownResetIn', label: 'Countdown button (BCM)', type: 'number', default: 26 },
-        { id: 'pins.alarmSilenceIn', label: 'Alarm silence button (BCM)', type: 'number', default: 5 },
-        { id: 'pins.onAirOut', label: 'ON-AIR LED (BCM)', type: 'number', default: 21 },
-        { id: 'pins.alarmOut', label: 'Alarm output (BCM)', type: 'number', default: 6 },
-        { id: 'pins.countdownGreenOut', label: 'Countdown green (BCM)', type: 'number', default: 13 },
-        { id: 'pins.countdownRedOut', label: 'Countdown red (BCM)', type: 'number', default: 19 },
-        { id: 'pins.satOut', label: 'Satellite output (BCM)', type: 'number', default: 20 },
-        { id: 'pins.lightningOut', label: 'Lightning relay output (BCM, -1 = off; suggested 25)', type: 'number', default: -1 },
+        { id: 'pins.pttIn', label: 'PTT / ON-AIR input (BCM or Pnn header pin)', type: 'text', default: '16' },
+        { id: 'pins.countdownResetIn', label: 'Countdown button (BCM or Pnn header pin)', type: 'text', default: '26' },
+        { id: 'pins.alarmSilenceIn', label: 'Alarm silence button (BCM or Pnn header pin)', type: 'text', default: '5' },
+        { id: 'pins.onAirOut', label: 'ON-AIR LED (BCM or Pnn header pin)', type: 'text', default: '21' },
+        { id: 'pins.alarmOut', label: 'Alarm output (BCM or Pnn header pin)', type: 'text', default: '6' },
+        { id: 'pins.countdownGreenOut', label: 'Countdown green (BCM or Pnn header pin)', type: 'text', default: '13' },
+        { id: 'pins.countdownRedOut', label: 'Countdown red (BCM or Pnn header pin)', type: 'text', default: '19' },
+        { id: 'pins.satOut', label: 'Satellite output (BCM or Pnn header pin)', type: 'text', default: '20' },
+        { id: 'pins.lightningOut', label: 'Lightning relay output (BCM or Pnn header pin, -1 = off; suggested 25 / P22)', type: 'text', default: '-1' },
         { id: 'lightningFailSafe', label: 'Lightning relay fail-safe (energise = antenna connected)', type: 'checkbox', default: false },
-        { id: 'lightningHoldWhenStale', label: 'Hold lightning relay when the browser goes quiet', type: 'checkbox', default: true },
+        { id: 'lightningHoldWhenStale', label: 'Hold lightning relay for the all-clear time when a display goes quiet', type: 'checkbox', default: true },
+        { id: 'lightningHeadless.enabled', label: 'Headless lightning guard (works with no browser open)', type: 'checkbox', default: false },
+        { id: 'lightningHeadless.lat', label: 'Headless guard latitude', type: 'text', default: '' },
+        { id: 'lightningHeadless.lon', label: 'Headless guard longitude', type: 'text', default: '' },
+        { id: 'lightningHeadless.warnKm', label: 'Headless guard warning radius (km)', type: 'number', default: 50 },
+        { id: 'lightningHeadless.alarmKm', label: 'Headless guard alarm radius (km)', type: 'number', default: 25 },
+        { id: 'lightningHeadless.allClearMin', label: 'Headless guard all-clear (min)', type: 'number', default: 30 },
+        { id: 'lightningHeadless.relayOn', label: 'Headless guard engages relay at', type: 'select', options: ['alarm', 'warn'], default: 'alarm' },
         { id: 'activeLow', label: 'Inputs active low (switch to ground)', type: 'checkbox', default: true },
         { id: 'outputActiveLow', label: 'Outputs active low', type: 'checkbox', default: false },
         { id: 'debounceMs', label: 'Debounce (ms)', type: 'number', default: 50 },
@@ -2409,6 +2416,17 @@ function createServer(registry, version) {
         return res.status(400).json({ success: false, error: 'Invalid port value for gps.gpsdPort' });
       }
     }
+    if (newConfig.gpio && newConfig.gpio.pins && typeof newConfig.gpio.pins === 'object') {
+      const { parsePin } = require('../lib/gpio-logic');
+      for (const [name, v] of Object.entries(newConfig.gpio.pins)) {
+        const off = v === -1 || v === '-1' || v === '' || v === null;
+        if (!off && parsePin(v) == null) {
+          return res
+            .status(400)
+            .json({ success: false, error: `gpio.pins.${name}: use a BCM number, Pnn (header pin) or -1` });
+        }
+      }
+    }
     if (newConfig.gpio && config.gpio.chip && !/^gpiochip\d{1,2}$/.test(String(config.gpio.chip))) {
       return res.status(400).json({ success: false, error: 'gpio.chip must look like gpiochip0' });
     }
@@ -2705,6 +2723,14 @@ function createServer(registry, version) {
       // Lightning guard (optional — absent when the browser does not drive the relay)
       ...(typeof body.lightningRelay === 'boolean' ? { lightningRelay: body.lightningRelay } : {}),
       ...(['clear', 'warn', 'alarm'].includes(body.lightning) ? { lightning: body.lightning } : {}),
+      ...(Number.isFinite(body.lightningAllClearMin)
+        ? { lightningAllClearMin: Math.min(240, Math.max(1, Math.round(body.lightningAllClearMin))) }
+        : {}),
+      ...(['auto', 'on', 'off'].includes(body.lightningOverride) ? { lightningOverride: body.lightningOverride } : {}),
+      // Stable per-display id so several displays can each hold a claim on the relay
+      ...(typeof body.displayId === 'string' && /^[A-Za-z0-9_-]{1,40}$/.test(body.displayId)
+        ? { displayId: body.displayId }
+        : {}),
       receivedAt: Date.now(),
     };
     lastIndicators = clean;
