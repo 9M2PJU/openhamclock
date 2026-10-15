@@ -17,65 +17,15 @@
  * event) so the whole chain can be verified without a storm.
  */
 
-// Blitzortung WebSocket servers (ws3–6/9/10 had certificate problems, 2026-02)
-export const BLITZORTUNG_SERVERS = [
-  'wss://ws8.blitzortung.org',
-  'wss://ws7.blitzortung.org',
-  'wss://ws2.blitzortung.org',
-  'wss://ws1.blitzortung.org',
-];
-const WS_KEY = 111; // Blitzortung standard key
+import { BLITZORTUNG_KEY, BLITZORTUNG_SERVERS, lzwDecode, parseStrikeMessage } from './lightningGuard.js';
+
+// Parsing and the server list live in the shared guard core (also used by
+// Rig Bridge's headless guard); re-exported here for existing imports.
+export { BLITZORTUNG_SERVERS, lzwDecode, parseStrikeMessage };
+const WS_KEY = BLITZORTUNG_KEY;
 const FLUSH_MS = 1000;
 const RECONNECT_MS = 5000;
 const ATTEMPTS_PER_SERVER = 3;
-
-/** LZW decompression — Blitzortung compresses every WebSocket message. */
-export function lzwDecode(compressed) {
-  const dict = {};
-  const data = compressed.split('');
-  let currChar = data[0];
-  let oldPhrase = currChar;
-  const out = [currChar];
-  let code = 256;
-  let phrase;
-
-  for (let i = 1; i < data.length; i++) {
-    const currCode = data[i].charCodeAt(0);
-    if (currCode < 256) {
-      phrase = data[i];
-    } else {
-      phrase = dict[currCode] ? dict[currCode] : oldPhrase + currChar;
-    }
-    out.push(phrase);
-    currChar = phrase.charAt(0);
-    dict[code] = oldPhrase + currChar;
-    code++;
-    oldPhrase = phrase;
-  }
-
-  return out.join('');
-}
-
-/**
- * Parse one decoded Blitzortung message
- * ({ time (ns), lat, lon, alt, pol, mds }) into a strike, or null.
- */
-export function parseStrikeMessage(data) {
-  if (!data || !data.time || data.lat == null || data.lon == null) return null;
-  const lat = parseFloat(data.lat);
-  const lon = parseFloat(data.lon);
-  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
-  return {
-    id: `strike_${data.time}_${data.lat}_${data.lon}`,
-    lat,
-    lon,
-    timestamp: parseInt(data.time / 1000000, 10),
-    intensity: Math.abs(data.pol || 0),
-    polarity: (data.pol || 0) >= 0 ? 'positive' : 'negative',
-    altitude: data.alt || 0,
-    signal: data.mds || 0,
-  };
-}
 
 // ── Shared socket ───────────────────────────────────────────────────────────
 const subscribers = new Set();

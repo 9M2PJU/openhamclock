@@ -19,6 +19,12 @@
  * Hysteresis: a level is entered at its radius but held by strikes out to
  * radius × (1 + hysteresisPct/100), so a storm sitting on the boundary does
  * not flap the relay. Everything here is deterministic — `now` is passed in.
+ *
+ * SHARED WITH RIG BRIDGE: this file is the single source of the guard logic.
+ * `npm run lightning:sync` generates rig-bridge/lib/lightning-guard-logic.js
+ * (CommonJS) from it for the bridge's headless guard; a parity test fails
+ * when the generated copy is stale. Keep this file free of imports and of
+ * browser/Node-only APIs.
  */
 
 export const LEVELS = ['clear', 'warn', 'alarm'];
@@ -36,6 +42,9 @@ export const GUARD_DEFAULTS = {
   allClearMin: 30,
   minStrikes: 1,
   hysteresisPct: 20,
+  // Re-alert during an alarm when the nearest strike halves its distance or
+  // comes inside CLOSER_KM (throttled to one per REALERT_MIN_GAP_MS)
+  repeatCloser: true,
   tone: 'two-tone',
   channels: { tone: true, speech: true, notify: true, push: false },
   // relay.on: 'alarm' engages at the alarm radius, 'warn' already at the warning radius
@@ -61,7 +70,8 @@ export function normalizeGuardSettings(raw) {
     alarmKm,
     allClearMin: Math.round(clampNum(r.allClearMin, 1, 240, GUARD_DEFAULTS.allClearMin)),
     minStrikes: Math.round(clampNum(r.minStrikes, 1, 50, GUARD_DEFAULTS.minStrikes)),
-    hysteresisPct: clampNum(r.hysteresisPct, 0, 100, GUARD_DEFAULTS.hysteresisPct),
+    hysteresisPct: Math.round(clampNum(r.hysteresisPct, 0, 100, GUARD_DEFAULTS.hysteresisPct)),
+    repeatCloser: r.repeatCloser !== false,
     tone: typeof r.tone === 'string' && r.tone ? r.tone : GUARD_DEFAULTS.tone,
     channels: {
       tone: ch.tone !== false,
@@ -167,6 +177,7 @@ export function addStrikes(list, batch, de, settings, now) {
  *   nearest: object|null,      closest strike inside the warning exit radius within the all-clear window
  *   last: object|null,         most recent such strike
  *   warnCount: number, alarmCount: number,   strikes inside each radius in the trigger window
+ *                              (10 min, or the all-clear time when shorter — windowMin)
  *   warnRate: number, alarmRate: number,     the same per minute
  *   clearAt: number|null       when the current level lapses if nothing else strikes
  * }}
@@ -174,6 +185,9 @@ export function addStrikes(list, batch, de, settings, now) {
 export function evaluateGuard(prevLevel, strikes, settings, now) {
   const { warnExitKm, alarmExitKm } = exitRadii(settings);
   const allClearMs = settings.allClearMin * 60000;
+  // Escalation looks back at most the all-clear time: with a 5-minute
+  // all-clear a 7-minute-old strike must not raise the alarm again.
+  const triggerMs = Math.min(TRIGGER_WINDOW_MS, allClearMs);
   let warnCount = 0;
   let alarmCount = 0;
   let lastInWarnExit = null;
@@ -183,7 +197,7 @@ export function evaluateGuard(prevLevel, strikes, settings, now) {
   for (const s of strikes || []) {
     const age = now - s.timestamp;
     if (age < -60000) continue; // ignore strikes from a clock far in the future
-    if (age <= TRIGGER_WINDOW_MS) {
+    if (age <= triggerMs) {
       if (s.distanceKm <= settings.warnKm) warnCount++;
       if (s.distanceKm <= settings.alarmKm) alarmCount++;
     }
@@ -211,7 +225,7 @@ export function evaluateGuard(prevLevel, strikes, settings, now) {
   if (level === 'alarm' && lastInAlarmExit != null) clearAt = lastInAlarmExit + allClearMs;
   else if (level === 'warn' && lastInWarnExit != null) clearAt = lastInWarnExit + allClearMs;
 
-  const windowMin = TRIGGER_WINDOW_MS / 60000;
+  const windowMin = triggerMs / 60000;
   return {
     level,
     nearest,
@@ -220,6 +234,7 @@ export function evaluateGuard(prevLevel, strikes, settings, now) {
     alarmCount,
     warnRate: warnCount / windowMin,
     alarmRate: alarmCount / windowMin,
+    windowMin,
     clearAt,
   };
 }
@@ -254,6 +269,141 @@ export function relayDemand({ settings, level, override = 'auto' }) {
  */
 export function nextOverride(override, level) {
   return override === 'off' && level === 'clear' ? 'auto' : override;
+}
+
+// ── Repeat alerts ───────────────────────────────────────────────────────────
+/** Crossing inside this distance during an alarm always counts as "closer". */
+export const CLOSER_KM = 10;
+/** At most one "closer" re-alert per this interval. */
+export const REALERT_MIN_GAP_MS = 2 * 60 * 1000;
+
+/**
+ * Should an ongoing alarm alert again because lightning came closer?
+ * True when the nearest strike is at most half the distance last alerted,
+ * or has just come inside CLOSER_KM — and the last alert is at least
+ * REALERT_MIN_GAP_MS old.
+ */
+export function shouldRealert({ lastKm, lastAt, nearestKm, now, minGapMs = REALERT_MIN_GAP_MS }) {
+  if (!Number.isFinite(lastKm) || !Number.isFinite(nearestKm)) return false;
+  if (Number.isFinite(lastAt) && now - lastAt < minGapMs) return false;
+  if (nearestKm <= lastKm / 2) return true;
+  return lastKm > CLOSER_KM && nearestKm <= CLOSER_KM;
+}
+
+// ── Stateful runner (browser hook and Rig Bridge headless guard) ────────────
+
+/**
+ * Small stateful wrapper: strike list + level memory + repeat-alert memory.
+ * `step(batch, de, now)` returns { status, prev, transition, closer }:
+ *   transition — 'escalate' | 'deescalate' | null
+ *   closer     — true when an alarm should re-alert (see shouldRealert)
+ */
+export class GuardRunner {
+  constructor(settings) {
+    this.settings = normalizeGuardSettings(settings);
+    this.strikes = [];
+    this.level = 'clear';
+    this.since = null;
+    this.lastAlertKm = null;
+    this.lastAlertAt = null;
+  }
+
+  setSettings(settings) {
+    this.settings = normalizeGuardSettings(settings);
+  }
+
+  reset() {
+    this.strikes = [];
+    this.level = 'clear';
+    this.since = null;
+    this.lastAlertKm = null;
+    this.lastAlertAt = null;
+  }
+
+  step(batch, de, now) {
+    const s = this.settings;
+    this.strikes = addStrikes(this.strikes, batch || [], de, s, now);
+    const prev = this.level;
+    const status = evaluateGuard(prev, this.strikes, s, now);
+    if (status.level !== prev || this.since == null) this.since = now;
+    this.level = status.level;
+    const transition = transitionKind(prev, status.level);
+    const nearestKm = status.nearest ? status.nearest.distanceKm : null;
+    let closer = false;
+    if (transition) {
+      this.lastAlertKm = status.level === 'clear' ? null : nearestKm;
+      this.lastAlertAt = now;
+    } else if (
+      status.level === 'alarm' &&
+      s.repeatCloser &&
+      shouldRealert({ lastKm: this.lastAlertKm, lastAt: this.lastAlertAt, nearestKm, now })
+    ) {
+      closer = true;
+      this.lastAlertKm = nearestKm;
+      this.lastAlertAt = now;
+    }
+    return { status: { ...status, since: this.since }, prev, transition, closer };
+  }
+}
+
+// ── Blitzortung message parsing (browser feed and Rig Bridge) ───────────────
+
+// Blitzortung WebSocket servers (ws3–6/9/10 had certificate problems, 2026-02)
+export const BLITZORTUNG_SERVERS = [
+  'wss://ws8.blitzortung.org',
+  'wss://ws7.blitzortung.org',
+  'wss://ws2.blitzortung.org',
+  'wss://ws1.blitzortung.org',
+];
+/** Key every client sends after connecting. */
+export const BLITZORTUNG_KEY = 111;
+
+/** LZW decompression — Blitzortung compresses every WebSocket message. */
+export function lzwDecode(compressed) {
+  const dict = {};
+  const data = compressed.split('');
+  let currChar = data[0];
+  let oldPhrase = currChar;
+  const out = [currChar];
+  let code = 256;
+  let phrase;
+
+  for (let i = 1; i < data.length; i++) {
+    const currCode = data[i].charCodeAt(0);
+    if (currCode < 256) {
+      phrase = data[i];
+    } else {
+      phrase = dict[currCode] ? dict[currCode] : oldPhrase + currChar;
+    }
+    out.push(phrase);
+    currChar = phrase.charAt(0);
+    dict[code] = oldPhrase + currChar;
+    code++;
+    oldPhrase = phrase;
+  }
+
+  return out.join('');
+}
+
+/**
+ * Parse one decoded Blitzortung message
+ * ({ time (ns), lat, lon, alt, pol, mds }) into a strike, or null.
+ */
+export function parseStrikeMessage(data) {
+  if (!data || !data.time || data.lat == null || data.lon == null) return null;
+  const lat = parseFloat(data.lat);
+  const lon = parseFloat(data.lon);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  return {
+    id: `strike_${data.time}_${data.lat}_${data.lon}`,
+    lat,
+    lon,
+    timestamp: parseInt(data.time / 1000000, 10),
+    intensity: Math.abs(data.pol || 0),
+    polarity: (data.pol || 0) >= 0 ? 'positive' : 'negative',
+    altitude: data.alt || 0,
+    signal: data.mds || 0,
+  };
 }
 
 // ── Presentation helpers ────────────────────────────────────────────────────

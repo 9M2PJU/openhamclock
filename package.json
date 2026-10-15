@@ -13,6 +13,7 @@
     "bridge:n3fjp": "node scripts/n3fjp-bridge.js",
     "lang:check": "node scripts/lang-check-json-key-sort.js",
     "lang:sort": "node scripts/lang-json-key-sort.mjs",
+    "lightning:sync": "node scripts/lightning-guard-cjs.mjs",
     "preview": "npx vite preview",
     "prestart": "npm run build",
     "server": "node server.js",
