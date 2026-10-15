@@ -238,3 +238,17 @@ describe('formatAlertBody sat-alerts (hams.at)', () => {
     expect(formatAlertBody('sat-alerts', {})).toBe('');
   });
 });
+
+describe('formatAlertBody lightning-guard', () => {
+  it('nearest strike, strike count and relay state', () => {
+    expect(formatAlertBody('lightning-guard', { level: 'alarm', distance: '12 km NE', count: 4, relay: true })).toBe(
+      'Nearest strike 12 km NE · 4 strikes in 10 min · antenna relay engaged',
+    );
+    expect(formatAlertBody('lightning-guard', { level: 'warn', distance: '41 km W', count: 1 })).toBe(
+      'Nearest strike 41 km W · 1 strike in 10 min',
+    );
+    expect(formatAlertBody('lightning-guard', { level: 'clear', count: 9, relay: false })).toBe(
+      'All clear · antenna relay released',
+    );
+  });
+});

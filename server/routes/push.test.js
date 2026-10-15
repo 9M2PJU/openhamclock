@@ -100,7 +100,13 @@ function severeAlert(serial = 1) {
 }
 
 let storeFile;
-const ENV_KEYS = ['VAPID_PUBLIC_KEY', 'VAPID_PRIVATE_KEY', 'VAPID_SUBJECT', 'PUSH_SUBSCRIPTIONS_FILE'];
+const ENV_KEYS = [
+  'VAPID_PUBLIC_KEY',
+  'VAPID_PRIVATE_KEY',
+  'VAPID_SUBJECT',
+  'PUSH_SUBSCRIPTIONS_FILE',
+  'PUSH_LIGHTNING_BROADCAST',
+];
 const savedEnv = {};
 
 beforeEach(() => {
@@ -139,6 +145,7 @@ describe('dormant mode (no VAPID keys)', () => {
       ['POST', '/api/push/subscribe'],
       ['POST', '/api/push/unsubscribe'],
       ['POST', '/api/push/test'],
+      ['POST', '/api/push/lightning'],
     ]) {
       const res = await callRoute(app, method, p, {});
       expect(res.statusCode).toBe(503);
@@ -161,7 +168,7 @@ describe('configured mode', () => {
     const { app } = mountConfigured();
     const res = await callRoute(app, 'GET', '/api/push/vapid-key');
     expect(res.statusCode).toBe(200);
-    expect(res.body).toEqual({ configured: true, publicKey: 'test-public-key' });
+    expect(res.body).toEqual({ configured: true, publicKey: 'test-public-key', lightning: false });
   });
 
   it('subscribe stores and persists; invalid bodies are rejected', async () => {
@@ -271,5 +278,51 @@ describe('SWPC severe alert trigger', () => {
     expect(Object.keys(second.exports_._pushStore.subscriptions)).toHaveLength(1);
     await second.exports_._handleSwpcAlerts([severeAlert(99)]);
     expect(second.webpushMock.sendNotification).not.toHaveBeenCalled();
+  });
+});
+
+// ─── Lightning guard broadcast ────────────────────────────────────────────────
+
+describe('lightning guard push', () => {
+  it('is refused unless PUSH_LIGHTNING_BROADCAST is set', async () => {
+    const { app, webpushMock } = mountConfigured();
+    await callRoute(app, 'POST', '/api/push/subscribe', { subscription: makeSub(1) });
+    const res = await callRoute(app, 'POST', '/api/push/lightning', { level: 'alarm', distanceKm: 12 });
+    expect(res.statusCode).toBe(403);
+    expect(res.body.enabled).toBe(false);
+    expect(webpushMock.sendNotification).not.toHaveBeenCalled();
+  });
+
+  it('broadcasts a validated payload to every subscriber and throttles repeats', async () => {
+    process.env.PUSH_LIGHTNING_BROADCAST = 'true';
+    const { app, webpushMock } = mountConfigured();
+    const key = await callRoute(app, 'GET', '/api/push/vapid-key');
+    expect(key.body.lightning).toBe(true);
+    await callRoute(app, 'POST', '/api/push/subscribe', { subscription: makeSub(1) });
+    await callRoute(app, 'POST', '/api/push/subscribe', { subscription: makeSub(2) });
+
+    const bad = await callRoute(app, 'POST', '/api/push/lightning', { level: 'storm' });
+    expect(bad.statusCode).toBe(400);
+
+    const res = await callRoute(app, 'POST', '/api/push/lightning', {
+      level: 'alarm',
+      distanceKm: 12.4,
+      bearingDeg: 45,
+      relay: true,
+      title: 'ignored free text',
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.body.sent).toBe(2);
+    const payload = JSON.parse(webpushMock.sendNotification.mock.calls[0][1]);
+    expect(payload).toEqual({
+      title: 'Lightning ALARM',
+      body: 'Nearest strike 12 km NE · antenna relay engaged',
+      tag: 'ohc-lightning',
+    });
+
+    // Same level again straight away → skipped, nothing sent
+    const again = await callRoute(app, 'POST', '/api/push/lightning', { level: 'alarm', distanceKm: 8 });
+    expect(again.body.skipped).toBe(true);
+    expect(webpushMock.sendNotification).toHaveBeenCalledTimes(2);
   });
 });

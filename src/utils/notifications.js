@@ -203,6 +203,17 @@ export function formatAlertBody(feedId, item) {
       if (dist) parts.push(dist);
       break;
     }
+    case 'lightning-guard': {
+      // Lightning guard: { level, distance ("12 km NE"), rate (strikes/10 min), relay }
+      if (item.level === 'clear') parts.push('All clear');
+      else if (item.distance) parts.push(`Nearest strike ${item.distance}`);
+      if (item.level !== 'clear' && Number.isFinite(item.count) && item.count > 0) {
+        parts.push(`${item.count} strike${item.count === 1 ? '' : 's'} in 10 min`);
+      }
+      if (item.relay === true) parts.push('antenna relay engaged');
+      else if (item.relay === false) parts.push('antenna relay released');
+      break;
+    }
     case 'opportunity': {
       // Opportunity row: { call, freq (MHz), band, mode, needs: ['dxcc', ...], reliability }
       const call = item.call || '';
