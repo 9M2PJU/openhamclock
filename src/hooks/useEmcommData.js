@@ -11,7 +11,9 @@ const SHELTERS_INTERVAL = 5 * 60 * 1000; // 5 min
 const DISASTERS_INTERVAL = 15 * 60 * 1000; // 15 min
 
 export const useEmcommData = (options = {}) => {
-  const { location, enabled = false } = options;
+  // includeDisasters: false skips FEMA declarations (and the reverse-geocode
+  // they need) for callers that don't show them, e.g. the Mobile EmComm card.
+  const { location, enabled = false, includeDisasters = true } = options;
 
   const [alerts, setAlerts] = useState([]);
   const [shelters, setShelters] = useState([]);
@@ -112,18 +114,20 @@ export const useEmcommData = (options = {}) => {
     setLoading(true);
 
     // Initial fetch
-    Promise.all([fetchAlerts(), fetchShelters(), fetchDisasters()]).finally(() => setLoading(false));
+    Promise.all([fetchAlerts(), fetchShelters(), includeDisasters ? fetchDisasters() : null]).finally(() =>
+      setLoading(false),
+    );
 
     const alertsTimer = setInterval(fetchAlerts, ALERTS_INTERVAL);
     const sheltersTimer = setInterval(fetchShelters, SHELTERS_INTERVAL);
-    const disastersTimer = setInterval(fetchDisasters, DISASTERS_INTERVAL);
+    const disastersTimer = includeDisasters ? setInterval(fetchDisasters, DISASTERS_INTERVAL) : null;
 
     return () => {
       clearInterval(alertsTimer);
       clearInterval(sheltersTimer);
       clearInterval(disastersTimer);
     };
-  }, [enabled, fetchAlerts, fetchShelters, fetchDisasters]);
+  }, [enabled, includeDisasters, fetchAlerts, fetchShelters, fetchDisasters]);
 
   return { alerts, shelters, disasters, loading, state: resolvedStateRef.current?.state ?? null };
 };

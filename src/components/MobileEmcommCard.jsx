@@ -68,7 +68,7 @@ const row = {
 
 export default function MobileEmcommCard({ location, allUnits }) {
   const { t } = useTranslation();
-  const { alerts, shelters, loading } = useEmcommData({ location, enabled: true });
+  const { alerts, shelters, loading } = useEmcommData({ location, enabled: true, includeDisasters: false });
   const [roster, setRoster] = useState([]);
   const [openAlert, setOpenAlert] = useState(null);
 

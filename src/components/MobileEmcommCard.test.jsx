@@ -58,7 +58,11 @@ describe('MobileEmcommCard', () => {
       root.render(<MobileEmcommCard location={{ lat: 44.37, lon: -93.04 }} allUnits={{ dist: 'metric' }} />);
     });
 
-    expect(emcommCalls.at(-1)).toMatchObject({ enabled: true, location: { lat: 44.37, lon: -93.04 } });
+    expect(emcommCalls.at(-1)).toMatchObject({
+      enabled: true,
+      includeDisasters: false,
+      location: { lat: 44.37, lon: -93.04 },
+    });
     expect(fetchSpy).toHaveBeenCalledWith('/api/aprs/net');
 
     const text = container.textContent;
