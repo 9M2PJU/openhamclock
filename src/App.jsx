@@ -78,6 +78,9 @@ import { useLightningAnnouncements } from './hooks/app/useLightningAnnouncements
 import { HELP_EVENT } from './utils/helpTopics.js';
 import { useDXSpotAnnouncements } from './hooks/app/useDXSpotAnnouncements';
 import { useWeatherAlertAnnouncements } from './hooks/app/useWeatherAlertAnnouncements';
+import useGpsFollow from './hooks/app/useGpsFollow.js';
+import useHardwareIndicators from './hooks/app/useHardwareIndicators.js';
+import useDisplayBrightness from './hooks/app/useDisplayBrightness.js';
 import { extractBaseCall } from './components/CallsignLink.jsx';
 import { getBandFromFreq, detectMode, normalizeFrequencyToMHz, getCallsignInfo } from './utils/callsign';
 import { getContestReminders, contestReminderId, CONTEST_REMINDERS_EVENT } from './utils/contestReminders.js';
@@ -323,6 +326,10 @@ const App = () => {
   const { isFullscreen, handleFullscreenToggle } = useFullscreen();
   const { displaySleeping } = useDisplaySchedule(config);
   const { wakeLockStatus } = useScreenWakeLock(config, displaySleeping);
+  // Rig Bridge hardware: GPS follow / rover grid changes, display brightness
+  // (overlay or bridge backlight, also switched off by the display schedule).
+  const { liveGrid: gpsLiveGrid, gridChanges: gridChangeAlerts } = useGpsFollow(config, handleSaveConfig);
+  const { overlayOpacity: brightnessOverlay } = useDisplayBrightness(config, displaySleeping);
   const scale = useResponsiveScale();
   const isLocalInstall = useLocalInstall(serverLocal);
 
@@ -494,7 +501,10 @@ const App = () => {
     'sat-pass': satPassAlerts,
     'band-openings': bandOpenings.alertItems,
     swpc: severeSwpcAlerts,
+    'grid-change': gridChangeAlerts,
   });
+  // Mirror satellite / countdown state to the bridge's GPIO indicator lines
+  useHardwareIndicators({ satellites: satellites.data, rigConfig: config.rigControl });
   const localWeather = useWeather(config.location, config.allUnits);
   const dxWeather = useWeather(dxLocation, config.allUnits);
   const localAlerts = useWeatherAlerts(config.location);
@@ -880,6 +890,22 @@ const App = () => {
         <SeasonalEffects season={config.theme} />
       )}
 
+      {/* Display brightness — translucent overlay when no hardware backlight dims the panel */}
+      {!displaySleeping && brightnessOverlay > 0 && (
+        <div
+          aria-hidden="true"
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: '#000',
+            opacity: brightnessOverlay,
+            pointerEvents: 'none',
+            zIndex: 99998,
+            transition: 'opacity 0.4s',
+          }}
+        />
+      )}
+
       {/* Display Schedule — black overlay when in sleep window */}
       {displaySleeping && (
         <div
@@ -941,7 +967,7 @@ const App = () => {
           {/* App-level "log from spot" modal — opens only when no LogbookPanel
               is mounted (and never in the contest layout). Inside RigProvider
               so the form's rig prefill works. */}
-          <LogQsoPopupController layout={config.layout} userCallsign={config.callsign} myGrid={deGrid} />
+          <LogQsoPopupController layout={config.layout} userCallsign={config.callsign} myGrid={gpsLiveGrid || deGrid} />
         </RigProvider>
       </CallsignPopupProvider>
 

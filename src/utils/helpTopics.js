@@ -112,6 +112,8 @@ export const PANEL_HELP = {
   'world-clocks': 'utility',
   stopwatch: 'utility',
   'aircraft-nearby': 'utility',
+  rover: 'rig-bridge',
+  'env-sensors': 'rig-bridge',
 };
 
 /**

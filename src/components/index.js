@@ -44,6 +44,8 @@ export { default as WinlinkPanel } from './WinlinkPanel.jsx';
 export { default as IBPPanel } from './IBPPanel.jsx';
 export { default as SWPCAlertsPanel } from './SWPCAlertsPanel.jsx';
 export { default as MeteorShowerPanel } from './MeteorShowerPanel.jsx';
+export { default as RoverPanel } from './RoverPanel.jsx';
+export { default as EnvSensorsPanel } from './EnvSensorsPanel.jsx';
 export { default as FrequencyMemoriesPanel } from './FrequencyMemoriesPanel.jsx';
 export { default as NetSchedulePanel } from './NetSchedulePanel.jsx';
 export { default as CallsignSearchPanel } from './CallsignSearchPanel.jsx';

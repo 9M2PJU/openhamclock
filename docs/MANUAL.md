@@ -280,6 +280,8 @@ _The Solar panel cycling through live imagery, indices, X-ray flux, and the moon
 - **On Air** — a big red ON AIR light driven by your rig's PTT. Point a webcam at it, or don't — it looks great either way.
 - **ID Timer** — 10-minute countdown that beeps and pops a reminder to identify; dismissing restarts it.
 - **Rotator** — compass rose, live bearing, and controls for a PSTRotator-compatible rotator (self-hosted only).
+- **Rover (GPS)** — grid-square roving with a GPS on the Rig Bridge: live 6-character grid, speed/heading, distance and ETA to each grid line, the next grid on your course, VUCC status of the grid, QSOs logged from here. Needs the Rig Bridge GPS plugin and Settings → Station → GPS → Follow (see [Rig control and Rig Bridge](#raspberry-pi-hardware-gps-sensors-gpio-brightness)).
+- **Environment Sensors** — temperature, humidity, dew point and pressure from BME280/BMP280 sensors or an HTTP JSON sensor via the Rig Bridge, two sensors side by side with a 24 h history graph.
 - **Custom Image** — displays any image you drop in (station photo, QSL card, reference chart).
 
 ### Logging
@@ -482,7 +484,7 @@ _Settings → Rig Bridge: enable, download for your OS, connect_
 - **Radio:** Yaesu, Kenwood, Icom over USB; rigctld, flrig, TCI (Thetis/ExpertSDR), FlexRadio SmartSDR, RTL-TCP (RX-only)
 - **Digital modes:** WSJT-X, JTDX, MSHV, JS8Call — bidirectional (reply to a decode, halt TX, set free text)
 - **Packet:** APRS TNC (KISS/Direwolf), Winlink (Pat client)
-- **Hardware:** Rotator (rotctld)
+- **Hardware:** Rotator (rotctld); Raspberry Pi hardware — GPS receiver, environment sensors (BME280), GPIO lines, light sensor / brightness (see below)
 - **Cloud:** Cloud Relay
 
 **Cloud Relay (alpha):** using the hosted site or a cloud install? The relay connects your local rig-bridge to the server with a per-session token, enabling click-to-tune, PTT status, WSJT-X decodes, and APRS from anywhere. Connect it from Settings → Rig Bridge; the session credential lives only in your browser.
@@ -490,6 +492,16 @@ _Settings → Rig Bridge: enable, download for your OS, connect_
 **Click-to-tune behavior:** works from DX cluster, POTA/SOTA/WWFF/WWBOTA, PSK Reporter, and WSJT-X panels. "Auto-set mode" switches CW/SSB/Data from the band plan; Yaesu rigs get true band-select commands so ATU and antenna memories follow. With a US license class set in Settings → Station, tuning outside your privileges still tunes but shows a brief warning toast (e.g. "28.6 MHz SSB is outside Technician privileges").
 
 (The older _Rig Listener_ and _WSJT-X Relay_ standalone tools still exist but are deprecated — Rig Bridge replaces all of them.)
+
+### Raspberry Pi hardware (GPS, sensors, GPIO, brightness)
+
+Four Rig Bridge plugins bring HamClock's Raspberry Pi hardware features to OpenHamClock. Enable them on the Rig Bridge setup page → **Plugins**; each one also has a **mock** mode so you can try the panels without any hardware. Wiring, Pi configuration and every setting are in [rig-bridge/README.md → Raspberry Pi Hardware](../rig-bridge/README.md#raspberry-pi-hardware-alpha). These plugins are alpha and were tested with mocks and unit tests, not yet on a Pi — reports welcome.
+
+- **GPS receiver** (NMEA over USB/serial, gpsd, or a fifo/file). **Settings → Station → GPS** chooses what to do with it: **Off**, **Set once** (the first fix after start-up sets your lat/lon, grid and altitude — handy for a portable station), or **Follow** (rover mode, below). The same section shows the live fix and warns when the GPS time differs from your computer's clock by more than 2 s — a hint to fix the system clock; nothing is changed automatically.
+- **Rover mode** — with Follow on, DE tracks the receiver and the **Rover (GPS)** panel shows the current 6-character grid, speed and heading, the distance to each grid line (N/E/S/W) with the ETA at your current speed and the grid on the other side, which edge your course crosses first, the VUCC status of the 4-character grid from your logbook, and how many QSOs you have already logged from this grid. QSOs logged while roving use the live grid as `MY_GRIDSQUARE`. Crossing into a new grid plays the **Grid Change (Rover)** alert (Settings → Alerts, with an optional browser notification).
+- **Environment Sensors** panel — temperature, humidity, dew point and station pressure from one or two BME280/BMP280 sensors on the Pi's I2C bus (0x76 / 0x77, with per-sensor dTemp/dPres corrections like HamClock) and/or any HTTP JSON sensor (ESPHome, Tasmota, Home Assistant). Units follow Settings → Station. The panel shows the sensors side by side plus a 24 h history graph (temperature, humidity or pressure) kept in the bridge at one sample per minute.
+- **GPIO** — the HamClock header pins: a PTT/ON-AIR sense input lights the **On Air** panel (and the ON-AIR LED), buttons restart the **ID Timer** or silence its alarm, and outputs follow the countdown (green running / red expired), the alarm, and satellite passes (1 Hz pulse the minute before AOS, steady during the pass, 2 Hz for the last minute). The browser feeds the bridge its satellite and timer state automatically whenever rig control is enabled.
+- **Brightness** — an LTR-329 light sensor (or a lux value from an HTTP sensor) drives the display brightness through a two-point bright/dim calibration. With a controllable backlight (the official Pi touch display) the panel itself dims and the display schedule switches it off at night; otherwise OpenHamClock dims with a translucent overlay. **Settings → Display → Brightness** has the manual slider (works on any computer, no bridge needed) and the **Auto brightness** toggle.
 
 ---
 
@@ -567,13 +579,14 @@ DX-side Doppler is deliberately not shown — that belongs to the other operator
 
 _Settings → Alerts: pick what wakes you and how_
 
-**Settings → Alerts** plays a tone when new items appear in a feed. Feeds: POTA, SOTA, WWFF, WWBOTA, DX Cluster, Watchlist Hits, DXpeditions, Contests, Contest Starts, Satellite Passes, Band Openings, Lightning Proximity, and Space Weather — all off by default, each with its own tone (nine Web Audio presets — no sound files) and a master volume.
+**Settings → Alerts** plays a tone when new items appear in a feed. Feeds: POTA, SOTA, WWFF, WWBOTA, DX Cluster, Watchlist Hits, DXpeditions, Contests, Contest Starts, Satellite Passes, Band Openings, Lightning Proximity, Space Weather, and Grid Change (Rover) — all off by default, each with its own tone (nine Web Audio presets — no sound files) and a master volume.
 
 Four event feeds go beyond "new item in a panel":
 
 - **Watchlist Hits** — a spot matching your DX Cluster watchlist (Filters → Watchlist) appeared in the raw cluster feed. Matching happens _before_ your panel filters, so a watched call alerts even when the panel is filtered to something else, and portable calls match their base call (5Z4/OZ6ABL hits a watchlist entry of OZ6ABL). Re-spots of the same call on the same band stay quiet; the same call on a _new_ band alerts again — one alert per band opening.
 - **Contest Starts** — strictly opt-in per contest: click the 🔔 next to a contest in the Contests panel to arm a reminder, and you'll get one alert when that contest is within 15 minutes of starting. With no contests armed, the feed stays silent even when enabled.
 - **Satellite Passes** — one alert when a tracked satellite's next pass begins within 5 minutes, with the pass's max elevation.
+- **Grid Change (Rover)** — with a Rig Bridge GPS and Settings → Station → GPS → Follow, one alert each time the receiver crosses into a new 6-character grid square (the body names the new and the previous grid).
 - **Band Openings** — the server watches RBN and cluster spot streams and flags surges against a 3-hour baseline, both per band and continent path and per band and CQ zone of the stations doing the hearing. A **Scope** setting picks what you are told about: **My CQ zone** (default — "20m opening EU→zone 3 (12 spots, 4x baseline)", so a West Coast station is not woken for an East Coast opening), **My continent**, or **Worldwide**. Your zone comes from your callsign; enter it by hand if your call's prefix doesn't match where you actually operate. One alert per opening episode; quiet while the baseline is still warming after a server restart.
 
 Sensible guardrails: no alert storm on page load or when returning to a background tab, a per-feed cooldown, and one tone per batch of new items.
@@ -709,18 +722,18 @@ _Settings → Station: callsign, location, units, language, cluster source, prop
 
 _Settings → Integrations: basemap key, callbooks, rotator, N3FJP_
 
-| Tab                 | What's in it                                                                                                                                                                                                                                                          |
-| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 📻 **Station**      | Callsign, grid/lat-lon (with "use my location"), timezone, units (distance/temperature/pressure), language, DX cluster source, callbook picker, propagation mode & TX power, performance mode, wake lock & display schedule, Active Users opt-out, legacy rig control |
-| 🔌 **Integrations** | CARTO basemap key, QRZ.com and HamQTH callbook credentials, and local-only extras: Rotator, DX Weather popups, N3FJP bridge                                                                                                                                           |
-| 🎨 **Display**      | Layout, theme (+ custom theme editor), monospace font, header size, clock order, What's New on startup, mutual-reception star                                                                                                                                         |
-| 🗺️ **Map Layers**   | Every overlay layer with enable + opacity, grouped by category; DE/DX markers, DX Target panel, and DX News ticker toggles                                                                                                                                            |
-| 🛰️ **Satellites**   | Satellite selection, tracks/footprints, station altitude, minimum elevation, track duration                                                                                                                                                                           |
-| 👤 **Profiles**     | Save/load/rename/export/import named profiles; profile share codes and full backup/restore; weather source picker — Open-Meteo (default, keyless) or OpenWeatherMap with your own key; export current state                                                           |
-| 🌐 **Community**    | GitHub, Facebook group, Reddit; core maintainers and the contributors wall; the privacy statement (no cookies, no tracking, anonymized stats)                                                                                                                         |
-| 🔔 **Alerts**       | Per-feed audio alerts, tones, master volume, browser notifications                                                                                                                                                                                                    |
-| 📻 **Rig Bridge**   | Enable/connect, downloads for each OS, API token, click-to-tune and auto-mode, plugin overview, Cloud Relay                                                                                                                                                           |
-| ❓ **Help**         | This manual, rendered in-app with a searchable contents sidebar; the ❓ icons throughout the app deep-link here                                                                                                                                                       |
+| Tab                 | What's in it                                                                                                                                                                                                                                                                                                     |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 📻 **Station**      | Callsign, grid/lat-lon (with "use my location"), timezone, units (distance/temperature/pressure), language, DX cluster source, callbook picker, propagation mode & TX power, performance mode, wake lock & display schedule, Active Users opt-out, legacy rig control, GPS (Rig Bridge: off / set once / follow) |
+| 🔌 **Integrations** | CARTO basemap key, QRZ.com and HamQTH callbook credentials, and local-only extras: Rotator, DX Weather popups, N3FJP bridge                                                                                                                                                                                      |
+| 🎨 **Display**      | Layout, theme (+ custom theme editor), monospace font, header size, clock order, What's New on startup, mutual-reception star, brightness slider & auto brightness (Rig Bridge light sensor)                                                                                                                     |
+| 🗺️ **Map Layers**   | Every overlay layer with enable + opacity, grouped by category; DE/DX markers, DX Target panel, and DX News ticker toggles                                                                                                                                                                                       |
+| 🛰️ **Satellites**   | Satellite selection, tracks/footprints, station altitude, minimum elevation, track duration                                                                                                                                                                                                                      |
+| 👤 **Profiles**     | Save/load/rename/export/import named profiles; profile share codes and full backup/restore; weather source picker — Open-Meteo (default, keyless) or OpenWeatherMap with your own key; export current state                                                                                                      |
+| 🌐 **Community**    | GitHub, Facebook group, Reddit; core maintainers and the contributors wall; the privacy statement (no cookies, no tracking, anonymized stats)                                                                                                                                                                    |
+| 🔔 **Alerts**       | Per-feed audio alerts, tones, master volume, browser notifications                                                                                                                                                                                                                                               |
+| 📻 **Rig Bridge**   | Enable/connect, downloads for each OS, API token, click-to-tune and auto-mode, plugin overview, Cloud Relay                                                                                                                                                                                                      |
+| ❓ **Help**         | This manual, rendered in-app with a searchable contents sidebar; the ❓ icons throughout the app deep-link here                                                                                                                                                                                                  |
 
 Settings save to your browser; **Save Settings** applies them. Most `.env` variables mirror a Settings option — the browser value wins.
 

@@ -46,6 +46,7 @@ export const ALERT_FEEDS = {
   'band-openings': { label: 'Band Openings', defaultTone: 'low-tone', eventful: true },
   lightning: { label: 'Lightning Proximity', defaultTone: 'chirp' },
   swpc: { label: 'Space Weather', defaultTone: 'chime' },
+  'grid-change': { label: 'Grid Change (Rover)', defaultTone: 'two-tone', eventful: true },
 };
 
 const LS_KEY = 'ohc_audio_alerts';

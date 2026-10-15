@@ -55,7 +55,7 @@ function resolveConfigPath() {
 const { dir: CONFIG_DIR, path: CONFIG_PATH } = resolveConfigPath();
 
 // Increment when DEFAULT_CONFIG structure changes (new keys, renamed keys, etc.)
-const CONFIG_VERSION = 9;
+const CONFIG_VERSION = 10;
 
 const DEFAULT_CONFIG = {
   configVersion: CONFIG_VERSION,
@@ -205,6 +205,81 @@ const DEFAULT_CONFIG = {
     ohcUrl: 'http://localhost:8080', // URL of the OpenHamClock server
     verbose: false,
   },
+  // ── Hardware plugins (Raspberry Pi and friends) ──────────────────────
+  // GPS receiver → DE location / rover mode in the browser
+  gps: {
+    enabled: false,
+    source: 'serial', // serial | gpsd | file | mock
+    serialPort: '', // /dev/ttyACM0, /dev/ttyUSB0, COM5 …
+    baudRate: 9600,
+    gpsdHost: '127.0.0.1',
+    gpsdPort: 2947,
+    filePath: '', // UNIX fifo or file something pipes NMEA into
+    publishInterval: 1000, // ms between SSE fix updates
+    verbose: false,
+  },
+  // BME280 / BMP280 over I2C and/or an HTTP JSON sensor (ESPHome, Tasmota …)
+  envSensors: {
+    enabled: false,
+    pollInterval: 10, // seconds
+    i2cBus: 1,
+    mock: false, // simulated readings — no hardware needed
+    sensorA: { enabled: true, address: '0x76', name: 'Indoor', dTemp: 0, dPres: 0, dHum: 0 },
+    sensorB: { enabled: false, address: '0x77', name: 'Outdoor', dTemp: 0, dPres: 0, dHum: 0 },
+    http: {
+      enabled: false,
+      url: '',
+      interval: 60, // seconds
+      name: 'Remote',
+      tempPath: 'temperature',
+      humPath: 'humidity',
+      presPath: 'pressure',
+      tempUnit: 'C', // C | F
+      presUnit: 'hPa', // hPa | Pa | kPa | inHg | mmHg
+    },
+    verbose: false,
+  },
+  // Raspberry Pi GPIO — ON-AIR / alarm / countdown / satellite lines (HamClock pinout)
+  gpio: {
+    enabled: false,
+    backend: 'auto', // auto | gpiod | sysfs | mock
+    chip: 'gpiochip0',
+    activeLow: true, // inputs: switch to ground with pull-up
+    outputActiveLow: false,
+    pollInterval: 250, // ms, input polling when no edge monitor
+    debounceMs: 50,
+    // BCM numbers (or "P37" header pins); -1 disables a line. Defaults = HamClock header map.
+    pins: {
+      pttIn: 16,
+      countdownResetIn: 26,
+      alarmSilenceIn: 5,
+      onAirOut: 21,
+      alarmOut: 6,
+      countdownGreenOut: 13,
+      countdownRedOut: 19,
+      satOut: 20,
+    },
+    verbose: false,
+  },
+  // Ambient light → display brightness (LTR-329 / HTTP lux / mock) + backlight control
+  brightness: {
+    enabled: false,
+    source: 'none', // none | ltr329 | http | mock
+    i2cBus: 1,
+    address: '0x29',
+    http: { url: '', luxPath: 'lux' },
+    interval: 5, // seconds between lux reads
+    auto: true, // follow the light sensor; false = use `manual`
+    manual: 100,
+    min: 5, // never dim below this %
+    calDimLux: 5, // two-point calibration (HamClock bright/dim)
+    calDimPct: 15,
+    calBrightLux: 400,
+    calBrightPct: 100,
+    backlightPath: '', // '' = auto-detect /sys/class/backlight/*
+    powerMethod: 'auto', // auto | backlight | vcgencmd | xset | none
+    verbose: false,
+  },
   // TLS/HTTPS — enables HTTPS to avoid mixed-content errors when OHC is served over HTTPS
   tls: {
     enabled: false, // false = plain HTTP (backward-compatible default)
@@ -250,6 +325,24 @@ function loadConfig() {
           pat: { ...DEFAULT_CONFIG.winlink.pat, ...((raw.winlink || {}).pat || {}) },
         },
         tls: { ...DEFAULT_CONFIG.tls, ...(raw.tls || {}) },
+        gps: { ...DEFAULT_CONFIG.gps, ...(raw.gps || {}) },
+        envSensors: {
+          ...DEFAULT_CONFIG.envSensors,
+          ...(raw.envSensors || {}),
+          sensorA: { ...DEFAULT_CONFIG.envSensors.sensorA, ...((raw.envSensors || {}).sensorA || {}) },
+          sensorB: { ...DEFAULT_CONFIG.envSensors.sensorB, ...((raw.envSensors || {}).sensorB || {}) },
+          http: { ...DEFAULT_CONFIG.envSensors.http, ...((raw.envSensors || {}).http || {}) },
+        },
+        gpio: {
+          ...DEFAULT_CONFIG.gpio,
+          ...(raw.gpio || {}),
+          pins: { ...DEFAULT_CONFIG.gpio.pins, ...((raw.gpio || {}).pins || {}) },
+        },
+        brightness: {
+          ...DEFAULT_CONFIG.brightness,
+          ...(raw.brightness || {}),
+          http: { ...DEFAULT_CONFIG.brightness.http, ...((raw.brightness || {}).http || {}) },
+        },
         // Coerce logging to boolean in case the stored value is a string
         logging: raw.logging !== undefined ? !!raw.logging : DEFAULT_CONFIG.logging,
       });
@@ -272,6 +365,10 @@ function loadConfig() {
           'cloudRelay',
           'winlink',
           'tls',
+          'gps',
+          'envSensors',
+          'gpio',
+          'brightness',
         ]) {
           if (DEFAULT_CONFIG[section] && raw[section]) {
             for (const key of Object.keys(DEFAULT_CONFIG[section])) {

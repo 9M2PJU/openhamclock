@@ -41,6 +41,9 @@ function itemKey(feedId, item) {
       return `${item.band || ''}-${item.from_continent || ''}-${item.to_zone != null ? `Z${item.to_zone}` : item.to_continent || ''}-${item.firstSeenHour ?? ''}`;
     case 'swpc':
       return `${item.productId || ''}-${item.serial || ''}`;
+    case 'grid-change':
+      // One alert per grid entered (rover mode: GPS crossed a grid line).
+      return `${item.grid || ''}-${item.at || ''}`;
     default:
       return JSON.stringify(item).substring(0, 80);
   }

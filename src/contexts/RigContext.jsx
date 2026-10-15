@@ -37,7 +37,7 @@ const toHz = (freqInput) => {
   return 0;
 };
 
-const buildRigUrl = (rigConfig) => {
+export const buildRigUrl = (rigConfig) => {
   const host = rigConfig?.host?.trim();
   if (!host) return DEFAULT_RIG_URL;
 
@@ -87,6 +87,7 @@ export const RigProvider = ({ children, rigConfig }) => {
     freq: 0,
     mode: '',
     ptt: false,
+    onAir: false, // hardware PTT / ON-AIR sense line (rig-bridge GPIO plugin)
     width: 0,
     lastUpdate: 0,
   });
@@ -303,6 +304,7 @@ export const RigProvider = ({ children, rigConfig }) => {
               mode: data.mode,
               width: data.width,
               ptt: data.ptt,
+              onAir: !!data.onAir,
               lastUpdate: Date.now(),
             }));
           } else if (data.type === 'update') {

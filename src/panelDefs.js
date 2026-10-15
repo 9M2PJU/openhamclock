@@ -85,6 +85,8 @@ export function buildPanelDefs({ isLocalInstall = false } = {}) {
     'world-clocks': { name: 'World Clocks', icon: '🌐' },
     stopwatch: { name: 'Stopwatch', icon: '⏱️' },
     'aircraft-nearby': { name: 'Aircraft Nearby', icon: '✈️' },
+    rover: { name: 'Rover (GPS)', icon: '🚙', group: 'Rig Bridge' },
+    'env-sensors': { name: 'Environment Sensors', icon: '🌡️', group: 'Rig Bridge' },
   };
 
   // Append auto-discovered panel plugins (src/plugins/local/panels/*.jsx).
