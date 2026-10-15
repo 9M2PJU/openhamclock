@@ -164,6 +164,18 @@ export function formatAlertBody(feedId, item) {
       if (dist) parts.push(dist);
       break;
     }
+    case 'opportunity': {
+      // Opportunity row: { call, freq (MHz), band, mode, needs: ['dxcc', ...], reliability }
+      const call = item.call || '';
+      if (call) {
+        const detail = [item.freq, item.mode].filter(Boolean).join(' ');
+        parts.push(detail ? `${call} ${detail}` : call);
+        const needs = (item.needs || []).map((n) => `new ${n === 'dxcc' ? 'DXCC' : n}`).join(', ');
+        if (needs) parts.push(needs);
+        if (item.reliability != null) parts.push(`${Math.round(item.reliability)}% predicted`);
+      }
+      break;
+    }
     default:
       break;
   }

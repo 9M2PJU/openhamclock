@@ -937,6 +937,9 @@ export const PANEL_ICONS = {
   'world-clocks': LiGlobeClock,
   stopwatch: LiStopwatch,
   'aircraft-nearby': LiPlane,
+  opportunities: LiTarget,
+  'solar-outlook': LiCycle,
+  benchmark: LiHeardBy,
 };
 
 /**

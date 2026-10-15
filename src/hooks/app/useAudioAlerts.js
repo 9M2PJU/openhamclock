@@ -7,6 +7,7 @@
 import { useEffect, useRef } from 'react';
 import { getAlertSettings, playTone, ALERT_FEEDS } from '../../utils/audioAlerts';
 import { formatAlertBody, showAlertNotification } from '../../utils/notifications';
+import { speakAlert } from '../../utils/speechAlerts';
 
 const COOLDOWN_MS = 10000; // Min 10s between tones per feed
 const VISIBILITY_GRACE_MS = 5000; // Suppress alerts for 5s after tab becomes visible
@@ -41,6 +42,9 @@ function itemKey(feedId, item) {
       return `${item.band || ''}-${item.from_continent || ''}-${item.to_zone != null ? `Z${item.to_zone}` : item.to_continent || ''}-${item.firstSeenHour ?? ''}`;
     case 'swpc':
       return `${item.productId || ''}-${item.serial || ''}`;
+    case 'opportunity':
+      // One alert per station+band entering the top 5 (re-spots stay quiet).
+      return `${item.call || ''}-${item.band || ''}`;
     default:
       return JSON.stringify(item).substring(0, 80);
   }
@@ -108,6 +112,10 @@ export default function useAudioAlerts(feeds) {
         const lastTone = lastToneRef.current[feedId] || 0;
         if (now - lastTone >= COOLDOWN_MS) {
           playTone(feedSettings.tone, settings.volume ?? 0.5);
+          // Spoken alert (Web Speech API) — queued + de-duplicated inside
+          // speakAlert; a no-op unless Settings → Alerts → Speak alerts is on
+          // for this feed.
+          speakAlert(feedId, firstNewItem, settings);
           if (settings.notifications && feedSettings.notify) {
             const body = formatAlertBody(feedId, firstNewItem);
             const suffix = newCount > 1 ? `+${newCount - 1} more` : '';
@@ -136,5 +144,6 @@ export default function useAudioAlerts(feeds) {
     feeds['sat-pass'],
     feeds['band-openings'],
     feeds.swpc,
+    feeds.opportunity,
   ]);
 }

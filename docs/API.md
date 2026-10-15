@@ -137,7 +137,25 @@ called out in release notes.
 | `/api/satellites/data` | Tracked amateur satellite orbital elements (OMM)                                                                  | ~1 h         |
 | `/api/ionosonde`       | Live ionosonde soundings (foF2/MUF from GIRO via KC2G)                                                            | ~15 min      |
 | `/api/contests`        | Contest calendar (WA7BNM iCal, RSS fallback). Returns `{ contests, source, fetchedAt }`                           | ~30 min      |
+| `/api/swpc/outlook`    | NOAA SWPC 27-day outlook: `{ issued, days: [{ date, sfi, ap, kp }], fetchedAt }`                                  | 6 h          |
+| `/api/benchmark`       | Station benchmark vs neighbours from RBN. Query: `callsign`, `lat`, `lon`, optional `radius` (km, default 300)    | 10 min/call  |
+| `/api/mqtt/status`     | Outbound MQTT publisher state `{ enabled, connected, prefix, lastPublish }` (no credentials)                      | none         |
 | `/api/health`          | Instance health/uptime probe                                                                                      | none         |
+
+`/api/benchmark` returns `{ call, radiusKm, windowDays, neighbours, mySpots, bands: [{ band, diffDb, medianDiffDb, samples, neighbourSamples, bestDiffDb, days: [{ day, diffDb, samples }] }], explanation, source: 'rbn', pskreporter: false, generatedAt }` — `diffDb` is the callsign's mean SNR minus the median of the stations within `radiusKm` heard by the same skimmer on the same band in the same UTC hour, over the last 7 days.
+
+### Outbound MQTT (optional, self-hosted)
+
+With `MQTT_PUBLISH_URL` set (plus optional `MQTT_PUBLISH_USER`, `MQTT_PUBLISH_PASS`, `MQTT_PUBLISH_PREFIX`, default prefix `openhamclock`) the server publishes retained JSON to:
+
+| Topic                    | Payload                                                                                                                                 |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `<prefix>/spaceweather`  | `{ sfi, ssn, kp, a_index, xray_class, bz, solar_wind_speed, proton_flux, geomag_field, signal_noise, scales: { R, S, G }, updated_at }` |
+| `<prefix>/alerts/swpc`   | `{ count, max_level, alerts: [{ product_id, serial, title, scale, level, issued }], updated_at }`                                       |
+| `<prefix>/band-openings` | `{ warming, count, bands, openings: [{ band, from, to, state, factor, spots }], zone_openings: [...], updated_at }`                     |
+| `<prefix>/status`        | `{ state: 'online' \| 'offline', version, uptime_s, health, subsystems, updated_at }` — also the LWT/availability topic                 |
+
+Each topic is published at most once per minute and only when its content changed. `MQTT_PUBLISH_HA_DISCOVERY=true` adds retained Home Assistant discovery configs at `homeassistant/sensor/openhamclock_<id>/config`. The Rig Bridge's own MQTT plugin publishes `<prefix>/rig`, `<prefix>/rotator` and `<prefix>/bridge/status` — see `rig-bridge/README.md`.
 
 ```bash
 curl -s http://localhost:3000/api/solar-indices | jq .

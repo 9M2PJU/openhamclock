@@ -37,6 +37,7 @@ import {
 } from '../utils/audioAlerts';
 import { getCallsignInfo } from '../utils/callsign';
 import { getNotificationPermission, requestNotificationPermission } from '../utils/notifications';
+import SpokenAlertsSettings from './SpokenAlertsSettings.jsx';
 import {
   isPushSupported,
   getServerPushStatus,
@@ -7494,6 +7495,9 @@ function AudioAlertsTab({ callsign }) {
           </div>
         );
       })}
+
+      {/* Spoken alerts (Web Speech API) — master toggle, voice, rate, phonetics, per-feed */}
+      <SpokenAlertsSettings alertSettings={alertSettings} updateSettings={updateSettings} />
     </div>
   );
 }

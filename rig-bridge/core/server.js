@@ -1023,6 +1023,14 @@ function buildSetupHtml(version, firstRunToken = null) {
         { id: 'port', label: 'rotctld Port', type: 'number', default: 4533 },
         { id: 'pollInterval', label: 'Poll Interval (ms)', type: 'number', default: 1000 },
       ]},
+      { key: 'mqtt', name: 'MQTT Publish (Home Assistant)', maturity: 'beta', desc: 'Publish rig frequency/mode/PTT, rotator az/el and APRS counts to an MQTT broker, with Home Assistant discovery', fields: [
+        { id: 'url', label: 'Broker URL (mqtt://host:1883)', type: 'text', default: '' },
+        { id: 'username', label: 'Username', type: 'text', default: '' },
+        { id: 'password', label: 'Password', type: 'text', default: '' },
+        { id: 'prefix', label: 'Topic prefix', type: 'text', default: 'openhamclock' },
+        { id: 'haDiscovery', label: 'Home Assistant discovery', type: 'checkbox', default: true },
+        { id: 'publishInterval', label: 'Keepalive publish (ms)', type: 'number', default: 60000 },
+      ]},
       { key: 'winlink', name: 'Winlink', maturity: 'alpha', desc: 'Gateway discovery + Pat client for Winlink messaging', fields: [
         { id: 'apiKey', label: 'Winlink API Key', type: 'text', default: '' },
         { id: 'pat.enabled', label: 'Enable Pat Client', type: 'checkbox', default: false },
@@ -2244,7 +2252,7 @@ function createServer(registry, version) {
       config.rtltcp = { ...config.rtltcp, ...newConfig.rtltcp };
     }
     // Deep-merge plugin config sections
-    for (const key of ['mshv', 'jtdx', 'js8call', 'aprs', 'rotator', 'cloudRelay', 'winlink', 'meshcom']) {
+    for (const key of ['mshv', 'jtdx', 'js8call', 'aprs', 'rotator', 'cloudRelay', 'winlink', 'meshcom', 'mqtt']) {
       if (newConfig[key]) {
         config[key] = { ...(config[key] || {}), ...newConfig[key] };
         // Handle nested objects (e.g. winlink.pat)
@@ -2288,6 +2296,11 @@ function createServer(registry, version) {
     // Restart WSJT-X relay if its config changed
     if (newConfig.wsjtxRelay) {
       registry.restartIntegration('wsjtx-relay');
+    }
+
+    // Restart the MQTT publisher if its config changed (no bridge restart needed)
+    if (newConfig.mqtt) {
+      registry.restartIntegration('mqtt-publish');
     }
 
     res.json({ success: true, config });

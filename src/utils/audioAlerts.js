@@ -46,6 +46,8 @@ export const ALERT_FEEDS = {
   'band-openings': { label: 'Band Openings', defaultTone: 'low-tone', eventful: true },
   lightning: { label: 'Lightning Proximity', defaultTone: 'chirp' },
   swpc: { label: 'Space Weather', defaultTone: 'chime' },
+  // Opportunity feed (#P8): a new top-5 entry that is at least a new DXCC.
+  opportunity: { label: 'Opportunities (new DXCC)', defaultTone: 'two-tone', eventful: true },
 };
 
 const LS_KEY = 'ohc_audio_alerts';

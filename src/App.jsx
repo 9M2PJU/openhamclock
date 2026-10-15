@@ -64,6 +64,7 @@ import useVersionCheck from './hooks/app/useVersionCheck';
 import usePresence from './hooks/app/usePresence';
 import useWavelogSync from './hooks/app/useWavelogSync.js';
 import useAudioAlerts from './hooks/app/useAudioAlerts';
+import { useOpportunities } from './hooks/useOpportunities.js';
 import { useSatelliteAnnouncements } from './hooks/app/useSatelliteAnnouncements';
 import useSceneRotation from './hooks/app/useSceneRotation';
 import useIdleClock from './hooks/app/useIdleClock';
@@ -389,6 +390,22 @@ const App = () => {
 
   const propagation = usePropagation(config.location, dxLocation, config.propagation);
   const mySpots = useMySpots(config.callsign);
+  // Opportunity feed: ranked "worth working now" from cluster + activation
+  // spots × logbook needs × P.533 reliability. Shared by the Opportunities
+  // panel (via layoutProps) and the audio-alert engine below.
+  const opportunities = useOpportunities({
+    rawSpots: dxClusterData.rawSpots,
+    potaSpots: potaSpots.data,
+    sotaSpots: sotaSpots.data,
+    wwffSpots: wwffSpots.data,
+    wwbotaSpots: wwbotaSpots.data,
+    deLocation: config.location,
+    openings: bandOpenings.data,
+    myZone: myRegion.myZone,
+    myContinent: myRegion.myContinent,
+    propagationConfig: config.propagation,
+    ssn: propagation.data?.solarData?.ssn,
+  });
   const filterState = useSatelliteFilterState();
   const { satelliteFilters, setSatelliteFilters } = filterState;
   const satellites = useSatellites(config.location, config.satellite, satelliteFilters);
@@ -494,6 +511,7 @@ const App = () => {
     'sat-pass': satPassAlerts,
     'band-openings': bandOpenings.alertItems,
     swpc: severeSwpcAlerts,
+    opportunity: opportunities.alertItems,
   });
   const localWeather = useWeather(config.location, config.allUnits);
   const dxWeather = useWeather(dxLocation, config.allUnits);
@@ -746,6 +764,7 @@ const App = () => {
     dxpeditions,
     contests,
     swpcAlerts,
+    opportunities,
     satellites,
     pskReporter,
     wsjtx,

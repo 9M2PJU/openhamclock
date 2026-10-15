@@ -65,3 +65,6 @@ export { default as RepeatersPanel } from './RepeatersPanel.jsx';
 export { default as POTAActivatorPanel } from './POTAActivatorPanel.jsx';
 export { default as MatrixRain } from './MatrixRain.jsx';
 export { default as AircraftNearbyPanel } from './AircraftNearbyPanel.jsx';
+export { default as OpportunityPanel } from './OpportunityPanel.jsx';
+export { default as SolarOutlookPanel } from './SolarOutlookPanel.jsx';
+export { default as BenchmarkPanel } from './BenchmarkPanel.jsx';

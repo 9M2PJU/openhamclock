@@ -45,6 +45,7 @@ export const HELP_TOPICS = {
   settings: 'settings-reference',
   hosting: 'hosted-site-vs-self-hosted',
   utility: 'utility',
+  'home-automation': 'home-automation-mqtt-and-home-assistant',
 };
 
 /** Dockable panel component id → topic key (see DockableApp panelDefs) */
@@ -112,6 +113,9 @@ export const PANEL_HELP = {
   'world-clocks': 'utility',
   stopwatch: 'utility',
   'aircraft-nearby': 'utility',
+  opportunities: 'spots-activity',
+  'solar-outlook': 'propagation-panels',
+  benchmark: 'propagation-panels',
 };
 
 /**

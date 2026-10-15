@@ -311,6 +311,9 @@ require('./server/routes/config-routes')(app, ctx);
 require('./server/routes/geo-time')(app, ctx);
 require('./server/routes/admin')(app, ctx);
 require('./server/routes/push')(app, ctx); // Web Push (dormant without VAPID keys); needs swpc-alerts exports
+require('./server/routes/solar-outlook')(app, ctx); // SWPC 27-day outlook (Contests pills + Solar Outlook panel)
+require('./server/routes/benchmark')(app, ctx); // Station benchmark — taps the RBN stream via ctx.onRbnSpot
+require('./server/routes/mqtt-publish')(app, ctx); // Outbound MQTT + Home Assistant discovery (dormant without MQTT_PUBLISH_URL)
 
 // Subsystem health background refresher (read by /api/health).
 const health = require('./server/health');

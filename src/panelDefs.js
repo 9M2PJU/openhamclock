@@ -85,6 +85,9 @@ export function buildPanelDefs({ isLocalInstall = false } = {}) {
     'world-clocks': { name: 'World Clocks', icon: '🌐' },
     stopwatch: { name: 'Stopwatch', icon: '⏱️' },
     'aircraft-nearby': { name: 'Aircraft Nearby', icon: '✈️' },
+    opportunities: { name: 'Opportunities', icon: '🎯' },
+    'solar-outlook': { name: '27-Day Solar Outlook', icon: '📅', group: 'Solar' },
+    benchmark: { name: 'Station Benchmark', icon: '📶', group: 'Propagation' },
   };
 
   // Append auto-discovered panel plugins (src/plugins/local/panels/*.jsx).

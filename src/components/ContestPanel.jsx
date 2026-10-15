@@ -10,9 +10,13 @@ import {
   getContestReminders,
   toggleContestReminder,
 } from '../utils/contestReminders';
+import { useSolarOutlook } from '../hooks/useSolarOutlook.js';
+import { KP_CATEGORIES, describeOutlook, outlookForRange } from '../utils/solarOutlook.js';
 
 export const ContestPanel = ({ data, loading }) => {
   const { t, i18n } = useTranslation();
+  // SWPC 27-day outlook → per-contest "weekend outlook" pill (predicted Kp + SFI)
+  const { days: outlookDays, issued: outlookIssued } = useSolarOutlook();
 
   // Per-contest start reminders (opt-in for the "Contest Starts" alert feed).
   // Synced across panel instances/tabs via the change event + storage event.
@@ -351,7 +355,35 @@ export const ContestPanel = ({ data, loading }) => {
                       marginTop: '3px',
                     }}
                   >
-                    <span style={{ color: getModeColor(contest.mode) }}>{contest.mode}</span>
+                    <span style={{ color: getModeColor(contest.mode) }}>
+                      {contest.mode}
+                      {(() => {
+                        // Weekend outlook pill — only for contests inside the 27-day window
+                        const range = outlookForRange(outlookDays, contest.start, contest.end || contest.start);
+                        if (!range?.category) return null;
+                        const cat = KP_CATEGORIES[range.category];
+                        const label = `${cat.label}${range.minSfi != null ? ` · SFI ${range.minSfi}` : ''}`;
+                        return (
+                          <span
+                            title={describeOutlook(range, outlookIssued)}
+                            aria-label={describeOutlook(range, outlookIssued)}
+                            style={{
+                              marginLeft: '6px',
+                              padding: '0 4px',
+                              fontSize: '8px',
+                              fontWeight: 700,
+                              letterSpacing: '0.3px',
+                              color: cat.color,
+                              border: `1px solid ${cat.color}`,
+                              borderRadius: '3px',
+                              verticalAlign: 'middle',
+                            }}
+                          >
+                            {label}
+                          </span>
+                        );
+                      })()}
+                    </span>
                     <span
                       style={{
                         color: live ? '#ef4444' : soon ? '#fbbf24' : 'var(--text-muted)',

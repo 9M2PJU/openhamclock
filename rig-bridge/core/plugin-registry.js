@@ -68,6 +68,7 @@ class PluginRegistry {
       'winlink-express-csv',
       'rotator',
       'cloud-relay',
+      'mqtt-publish',
     ]) {
       try {
         const p = require(`../plugins/${file}`);
