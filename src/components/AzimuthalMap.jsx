@@ -147,6 +147,8 @@ export default function AzimuthalMap({
   onMapReady,
 }) {
   const canvasRef = useRef(null);
+  // History Playback scrubbed into the past → hide the live DX cluster paths
+  const historyScrubbing = useHistoryScrubbing();
   const containerRef = useRef(null);
   const leafletDivRef = useRef(null);
   const leafletMapRef = useRef(null);

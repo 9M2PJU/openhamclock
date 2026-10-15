@@ -169,8 +169,17 @@
     try {
       const res = await fetch(`/api/control/state${tq()}`, { headers: headers() });
       if (authFailed(res.status)) {
-        setPaired(false);
-        setStatus(key ? 'pairing key not accepted' : 'pairing key required', 'bad');
+        // 403 also covers "display has not paired yet" (it has not reported
+        // since the server started) — show the server's reason, not a guess.
+        const json = await res.json().catch(() => ({}));
+        const notPairedYet = res.status === 403 && /not paired yet/i.test(json.error || '');
+        setPaired(notPairedYet ? null : false);
+        setStatus(
+          notPairedYet
+            ? 'display not reporting yet — waiting'
+            : json.error || (key ? 'pairing key not accepted' : 'pairing key required'),
+          'bad',
+        );
         return;
       }
       if (res.status === 404) {
