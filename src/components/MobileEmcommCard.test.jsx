@@ -40,6 +40,56 @@ afterEach(() => {
   emcommCalls.length = 0;
 });
 
+describe('MobileEmcommCard — APRS shelter reports', () => {
+  it('shows RF-heard reports: their own entry, or attached to the FEMA site they match', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => ({
+      ok: true,
+      json: async () =>
+        String(url).includes('/api/aprs/shelters')
+          ? {
+              shelters: [
+                // matches Town Hall's position → attached to the FEMA entry
+                {
+                  from: 'W0TH-1',
+                  lat: 44.38,
+                  lon: -93.04,
+                  text: 'Town Hall full, no beds',
+                  source: 'rf',
+                  timestamp: 2,
+                },
+                // a church nobody in FEMA knows about → its own entry
+                {
+                  from: 'K0CHR',
+                  lat: 44.4,
+                  lon: -93.1,
+                  text: 'Church open accepting families',
+                  source: 'rf',
+                  timestamp: 1,
+                },
+              ],
+            }
+          : { roster: [] },
+    }));
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(<MobileEmcommCard location={{ lat: 44.37, lon: -93.04 }} allUnits={{ dist: 'metric' }} />);
+    });
+    expect(fetchSpy.mock.calls.some(([u]) => String(u).includes('/api/aprs/shelters'))).toBe(true);
+    const rows = [...container.querySelectorAll('[data-shelter-source]')];
+    const rf = rows.find((r) => r.dataset.shelterSource === 'aprs-rf');
+    expect(rf.textContent).toContain('K0CHR');
+    expect(rf.textContent).toContain('RF');
+    expect(rf.textContent).toContain('OPEN'); // status read from the report text
+    const townHall = rows.find((r) => r.textContent.includes('Town Hall'));
+    expect(townHall.dataset.shelterSource).toBe('fema');
+    expect(townHall.textContent).toContain('W0TH-1: Town Hall full, no beds');
+    act(() => root.unmount());
+    container.remove();
+  });
+});
+
 describe('MobileEmcommCard', () => {
   it('summarises alerts, shelters and the roster, and stops polling when unmounted', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({

@@ -13,6 +13,7 @@ import { useAPRSTelemetry } from '../hooks/useAPRSTelemetry.js';
 import { calculateDistance, formatDistance, maidenheadToLatLon, latLonToMaidenhead } from '../utils/geo.js';
 import { esc } from '../utils/escapeHtml.js';
 import { apiFetch } from '../utils/apiFetch.js';
+import { useAprsShelterReports } from '../hooks/useAprsShelterReports.js';
 import { mergeShelters } from '../utils/emcommShelters.js';
 import { sendAprsMessage } from '../utils/aprsMessageSend.js';
 import { IcsFormsOverlay } from '../components/IcsFormsPanel.jsx';
@@ -291,7 +292,7 @@ export default function EmcommLayout(props) {
   const localRoster = useMemo(() => mergeRosters(netRoster, voiceRoster), [netRoster, voiceRoster]);
   // RF-heard APRS shelter reports (kept alongside FEMA data — still works
   // via local TNC when internet infrastructure is down)
-  const [aprsShelterReports, setAprsShelterReports] = useState([]);
+  const aprsShelterReports = useAprsShelterReports({ enabled: true });
   // APRS telemetry (sensor dashboards)
   const { telemetry } = useAPRSTelemetry({ enabled: true });
   const [messageTarget, setMessageTarget] = useState(null); // callsign to message
@@ -416,22 +417,6 @@ export default function EmcommLayout(props) {
     };
     fetchRoster();
     const timer = setInterval(fetchRoster, 10000);
-    return () => clearInterval(timer);
-  }, []);
-
-  // Poll APRS shelter reports (RF-heard shelter status messages)
-  useEffect(() => {
-    const fetchAprsShelters = async () => {
-      try {
-        const res = await apiFetch('/api/aprs/shelters', { cache: 'no-store' });
-        if (res?.ok) {
-          const data = await res.json();
-          setAprsShelterReports(Array.isArray(data.shelters) ? data.shelters : []);
-        }
-      } catch (e) {}
-    };
-    fetchAprsShelters();
-    const timer = setInterval(fetchAprsShelters, 30000);
     return () => clearInterval(timer);
   }, []);
 
