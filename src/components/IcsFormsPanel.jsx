@@ -1371,11 +1371,33 @@ function Ics205Editor({ t, drafts, patch, config }) {
                         </select>
                       ) : (
                         <input
-                          style={{ ...inputStyle, width: `${width}px` }}
+                          style={{
+                            ...inputStyle,
+                            width: `${width}px`,
+                            ...(key === 'txFreq' && r.txUnknown && !r.txFreq ? { borderColor: '#f59e0b' } : {}),
+                          }}
                           value={r[key] || ''}
                           list={kind === 'zone' ? zoneListId : undefined}
                           aria-label={t(`icsForms.205.col.${key}`, { defaultValue: label })}
-                          onChange={(e) => updateRow(r.id, { [key]: e.target.value })}
+                          // A voice-net row whose repeater offset is unknown asks for the TX frequency
+                          placeholder={
+                            key === 'txFreq' && r.txUnknown
+                              ? t('icsForms.205.offsetUnknown', { defaultValue: 'offset?' })
+                              : undefined
+                          }
+                          title={
+                            key === 'txFreq' && r.txUnknown && !r.txFreq
+                              ? t('icsForms.205.offsetUnknownTitle', {
+                                  defaultValue: 'The repeater offset is not known — type the TX (input) frequency',
+                                })
+                              : undefined
+                          }
+                          onChange={(e) =>
+                            updateRow(r.id, {
+                              [key]: e.target.value,
+                              ...(key === 'txFreq' && e.target.value.trim() ? { txUnknown: false } : {}),
+                            })
+                          }
                         />
                       )}
                     </td>

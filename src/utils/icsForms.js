@@ -27,7 +27,7 @@
  */
 import { esc } from './escapeHtml.js';
 import { EVENT_TYPE_META, csvEscape, messageNumbers, activeEvents } from './emcommEventLog.js';
-import { parseNetFrequency } from './netControl.js';
+import { parseNetFrequency, formatOffset } from './netControl.js';
 
 export const ICS_DRAFTS_KEY = 'openhamclock_icsForms';
 /** Maximum APRS message text length (bytes after the addressee field). */
@@ -104,10 +104,27 @@ export function newRowId() {
  * Fresh draft set. `header` is shared by every form (incident name,
  * operational period, who prepared it) so the operator types it once.
  */
+/**
+ * Draft format version. Stored drafts older than this are migrated once in
+ * mergeDrafts():
+ *   v1 → v2  tick `net_traffic` in the 309's event types (it became a default
+ *            after drafts had already saved their own type list).
+ */
+export const DRAFTS_VERSION = 2;
+
+/** One-time upgrades of a stored draft's 309 type list. Pure; returns a new array. */
+export function migrateIcs309Types(types, fromVersion) {
+  const list = Array.isArray(types) ? [...types] : null;
+  if (!list) return list;
+  if (fromVersion < 2 && !list.includes('net_traffic')) list.push('net_traffic');
+  return list;
+}
+
 export function defaultDrafts(now = Date.now()) {
   const start = new Date(now);
   start.setUTCHours(0, 0, 0, 0);
   return {
+    version: DRAFTS_VERSION,
     header: {
       incidentName: '',
       periodFrom: toInputDateTime(start.getTime()),
@@ -165,6 +182,10 @@ export function mergeDrafts(stored, now = Date.now()) {
     const s = stored[key];
     out[key] = s && typeof s === 'object' ? { ...base[key], ...s } : base[key];
   }
+  // Drafts saved before versioning count as v1
+  const storedVersion = Number.isInteger(stored.version) && stored.version > 0 ? stored.version : 1;
+  if (Array.isArray(out.ics309.types)) out.ics309.types = migrateIcs309Types(out.ics309.types, storedVersion);
+  out.version = DRAFTS_VERSION;
   if (!Array.isArray(out.ics214.resources)) out.ics214.resources = [];
   if (!Array.isArray(out.ics214.rows)) out.ics214.rows = [];
   if (!Array.isArray(out.ics205.rows)) out.ics205.rows = [];
@@ -673,25 +694,40 @@ export function ics205RowFromNet(net) {
 
 /**
  * Row from the voice net running in Net Control (its roster snapshot:
- * { net, ncs, frequency (free text), freqMhz?, mode? }). The frequency text
- * is read for an offset and tone ("146.940 − PL 100.0"): RX is the listed
- * frequency, TX the listed frequency plus the offset, the tone goes on TX.
+ * { net, ncs, frequency (free text), freqMhz?, mode?, region?, offset? }).
+ * The frequency text is read for an offset and tone ("146.940 − PL 100.0"):
+ * RX is the listed frequency, TX the listed frequency plus the offset
+ * (written in the text, the operator's override, or the region's standard),
+ * the tone goes on TX. When only a direction is known the TX cell is left
+ * for the operator, flagged `txUnknown` (the editor shows "offset?") and
+ * noted in the remarks; a standard offset that varies locally is noted too.
  */
 export function ics205RowFromVoiceNet(snapshot) {
-  const parsed = parseNetFrequency(snapshot?.frequency) || {};
+  const parsed =
+    parseNetFrequency(snapshot?.frequency, { region: snapshot?.region || null, offset: snapshot?.offset || '' }) || {};
   const rx = Number(snapshot?.freqMhz) > 0 ? Number(snapshot.freqMhz) : parsed.mhz;
-  const tx = parsed.mhz != null && parsed.mhz === rx ? parsed.txMhz : rx;
+  const sameFreq = parsed.mhz != null && parsed.mhz === rx;
+  const tx = sameFreq ? parsed.txMhz : rx;
+  const txUnknown = sameFreq && parsed.offsetSource === 'unknown';
+  const offsetNote = txUnknown
+    ? 'TX offset? — fill in TX'
+    : sameFreq && parsed.offsetCheck
+      ? `TX offset ${formatOffset(parsed.offsetMhz)} assumed — check locally`
+      : '';
   return newIcs205Row({
     function: 'Net',
     name: String(snapshot?.net || ''),
     assignment: 'All stations',
     rxFreq: formatPlanFreq(rx),
-    txFreq: formatPlanFreq(tx),
+    txFreq: tx == null ? '' : formatPlanFreq(tx),
     txTone: parsed.tone || '',
     mode: ics205ModeCode(snapshot?.mode || parsed.mode),
     modeName: String(snapshot?.mode || parsed.mode || ''),
-    remarks: [snapshot?.ncs ? `NCS ${snapshot.ncs}` : '', snapshot?.frequency || ''].filter(Boolean).join(' · '),
+    remarks: [offsetNote, snapshot?.ncs ? `NCS ${snapshot.ncs}` : '', snapshot?.frequency || '']
+      .filter(Boolean)
+      .join(' · '),
     source: 'net-control',
+    ...(txUnknown ? { txUnknown: true } : {}),
   });
 }
 

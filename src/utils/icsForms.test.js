@@ -16,6 +16,8 @@ import {
   inputToPrintDateTime,
   defaultDrafts,
   mergeDrafts,
+  migrateIcs309Types,
+  DRAFTS_VERSION,
   loadDrafts,
   saveDrafts,
   eventsInRange,
@@ -608,7 +610,12 @@ describe('Net Control integration', () => {
     expect(row).toMatchObject({ from: 'W1AW', to: 'K0CJH', message: 'Traffic passed on ARES' });
   });
   it('ics205RowFromVoiceNet reads the running net frequency, offset and tone', () => {
-    const row = ics205RowFromVoiceNet({ net: 'County ARES Net', ncs: 'K0CJH', frequency: '146.940 − PL 100.0' });
+    const row = ics205RowFromVoiceNet({
+      net: 'County ARES Net',
+      ncs: 'K0CJH',
+      frequency: '146.940 − PL 100.0',
+      region: 'R2',
+    });
     expect(row).toMatchObject({
       function: 'Net',
       name: 'County ARES Net',
@@ -633,6 +640,21 @@ describe('Net Control integration', () => {
     });
     expect(scheduled).toMatchObject({ rxFreq: '441.000', txFreq: '441.000', mode: 'D', modeName: 'DMR' });
     expect(ics205RowFromVoiceNet({ net: 'X', frequency: 'the usual' })).toMatchObject({ rxFreq: '', txFreq: '' });
+    // 6 m in the Americas: −1 MHz assumed, noted for checking
+    expect(ics205RowFromVoiceNet({ net: '6m', frequency: '53.150 −', region: 'R2' })).toMatchObject({
+      rxFreq: '53.150',
+      txFreq: '52.150',
+      remarks: 'TX offset −1 MHz assumed — check locally · 53.150 −',
+    });
+    // direction without a known size: TX left for the operator, flagged and noted — never silently blank
+    const unknown = ics205RowFromVoiceNet({ net: '6m', frequency: '50.840 −', region: 'R3' });
+    expect(unknown).toMatchObject({ rxFreq: '50.840', txFreq: '', txUnknown: true });
+    expect(unknown.remarks).toMatch(/^TX offset\? — fill in TX/);
+    // the operator's override wins
+    expect(ics205RowFromVoiceNet({ net: '6m', frequency: '53.150 −', region: 'R2', offset: '500k' })).toMatchObject({
+      txFreq: '52.650',
+      remarks: '53.150 −',
+    });
   });
 });
 
@@ -793,5 +815,37 @@ describe('ICS 205 zones', () => {
     const html = buildIcs205Html(d, { now: T0 });
     expect(html).toContain('146.520 N</td>');
     expect(html).toContain('146.520 W</td>');
+  });
+});
+
+describe('draft migration', () => {
+  const withoutTraffic = ICS309_DEFAULT_TYPES.filter((t) => t !== 'net_traffic');
+  it('ticks net_traffic once in drafts saved before versioning', () => {
+    const migrated = mergeDrafts({ ics309: { types: withoutTraffic } }, T0);
+    expect(migrated.version).toBe(DRAFTS_VERSION);
+    expect(migrated.ics309.types).toContain('net_traffic');
+    // ...and an operator's other choices are left alone
+    expect(mergeDrafts({ ics309: { types: ['aprs_msg_sent'] } }, T0).ics309.types).toEqual([
+      'aprs_msg_sent',
+      'net_traffic',
+    ]);
+  });
+  it('does not re-tick it once the draft is current (the operator unticked it on purpose)', () => {
+    const current = mergeDrafts({ version: DRAFTS_VERSION, ics309: { types: withoutTraffic } }, T0);
+    expect(current.ics309.types).not.toContain('net_traffic');
+  });
+  it('survives a save/load round trip without migrating twice', () => {
+    const once = mergeDrafts({ ics309: { types: ['aprs_msg_rx'] } }, T0);
+    once.ics309.types = once.ics309.types.filter((t) => t !== 'net_traffic');
+    saveDrafts(once);
+    expect(loadDrafts(T0).ics309.types).toEqual(['aprs_msg_rx']);
+  });
+  it('migrateIcs309Types is pure and tolerates bad input', () => {
+    const src = ['net_checkin'];
+    expect(migrateIcs309Types(src, 1)).toEqual(['net_checkin', 'net_traffic']);
+    expect(src).toEqual(['net_checkin']);
+    expect(migrateIcs309Types(['net_traffic'], 1)).toEqual(['net_traffic']);
+    expect(migrateIcs309Types(null, 1)).toBeNull();
+    expect(defaultDrafts(T0).version).toBe(DRAFTS_VERSION);
   });
 });
