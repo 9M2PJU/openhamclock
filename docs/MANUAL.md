@@ -171,7 +171,7 @@ _Settings → Map Layers: every overlay grouped by category, each with an opacit
 
 ### Time shift
 
-HamClock users will know this one: shift the **display time** forward or back and the dashboard shows that moment instead of now — where the terminator and gray line will be at your sked time, the sun and moon, every satellite's position, track and footprint, the next passes, the VOACAP chart's "now" column, and the header clocks. Live spot feeds (cluster, POTA, PSKReporter, APRS…) are **not** shifted — they are always live.
+Shift the **display time** forward or back and the dashboard shows that moment instead of now — where the terminator and gray line will be at your sked time, the sun and moon, every satellite's position, track and footprint, the next passes, the VOACAP chart's "now" column, and the header clocks. Live spot feeds (cluster, POTA, PSKReporter, APRS…) are **not** shifted — they are always live.
 
 - **The control:** turn on the **Time Shift** layer (Settings → Map Layers, the command palette, or the layer list) and a small draggable, minimisable panel appears on the map with **−1w / −1d / −1h / +1h / +1d / +1w** buttons, a slider spanning ±30 days, the shifted UTC time, and a **Now** button. Drag the title to move it; double-click the title to reset its position; × closes it (the shift stays until you press Now).
 - **The badge:** while the offset is anything but zero, the header clocks (and the Clock layout) carry a red **NOT REAL TIME** badge with the offset. Click the badge to snap back to real time.
@@ -432,7 +432,7 @@ Portable prefixes are normalized (`5Z4/OZ6ABL` matches `OZ6ABL`) and phone/digit
 
 ### Watch lists
 
-Watch lists use HamClock's grammar and come in three independent flavours — one for DX cluster spots, one for activation spots (POTA/SOTA/WWFF/WWBOTA) and one for logbook rows. Edit them from the matching panel (DX Filter Manager → Watchlist, the activation filter dialog → Watch, the Logbook's **Watch** button) or all together in Settings → Station → Watch lists. Each list has a mode:
+Watch lists use a compact spec grammar and come in three independent flavours — one for DX cluster spots, one for activation spots (POTA/SOTA/WWFF/WWBOTA) and one for logbook rows. Edit them from the matching panel (DX Filter Manager → Watchlist, the activation filter dialog → Watch, the Logbook's **Watch** button) or all together in Settings → Station → Watch lists. Each list has a mode:
 
 | Mode     | Effect                         |
 | -------- | ------------------------------ |
@@ -447,7 +447,7 @@ A list is a comma-separated set of _specs_; a spot matches the list when it sati
 - **Sub-band modes** — `40CW`, `20SSB`, `30FT8`, `160-10CW`, `10-20DATA`; modes CW, DATA, FT4, FT8, RTTY and SSB are frequency windows from the band plan (the spot comment is never consulted — a CW spot at 14.200 is "20SSB")
 - **Frequencies** in MHz — `14-14.02MHZ`, or a single `14.074MHZ` (±0.5 kHz)
 - **Logbook keywords** evaluated against the native logbook — `NADXCC` (entity not yet worked), `NAPREF` (WPX prefix not yet worked), `NAGRID` (4-character grid not yet worked; the spot must carry a grid), `NABAND` (band not yet worked). With an empty log everything counts as new; an unresolvable entity or a spot without a grid never matches.
-- **Prefixes** — `VP2E`, `3Y`, `K1`. Portable calls are split into a DX portion and a home portion the HamClock way: `/MM`, `/AM`, single characters, digit-only parts (`/7`) and 3+ letter parts without a digit (`/QRP`) are ignored, and of what remains the part that is not a full callsign (or the shorter one) is the DX portion. A plain prefix matches either portion; a prefix with a trailing `/` (`VP2E/`) matches the DX portion only.
+- **Prefixes** — `VP2E`, `3Y`, `K1`. Portable calls are split into a DX portion and a home portion the usual portable-call way: `/MM`, `/AM`, single characters, digit-only parts (`/7`) and 3+ letter parts without a digit (`/QRP`) are ignored, and of what remains the part that is not a full callsign (or the shorter one) is the DX portion. A plain prefix matches either portion; a prefix with a trailing `/` (`VP2E/`) matches the DX portion only.
 
 Examples: `20M NADXCC` (new entities on 20 m), `40CW VP2E, 3Y/` (VP2E on 40 m CW, or any 3Y activity), `14-14.02MHZ NAPREF`.
 
@@ -471,7 +471,7 @@ Settings → Map Layers → **Spot labels** chooses what the labels on DX cluste
 
 ### UDP spots: set DX, only mine
 
-With the **UDP Spots** source (N1MM, DXLog, MacLoggerDX and friends broadcasting spots on port 12060), two HamClock-style options live under Settings → Station → UDP Spot Listener:
+With the **UDP Spots** source (N1MM, DXLog, MacLoggerDX and friends broadcasting spots on port 12060), two options live under Settings → Station → UDP Spot Listener:
 
 - **UDP spots set DX** — each newly received spot becomes the DX target (the batch already present at startup is skipped, so loading never moves your DX marker).
 - **Show UDP spots: All / Only mine** — loggers rebroadcast every cluster spot they receive; _Only mine_ keeps just the spots whose spotter is your own callsign (SSIDs and portable suffixes ignored). "Set DX" follows this filter.
@@ -590,7 +590,7 @@ Both switches are also on the satellite info window: the Leaflet window on the f
 
 ### Sky view
 
-The **SKY** tab of the Satellite Passes panel draws a polar sky plot of the selected satellite's next (or current) pass, HamClock style: zenith at the centre, horizon on the rim, N/E/S/W around the edge, with the AOS (green), LOS (red) and maximum-elevation points labelled with their times and a dot for where the bird is right now. A dashed path means the element set is stale (see below).
+The **SKY** tab of the Satellite Passes panel draws a polar sky plot of the selected satellite's next (or current) pass: zenith at the centre, horizon on the rim, N/E/S/W around the edge, with the AOS (green), LOS (red) and maximum-elevation points labelled with their times and a dot for where the bird is right now. A dashed path means the element set is stale (see below).
 
 ### Element-set age and Refresh TLEs
 
@@ -649,7 +649,7 @@ Four Rig Bridge plugins bring HamClock's Raspberry Pi hardware features to OpenH
 - **GPS receiver** (NMEA over USB/serial, gpsd, or a fifo/file). **Settings → Station → GPS** chooses what to do with it: **Off**, **Set once** (the first fix after start-up sets your lat/lon, grid and altitude — handy for a portable station), or **Follow** (rover mode, below). The same section shows the live fix and warns when the GPS time differs from your computer's clock by more than 2 s — a hint to fix the system clock; nothing is changed automatically.
 - **Rover mode** — with Follow on, DE tracks the receiver and the **Rover (GPS)** panel shows the current 6-character grid, speed and heading, the distance to each grid line (N/E/S/W) with the ETA at your current speed and the grid on the other side, which edge your course crosses first, the VUCC status of the 4-character grid from your logbook, and how many QSOs you have already logged from this grid. QSOs logged while roving use the live grid as `MY_GRIDSQUARE`. Crossing into a new grid plays the **Grid Change (Rover)** alert (Settings → Alerts, with an optional browser notification).
 - **Environment Sensors** panel — temperature, humidity, dew point and station pressure from one or two BME280/BMP280 sensors on the Pi's I2C bus (0x76 / 0x77, with per-sensor dTemp/dPres corrections like HamClock) and/or any HTTP JSON sensor (ESPHome, Tasmota, Home Assistant). Units follow Settings → Station. The panel shows the sensors side by side plus a 24 h history graph (temperature, humidity or pressure) kept in the bridge at one sample per minute.
-- **GPIO** — the HamClock header pins: a PTT/ON-AIR sense input lights the **On Air** panel (and the ON-AIR LED), buttons restart the **ID Timer** or silence its alarm, and outputs follow the countdown (green running / red expired), the alarm, and satellite passes (1 Hz pulse the minute before AOS, steady during the pass, 2 Hz for the last minute). The browser feeds the bridge its satellite and timer state automatically whenever rig control is enabled.
+- **GPIO** — header pins: a PTT/ON-AIR sense input lights the **On Air** panel (and the ON-AIR LED), buttons restart the **ID Timer** or silence its alarm, and outputs follow the countdown (green running / red expired), the alarm, and satellite passes (1 Hz pulse the minute before AOS, steady during the pass, 2 Hz for the last minute). The browser feeds the bridge its satellite and timer state automatically whenever rig control is enabled.
 - **Brightness** — an LTR-329 light sensor (or a lux value from an HTTP sensor) drives the display brightness through a two-point bright/dim calibration. With a controllable backlight (the official Pi touch display) the panel itself dims and the display schedule switches it off at night; otherwise OpenHamClock dims with a translucent overlay. **Settings → Display → Brightness** has the manual slider (works on any computer, no bridge needed) and the **Auto brightness** toggle.
 
 ---
@@ -899,7 +899,7 @@ commands from the server's `/api/control` API — set DE/DX, switch layout and
 theme, toggle map layers, pick a satellite, shift the clock, drive the
 stopwatch, point the rotator, grab a screenshot. The full command table with
 `curl` examples is in [docs/API.md → Remote control API](API.md#remote-control-api);
-the names mirror HamClock's `set_*` commands.
+the names are short verbs.
 
 Each browser has a **display id** (shown in that section, with a **New id**
 button); commands address it with `?target=<id>`. On a local install you can
@@ -947,7 +947,7 @@ the Pi kiosk launcher.
 30 seconds — adds or focuses a panel (dockable layout), toggles a map layer
 such as the gray line or the grid, picks a DX from recent cluster spots, or
 rotates the basemap. A running-man indicator appears in the header. It is
-never saved: reloading the page turns it off, exactly like HamClock.
+never saved: reloading the page turns it off.
 
 ### Grayscale display
 

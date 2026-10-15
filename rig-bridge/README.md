@@ -825,7 +825,7 @@ Rig Bridge can control antenna rotators via [Hamlib's](https://hamlib.github.io/
 
 ## Raspberry Pi Hardware _(Alpha)_
 
-Four plugins close the gap with HamClock's Raspberry Pi hardware features: a GPS receiver, BME280 environment sensors, the GPIO header lines (ON-AIR, alarm, countdown, satellite, buttons) and an ambient-light sensor driving the display brightness. None of them needs a compiled Node module: serial and TCP go through `serialport`/`net`, I2C goes through the optional `i2c-bus` package, and GPIO uses the `gpiod` command-line tools or sysfs. Everything also has a **mock** mode, so the OpenHamClock panels can be tried on any computer without a Pi.
+Four plugins bring Raspberry Pi hardware into the shack display: a GPS receiver, BME280 environment sensors, the GPIO header lines (ON-AIR, alarm, countdown, satellite, buttons) and an ambient-light sensor driving the display brightness. None of them needs a compiled Node module: serial and TCP go through `serialport`/`net`, I2C goes through the optional `i2c-bus` package, and GPIO uses the `gpiod` command-line tools or sysfs. Everything also has a **mock** mode, so the OpenHamClock panels can be tried on any computer without a Pi.
 
 All four are enabled on the **Plugins** tab of the setup page (<http://localhost:5555>) and restart in place when you change their settings — no rig-bridge restart needed. The browser receives their state over the same `/stream` connection as the rig (`{ type:'plugin', event:'gps'|'env'|'gpio'|'brightness' }`), and the latest state is replayed to every new browser connection.
 
@@ -891,7 +891,7 @@ API: `GET /api/env/status`, `GET /api/env/history`.
 
 ### GPIO plugin (HamClock header lines)
 
-Drives the same header pins HamClock uses, plus a PTT sense input. Pin numbers below are **BCM GPIO numbers** (what `gpioinfo` shows); the header position is in brackets. You may also type a header pin as `P37` in the config.
+Drives indicator and switch lines on the Pi header, plus a PTT sense input. Pin numbers below are **BCM GPIO numbers** (what `gpioinfo` shows); the header position is in brackets. You may also type a header pin as `P37` in the config.
 
 | Function            | Direction | Default BCM (header) | Notes                                                                         |
 | ------------------- | --------- | -------------------- | ----------------------------------------------------------------------------- |
@@ -920,7 +920,7 @@ API: `GET /api/gpio/status`, `POST /api/gpio/mock/input`, `POST /api/indicators`
 
 ### Light Sensor / Brightness plugin
 
-Maps ambient light to display brightness with HamClock's two-point calibration and applies it to the panel.
+Maps ambient light to display brightness with a two-point calibration and applies it to the panel.
 
 | Setting                         | Default       | Description                                                                                        |
 | ------------------------------- | ------------- | -------------------------------------------------------------------------------------------------- |

@@ -187,7 +187,7 @@ The Rig Bridge also serves its own copy without the server:
 
 ## Remote control API
 
-HamClock-style `set_*` commands for the running display — set DE/DX, switch
+Commands for the running display — set DE/DX, switch
 layout or theme, toggle map layers, pick a satellite, shift the clock, drive
 the stopwatch, point the rotator, grab a screenshot. A phone-sized touch
 remote that uses nothing but these endpoints ships at **`/remote`** (the QR

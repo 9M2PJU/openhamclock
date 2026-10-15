@@ -32,12 +32,12 @@ const CHANGELOG = [
     version: '26.11.0',
     date: '2026-11-03',
     heading:
-      'The parity release. We went through the original HamClock 4.x manual and its 4.25–4.32 release notes line by line, built every pane, planning tool, hardware hook and control command it had that we did not, and then added the things nobody has: an opportunity feed that ranks what to chase right now, measured beacon SNR through a KiwiSDR, a 27-day outlook on the contest calendar, a station benchmark, spoken alerts, and Home Assistant integration. Twenty-two new panels, seven new map layers, seven Rig Bridge plugins, a write API with a phone remote — and a time scrubber for the whole dashboard.',
+      'The big one. Everything a shack display should be able to do, and then the things nobody has: an opportunity feed that ranks what to chase right now, measured beacon SNR through a KiwiSDR, a 27-day outlook on the contest calendar, a station benchmark, spoken alerts, and Home Assistant integration. Twenty-two new panels, seven new map layers, seven Rig Bridge plugins, a write API with a phone remote — and a time scrubber for the whole dashboard.',
     features: [
       {
         icon: '⏱️',
         title: 'NEW: Time Shift',
-        desc: 'Drag the whole dashboard up to ±30 days in either direction. The terminator, gray line, sun and moon, satellite positions, tracks and footprints, the DE/DX rise-set tables and the VOACAP now-column all follow; live spots do not. A floating scrubber on the map (Map Layers → Time Shift), a red NOT REAL TIME badge in the header that snaps you back, and keys [ ] for an hour, { } for a day, 0 for now. The HamClock feature people asked for most.',
+        desc: 'Drag the whole dashboard up to ±30 days in either direction. The terminator, gray line, sun and moon, satellite positions, tracks and footprints, the DE/DX rise-set tables and the VOACAP now-column all follow; live spots do not. A floating scrubber on the map (Map Layers → Time Shift), a red NOT REAL TIME badge in the header that snaps you back, and keys [ ] for an hour, { } for a day, 0 for now. The feature people asked for most.',
       },
       {
         icon: '🎯',
@@ -72,7 +72,7 @@ const CHANGELOG = [
       {
         icon: '🎛️',
         title: 'NEW: Remote Control API + Phone Remote',
-        desc: "HamClock's set_* commands, done our way: POST /api/control/de, dx, layout, theme, panels, mapview, satellite, time, title, alarm, stopwatch, rotator and capture, delivered to a display over SSE. Settings → Station shows the display id and a QR code; scan it and /remote gives you big touch buttons for DX, layouts, layers, satellites, time shift, alarms and rig tuning. The QR code carries a per-display pairing key, so the phone works on the hosted site too without ever seeing the server\'s admin key, and nobody else can drive or listen to your display. Works with Stream Deck, Node-RED, or curl. Documented in API.md.",
+        desc: "Drive the display from anything that speaks HTTP: POST /api/control/de, dx, layout, theme, panels, mapview, satellite, time, title, alarm, stopwatch, rotator and capture, delivered to a display over SSE. Settings → Station shows the display id and a QR code; scan it and /remote gives you big touch buttons for DX, layouts, layers, satellites, time shift, alarms and rig tuning. The QR code carries a per-display pairing key, so the phone works on the hosted site too without ever seeing the server\'s admin key, and nobody else can drive or listen to your display. Works with Stream Deck, Node-RED, or curl. Documented in API.md.",
       },
       {
         icon: '🖥️',
@@ -97,12 +97,12 @@ const CHANGELOG = [
       {
         icon: '📻',
         title: 'DX Cluster: Watch Lists, Login Commands, a Console',
-        desc: "HamClock's watch-list grammar, in full: bands (20-10M), sub-bands (40CW, 30FT8), MHz ranges, portable-call prefixes (VK/), and NADXCC / NAPREF / NAGRID / NABAND checked against your native logbook — in Off / Red / Only / Not modes, with separate lists for cluster spots, activations and the logbook. Custom telnet nodes can send your own commands after login, and a Cluster Console panel shows the raw session and lets you type to the node. The list no longer jumps while you scroll (a NEW button catches you up), map spot labels are configurable, IOTA references get badges and a filter, and UDP spots can set DX.",
+        desc: 'A full watch-list grammar: bands (20-10M), sub-bands (40CW, 30FT8), MHz ranges, portable-call prefixes (VK/), and NADXCC / NAPREF / NAGRID / NABAND checked against your native logbook — in Off / Red / Only / Not modes, with separate lists for cluster spots, activations and the logbook. Custom telnet nodes can send your own commands after login, and a Cluster Console panel shows the raw session and lets you type to the node. The list no longer jumps while you scroll (a NEW button catches you up), map spot labels are configurable, IOTA references get badges and a filter, and UDP spots can set DX.',
       },
       {
         icon: '🌀',
         title: 'NEW: Tropical Cyclones, Fire Weather, Marine Buoys, Windy, WEFAX',
-        desc: 'Five weather panels and four layers from HamClock 4.25–4.32: active storms worldwide with NHC and JTWC forecast tracks and cones; NWS Red Flag Warnings with their zone outlines; the nearest NDBC buoys with wind, waves and water temperature; an embedded Windy view centred on DE or DX; and NOAA radiofax charts from every station, with the broadcast frequencies one click from the rig.',
+        desc: 'Five weather panels and four layers: active storms worldwide with NHC and JTWC forecast tracks and cones; NWS Red Flag Warnings with their zone outlines; the nearest NDBC buoys with wind, waves and water temperature; an embedded Windy view centred on DE or DX; and NOAA radiofax charts from every station, with the broadcast frequencies one click from the rig.',
       },
       {
         icon: '🗺️',
@@ -127,7 +127,7 @@ const CHANGELOG = [
       {
         icon: '🥧',
         title: 'Raspberry Pi Hardware: GPS, Sensors, GPIO, Brightness',
-        desc: "Four Rig Bridge plugins close HamClock's hardware gap. GPS (NMEA serial, gpsd, or a fifo) can set or follow your DE location; a BME280/BMP280 or any HTTP JSON sensor feeds an Environment panel with 24-hour history; GPIO lines on HamClock's pinout give you a PTT/ON-AIR input, countdown and alarm buttons, and ON-AIR, alarm, countdown and satellite-visible outputs; an LTR-329 light sensor drives the backlight with two-point calibration. Alpha: none of it has been on real hardware yet, so field reports are very welcome.",
+        desc: 'Four Rig Bridge plugins for the Raspberry Pi shack. GPS (NMEA serial, gpsd, or a fifo) can set or follow your DE location; a BME280/BMP280 or any HTTP JSON sensor feeds an Environment panel with 24-hour history; GPIO lines give you a PTT/ON-AIR input, countdown and alarm buttons, and ON-AIR, alarm, countdown and satellite-visible outputs; an LTR-329 light sensor drives the backlight with two-point calibration. Alpha: none of it has been on real hardware yet, so field reports are very welcome.',
       },
       {
         icon: '🚙',

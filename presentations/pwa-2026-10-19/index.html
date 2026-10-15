@@ -531,8 +531,8 @@
                 shacks around the world for years.
               </p>
               <p>
-                OpenHamClock is a ground-up rewrite for the modern web. Same spirit, new foundation. And as of this
-                month, every pane and tool his HamClock had, ours has too.
+                OpenHamClock is a ground-up rewrite for the modern web. Same spirit, new foundation — and a lot more of
+                the hobby on one screen.
               </p>
             </div>
             <div>
@@ -555,10 +555,8 @@
             Before anything new, I want to acknowledge where this comes from. Elwood Downey, WB0OEW, built the original
             HamClock, the little dashboard you've seen on Raspberry Pis everywhere. Elwood became a Silent Key early
             this year. OpenHamClock is not a fork of his code; it's a ground-up rewrite for the web. But the goal is
-            exactly his: one screen that tells an operator what's happening in the world. And I'll say something at the
-            end of this talk that I couldn't have said a month ago: we went through his manual page by page, and every
-            pane, planning tool and control command his HamClock had now has an equivalent here. The dedication in the
-            license file is real. [Pause, then advance.]
+            exactly his: one screen that tells an operator what's happening in the world. The dedication in the license
+            file is real. [Pause, then advance.]
           </aside>
         </section>
 
@@ -1118,7 +1116,8 @@
                 </li>
                 <li>Browser notifications; Web Push for severe space weather with the browser closed</li>
                 <li>
-                  Watch lists in HamClock's grammar: <code>20M NADXCC</code>, <code>40CW VP2E</code>, <code>3Y/</code>
+                  Watch lists with a compact spec grammar: <code>20M NADXCC</code>, <code>40CW VP2E</code>,
+                  <code>3Y/</code>
                 </li>
               </ul>
               <h3>Shack display mode</h3>
@@ -1134,11 +1133,11 @@
             Two more ways to shape it. First, alerts. Every feed can have its own tone: parks, summits, the cluster,
             your watch list, DXpeditions, contest starts, satellite passes, band openings, lightning near you, space
             weather. Browser notifications, and true push for severe space weather even with the browser closed. The
-            watch lists use the grammar HamClock users already know: twenty meters and a new DXCC, forty CW and a
-            prefix, portable stations in a country. Second, the wall. The Raspberry Pi script boots straight into a
-            fullscreen kiosk. Scene rotation cycles through layouts or profiles on a timer. There's a display schedule
-            so the screen sleeps at night, and a wake lock so a tablet doesn't. And it's an offline-capable progressive
-            web app, so it installs like an app and survives an internet blip.
+            watch lists use a compact grammar: twenty meters and a new DXCC, forty CW and a prefix, portable stations in
+            a country. Second, the wall. The Raspberry Pi script boots straight into a fullscreen kiosk. Scene rotation
+            cycles through layouts or profiles on a timer. There's a display schedule so the screen sleeps at night, and
+            a wake lock so a tablet doesn't. And it's an offline-capable progressive web app, so it installs like an app
+            and survives an internet blip.
           </aside>
         </section>
 
@@ -1223,8 +1222,8 @@ cd openhamclock &amp;&amp; npm ci &amp;&amp; npm start</code></pre>
           <div class="kicker soon">Coming soon · next release</div>
           <h2>What's already built and waiting on Staging.</h2>
           <p>
-            This month we went through the original HamClock manual and its last eight releases line by line, built
-            everything it had that we didn't — and then added the things <em>nobody</em> has.
+            This month's work had one theme: everything a shack display should be able to do — and then the things
+            <em>nobody's</em> dashboard does yet.
           </p>
           <div class="stat-grid">
             <div class="stat"><span class="num">22</span><span class="label">New panels</span></div>
@@ -1237,12 +1236,11 @@ cd openhamclock &amp;&amp; npm ci &amp;&amp; npm start</code></pre>
             you want to try it early, the Staging branch runs it today.
           </p>
           <aside class="notes">
-            Now the coming-soon section, and it's a big one. This month we did something I'd wanted to do for a while:
-            we took Elwood's HamClock manual and the release notes for his last eight versions, went through them line
-            by line, and built every pane, planning tool, hardware hook and control command his HamClock had that ours
-            didn't. Then we added a set of things nobody has. Twenty-two new panels, seven new map layers, seven Rig
-            Bridge plugins, a remote-control API with more than thirty commands. All of it is merged, tested and in the
-            manual, and it ships in the next monthly release. If you can't wait, the Staging branch runs it today.
+            Now the coming-soon section, and it's a big one. This month's work had one theme: everything a shack display
+            should be able to do, from planning tools to hardware hooks to remote control, and then a set of things
+            nobody's dashboard does yet. Twenty-two new panels, seven new map layers, seven Rig Bridge plugins, a
+            remote-control API with more than thirty commands. All of it is merged, tested and in the manual, and it
+            ships in the next monthly release. If you can't wait, the Staging branch runs it today.
           </aside>
         </section>
 
@@ -1273,9 +1271,9 @@ cd openhamclock &amp;&amp; npm ci &amp;&amp; npm start</code></pre>
             </div>
           </div>
           <aside class="notes">
-            The single most-requested HamClock feature was the ability to move time. It's here: drag the whole dashboard
-            up to thirty days either way and the terminator, gray line, sun and moon, satellites and the propagation
-            hour all follow, with a red badge in the header until you come back to now. On top of it sit three planners:
+            The most-requested feature, by a mile, was the ability to move time. It's here: drag the whole dashboard up
+            to thirty days either way and the terminator, gray line, sun and moon, satellites and the propagation hour
+            all follow, with a red badge in the header until you come back to now. On top of it sit three planners:
             Grayline, which finds the next week of mutual twilight between you and your DX; EME, which plots the moon at
             both ends for forty-eight hours; and Satellite, which finds when a bird is above the horizon at both ends.
             Click a window and the map jumps to that moment. There's a proper alarm clock now, daily and once-only, and
@@ -1344,7 +1342,7 @@ cd openhamclock &amp;&amp; npm ci &amp;&amp; npm start</code></pre>
               <ul class="small">
                 <li>
                   <strong>Remote-control API</strong>: set DE/DX, layout, theme, panels, map view, satellite, time,
-                  alarms, rotator, screenshot — HamClock's <code>set_*</code> commands, over HTTP
+                  alarms, rotator, screenshot — the whole display, scriptable over HTTP
                 </li>
                 <li>
                   <strong>Phone remote</strong>: scan the QR code in Settings; big touch buttons for everything above
@@ -1357,8 +1355,8 @@ cd openhamclock &amp;&amp; npm ci &amp;&amp; npm start</code></pre>
                 </li>
                 <li>
                   <strong>Pi hardware via Rig Bridge</strong>: GPS (NMEA / gpsd), BME280 temperature-humidity-pressure
-                  with 24 h history, GPIO on HamClock's pinout (PTT → ON AIR, alarm, countdown, satellite LEDs),
-                  light-sensor brightness
+                  with 24 h history, GPIO lines (PTT → ON AIR, alarm, countdown, satellite LEDs), light-sensor
+                  brightness
                 </li>
                 <li>
                   <strong>Rover mode</strong>: live grid from GPS, distance to the next grid line, VUCC status,
@@ -1378,25 +1376,24 @@ cd openhamclock &amp;&amp; npm ci &amp;&amp; npm start</code></pre>
             </div>
           </div>
           <aside class="notes">
-            Control and hardware, which is where HamClock on a Pi really shined, and now this does too. There's a
-            remote-control API: every one of HamClock's set commands and then some, over HTTP. Set DE or DX, change the
-            layout or theme, add panels, change the map view, pick a satellite, shift time, arm an alarm, turn the
-            rotator, take a screenshot. Scan the QR code in Settings with your phone and you get a touch remote for all
-            of it, plus rig tuning. Or drive it from a Stream Deck or Node-RED. For public displays: demo mode,
-            grayscale, rotating titles in the callsign box, and a PIN lock so visitors can't rearrange your hamfest
-            booth. And four new Rig Bridge plugins close the Pi hardware gap: a GPS for your location and time, a BME280
-            sensor for shack temperature, humidity and pressure, GPIO on the same header pins HamClock used, so a PTT
-            line lights ON AIR and LEDs follow your alarm, countdown and satellite passes, and a light sensor for
-            automatic brightness. With the GPS following, Rover mode shows your live grid, the distance to the next grid
-            line, and your VUCC status for the square you're in. Honest caveat: the hardware plugins are new and
-            mock-tested; if you have a Pi with sensors on it, we'd love a field report.
+            Control and hardware. There's a remote-control API: everything you can do on the display, over HTTP. Set DE
+            or DX, change the layout or theme, add panels, change the map view, pick a satellite, shift time, arm an
+            alarm, turn the rotator, take a screenshot. Scan the QR code in Settings with your phone and you get a touch
+            remote for all of it, plus rig tuning. Or drive it from a Stream Deck or Node-RED. For public displays: demo
+            mode, grayscale, rotating titles in the callsign box, and a PIN lock so visitors can't rearrange your
+            hamfest booth. And four new Rig Bridge plugins close the Pi hardware gap: a GPS for your location and time,
+            a BME280 sensor for shack temperature, humidity and pressure, GPIO lines on the Pi header, so a PTT line
+            lights ON AIR and LEDs follow your alarm, countdown and satellite passes, and a light sensor for automatic
+            brightness. With the GPS following, Rover mode shows your live grid, the distance to the next grid line, and
+            your VUCC status for the square you're in. Honest caveat: the hardware plugins are new and mock-tested; if
+            you have a Pi with sensors on it, we'd love a field report.
           </aside>
         </section>
 
         <!-- 24. Coming soon: weather & sky -->
         <section>
           <div class="kicker soon">Coming soon · weather &amp; sky</div>
-          <h2>Everything HamClock 4.25–4.32 added, and then some.</h2>
+          <h2>Weather and sky, on the same screen.</h2>
           <div class="shot-grid four panels eight">
             <figure>
               <img src="../shared-2026-10/panel-tropical.jpg" alt="Tropical cyclones panel" />
@@ -1436,17 +1433,16 @@ cd openhamclock &amp;&amp; npm ci &amp;&amp; npm start</code></pre>
             · IOTA badges · magnetic bearings (WMM2025) · message of the day
           </p>
           <aside class="notes">
-            A quick wall of the weather and sky panes, all of which the original HamClock added in its last eight
-            releases and all of which are here now. Tropical cyclones with the official forecast tracks and cones, from
-            the National Hurricane Center and the Joint Typhoon Warning Center. Radiofax charts from every NOAA station,
-            with the broadcast frequencies one click from your rig. The nearest NDBC buoys with wind, waves and water
-            temperature. Red Flag fire-weather warnings with their zone outlines, and tropical cyclones with the
-            official NHC cones, which matter more on this coast. Every solar and lunar eclipse through 2040 with what
-            you'll see from your QTH. The planets, checked against JPL. NOAA's R, S and G scales with the three-day
-            forecast. Upcoming space launches with countdowns and the pads on the map. And below the pictures: the Dst
-            index, electron flux, an embedded Windy view, amateur balloons, a HamAlert feed, live nets from NetLogger,
-            IOTA badges on spots, magnetic bearings from the real World Magnetic Model, and a message-of-the-day banner
-            for club servers.
+            A quick wall of the new weather and sky panes. Tropical cyclones with the official forecast tracks and
+            cones, from the National Hurricane Center and the Joint Typhoon Warning Center. Radiofax charts from every
+            NOAA station, with the broadcast frequencies one click from your rig. The nearest NDBC buoys with wind,
+            waves and water temperature. Red Flag fire-weather warnings with their zone outlines, and tropical cyclones
+            with the official NHC cones, which matter more on this coast. Every solar and lunar eclipse through 2040
+            with what you'll see from your QTH. The planets, checked against JPL. NOAA's R, S and G scales with the
+            three-day forecast. Upcoming space launches with countdowns and the pads on the map. And below the pictures:
+            the Dst index, electron flux, an embedded Windy view, amateur balloons, a HamAlert feed, live nets from
+            NetLogger, IOTA badges on spots, magnetic bearings from the real World Magnetic Model, and a
+            message-of-the-day banner for club servers.
           </aside>
         </section>
 
@@ -1459,7 +1455,7 @@ cd openhamclock &amp;&amp; npm ci &amp;&amp; npm start</code></pre>
               <h3>DX cluster</h3>
               <ul class="small">
                 <li>
-                  <strong>Watch lists</strong> in HamClock's full grammar — bands, sub-bands, prefixes, NADXCC / NABAND
+                  <strong>Watch lists</strong> with a full spec grammar — bands, sub-bands, prefixes, NADXCC / NABAND
                   against your log — in Off / Red / Only / Not modes
                 </li>
                 <li>
@@ -1489,14 +1485,14 @@ cd openhamclock &amp;&amp; npm ci &amp;&amp; npm start</code></pre>
             </div>
           </div>
           <aside class="notes">
-            Last coming-soon slide, for the operators. The DX cluster gets HamClock's full watch-list grammar: bands,
-            sub-bands like forty CW, prefixes with the portable rules, and the ADIF keywords that mean "no DXCC in my
-            log" or "no band slot," in red, only, or not modes. If you run your own cluster node, you can send your own
-            commands after login, and a console panel shows the raw session. The list no longer jumps while you're
-            reading it. On the satellite side: the rotator can follow the DX bearing or track the selected satellite,
-            pre-positioning before AOS, with flip mode for rotators that go past ninety degrees. Doppler tuning keeps
-            the rig on the corrected downlink. There's a polar sky view of the next pass, hams.at alerts, and stale
-            element sets are flagged with a refresh button. That's the next release. It's a big one.
+            Last coming-soon slide, for the operators. The DX cluster gets a full watch-list grammar: bands, sub-bands
+            like forty CW, prefixes with the portable rules, and the ADIF keywords that mean "no DXCC in my log" or "no
+            band slot," in red, only, or not modes. If you run your own cluster node, you can send your own commands
+            after login, and a console panel shows the raw session. The list no longer jumps while you're reading it. On
+            the satellite side: the rotator can follow the DX bearing or track the selected satellite, pre-positioning
+            before AOS, with flip mode for rotators that go past ninety degrees. Doppler tuning keeps the rig on the
+            corrected downlink. There's a polar sky view of the next pass, hams.at alerts, and stale element sets are
+            flagged with a refresh button. That's the next release. It's a big one.
           </aside>
         </section>
 

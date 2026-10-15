@@ -47,10 +47,7 @@ _Hands check, fast, don't dwell:_
 > seen on Raspberry Pis everywhere. Elwood became a Silent Key early this
 > year. OpenHamClock is not a fork of his code; it's a ground-up rewrite for
 > the web. But the goal is exactly his: one screen that tells an operator
-> what's happening in the world. And I'll say something at the end of this
-> talk that I couldn't have said a month ago: we went through his manual page
-> by page, and every pane, planning tool and control command his HamClock had
-> now has an equivalent here. The dedication in the license file is real.
+> what's happening in the world. The dedication in the license file is real.
 
 _[Pause a beat, then advance.]_
 
@@ -238,7 +235,7 @@ _[Pause a beat, then advance.]_
 
 > Alerts: every feed can have its own tone, plus browser notifications, plus
 > true push for severe space weather with the browser closed. Watch lists use
-> the grammar HamClock users know: twenty meters and a new DXCC, forty CW and
+> a compact grammar: twenty meters and a new DXCC, forty CW and
 > a prefix. And the wall: the Pi script boots into a fullscreen kiosk, scene
 > rotation cycles layouts on a timer, a display schedule sleeps the screen at
 > night, a wake lock keeps a tablet on. It's an offline-capable web app, so it
@@ -275,11 +272,10 @@ with the URLs and what's coming."
 
 ## Slide 20 — Coming soon: intro (1:00)
 
-> Now the coming-soon section, and it's a big one. This month we took
-> Elwood's HamClock manual and the release notes for his last eight versions,
-> went through them line by line, and built every pane, planning tool,
-> hardware hook and control command his HamClock had that ours didn't. Then
-> we added a set of things nobody has. Twenty-two new panels, seven new map
+> Now the coming-soon section, and it's a big one. This month's work had
+> one theme: everything a shack display should be able to do, from planning
+> tools to hardware hooks to remote control, and then a set of things nobody's
+> dashboard does yet. Twenty-two new panels, seven new map
 > layers, seven Rig Bridge plugins, a remote-control API with more than thirty
 > commands. All merged, tested, in the manual; it ships in the next monthly
 > release. If you can't wait, the Staging branch runs it today.
@@ -289,7 +285,7 @@ carry on; the slides don't change._
 
 ## Slide 21 — Time shift & planners (1:30)
 
-> The single most-requested HamClock feature was moving time. It's here: drag
+> The most-requested feature, by a mile, was moving time. It's here: drag
 > the whole dashboard up to thirty days either way and the terminator, gray
 > line, sun and moon, satellites and the propagation hour all follow, with a
 > red badge in the header until you come back to now. On top of it, three
@@ -315,13 +311,12 @@ carry on; the slides don't change._
 
 ## Slide 23 — Remote, kiosk, Pi hardware (1:30)
 
-> A remote-control API: every one of HamClock's set commands and then some,
-> over HTTP. Scan the QR code in Settings with your phone and you get a touch
+> A remote-control API: everything you can do on the display, over HTTP. Scan the QR code in Settings with your phone and you get a touch
 > remote for all of it plus rig tuning; or drive it from a Stream Deck or
 > Node-RED. For public displays: demo mode, grayscale, rotating titles, and a
 > PIN lock so visitors can't rearrange your hamfest booth. And four new Rig
-> Bridge plugins close the Pi hardware gap: GPS, a BME280 sensor, GPIO on
-> HamClock's own header pins so a PTT line lights ON AIR and LEDs follow your
+> Bridge plugins close the Pi hardware gap: GPS, a BME280 sensor, GPIO lines on
+> the Pi header so a PTT line lights ON AIR and LEDs follow your
 > alarm and satellite passes, and a light sensor for brightness. With the GPS
 > following, Rover mode shows your live grid, the distance to the next grid
 > line, and VUCC status. Honest caveat: the hardware plugins are new and
@@ -329,8 +324,7 @@ carry on; the slides don't change._
 
 ## Slide 24 — Weather & sky (1:00)
 
-> A quick wall of the weather and sky panes HamClock added in its last eight
-> releases, all here now: tropical cyclones with the official NHC cones,
+> A quick wall of the new weather and sky panes: tropical cyclones with the official NHC cones,
 > radiofax charts with the frequencies one click from your rig, NDBC buoys,
 > Red Flag fire-weather warnings and NHC hurricane cones that matter on this
 > coast, every eclipse through 2040 with what you'll
@@ -341,7 +335,7 @@ carry on; the slides don't change._
 
 ## Slide 25 — Cluster & satellites (1:00)
 
-> For the operators: HamClock's full watch-list grammar, login commands to
+> For the operators: a full watch-list grammar, login commands to
 > your own node, a console panel, and a list that stops jumping while you
 > read. On satellites: rotator auto-track with pre-positioning and flip mode,
 > Doppler tuning on the corrected downlink, a polar sky view, hams.at alerts,
@@ -379,8 +373,7 @@ _[Watch the Zoom chat as well as hands in the room.]_
 Same idea, different foundation. HamClock is a C++ program drawing on a fixed
 800×480 canvas; this is a web app that fits any screen, speaks sixteen
 languages, and adds a logbook, rig control, EmComm, plugins and the new
-intelligence features. As of the next release every HamClock pane and control
-command has an equivalent. If your Pi HamClock makes you happy, keep it; if
+intelligence features. If your Pi HamClock makes you happy, keep it; if
 you want the extras, the Pi kiosk script runs this on the same hardware.
 
 **"Will it run on my Pi 3?"**

@@ -91,7 +91,7 @@ The project settled into a monthly release cadence (first Tuesday), and each dro
 - **Rig control** — Click-to-tune across all spot panels, unified Rig Bridge with 20+ plugins (rigs, rotator, digital modes, APRS TNC, Winlink, KiwiSDR beacon monitor, HamAlert, MQTT publish, GPS, sensors, GPIO, brightness), cloud relay for remote operation, rotator auto-track and satellite Doppler tuning
 - **Native logbook** — IndexedDB storage, ADIF import/export, log-from-spot, group/Field Day logging, award tracking, worked-before badges, Wavelog/Cloudlog/QRZ push, LoTW pull, N1MM/N3FJP/DXLog ingest
 - **EmComm platform** — Full emergency communications dashboard with APRS station tracking (internet + local RF), net operations, point-to-point APRS messaging, resource token aggregation, NWS alerts, FEMA shelters/disasters, Winlink gateway layer, telemetry, event log and after-action reports
-- **HamClock parity** — Every pane, planning tool and control command from the original HamClock 4.x manual and its 4.25–4.32 releases now has an equivalent (see the v26.11.0 What's New), including the whole-dashboard time shift, watch-list grammar, remote-control API, and the Raspberry Pi hardware hooks
+- **Shack-display completeness** — whole-dashboard time shift, planners, alarm clock, a full watch-list grammar, a remote-control API with a phone remote, and Raspberry Pi hardware hooks (see the v26.11.0 What's New)
 - **Accessibility** — W3C tablist keyboard navigation, aria-live event announcements, a non-map "Map Data" text view, WCAG AA contrast in every theme, spoken alerts
 - **Multi-platform** — Browser, PWA/offline, Electron desktop, Raspberry Pi kiosk, Docker/GHCR, Railway, FreeBSD
 - **16 languages** — ca, de, en, es, fr, it, ja, ka, ko, ms, nl, pt, ru, sl, th, zh
@@ -121,13 +121,13 @@ Already built, merged to Staging, and documented in the manual; headed for the n
 - **Satellite automation** — rotator auto-track with flip mode, Doppler tuning, hams.at alerts, TLE age limit, polar sky view
 - **Planners** — Grayline, EME mutual windows, satellite mutual visibility
 - **Alarm clock** — daily and once-only, contest-start alarms
-- **DX cluster power features** — HamClock watch-list grammar (bands, sub-bands, NADXCC/NAPREF/NAGRID/NABAND, portable prefixes; Off/Red/Only/Not), login commands, cluster console, scroll NEW indicator, spot label options, UDP sets DX, IOTA badges and filter
+- **DX cluster power features** — full watch-list grammar (bands, sub-bands, NADXCC/NAPREF/NAGRID/NABAND, portable prefixes; Off/Red/Only/Not), login commands, cluster console, scroll NEW indicator, spot label options, UDP sets DX, IOTA badges and filter
 - **Weather and hazards** — tropical cyclones (NHC + JTWC), fire weather alerts, NDBC buoys, Windy embed, WEFAX charts
 - **Map** — political boundaries with custom colours, nearest-city cursor readout, launch sites, HAB/pico balloons
 - **Space weather and sky** — NOAA R/S/G scales, Dst, electron flux, eclipses through 2040, planets, space launches, auto Aurora/D-RAP layer
 - **Magnetic bearings** — WMM2025 declination, °M suffix everywhere
 - **HamAlert, NetLogger live nets, message of the day**
-- **Raspberry Pi hardware via Rig Bridge** — GPS (NMEA/gpsd/fifo), BME280/HTTP sensors, GPIO on the HamClock pinout, LTR-329 brightness; Rover mode with grid-change alerts
+- **Raspberry Pi hardware via Rig Bridge** — GPS (NMEA/gpsd/fifo), BME280/HTTP sensors, GPIO lines, LTR-329 brightness; Rover mode with grid-change alerts
 
 ### Known Gaps in the Staging Work
 
