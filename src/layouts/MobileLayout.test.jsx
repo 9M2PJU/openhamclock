@@ -22,10 +22,13 @@ vi.mock('../components', () => {
   };
 });
 vi.mock('../components/LogbookPanel.jsx', () => ({ default: () => <div data-stub="LogbookPanel">LogbookPanel</div> }));
+vi.mock('../components/MobileEmcommCard.jsx', () => ({
+  default: () => <div data-stub="MobileEmcommCard">MobileEmcommCard</div>,
+}));
 vi.mock('../contexts/RigContext.jsx', () => ({ useRig: () => ({ tuneTo: () => {} }) }));
 
 import MobileLayout from './MobileLayout.jsx';
-import { MOBILE_CARD_KEY } from '../utils/mobileLayout.js';
+import { MOBILE_CARD_KEY, MOBILE_CARD_PREFS_KEY, PREVIOUS_LAYOUT_KEY } from '../utils/mobileLayout.js';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -151,6 +154,41 @@ describe('MobileLayout', () => {
     expect(row.querySelector('.ohc-mobile-side .ohc-mobile-strip')).not.toBeNull();
     const ids = [...container.querySelectorAll('.ohc-mobile-card')].map((c) => c.dataset.card);
     expect(ids).toContain('aprs');
+    unmount();
+  });
+
+  it('EmComm card is opt-in through the card picker and saved', () => {
+    setViewport(390, 844);
+    const { container, unmount } = mount();
+    const ids = () => [...container.querySelectorAll('.ohc-mobile-card')].map((c) => c.dataset.card);
+    expect(ids()).not.toContain('emcomm');
+    expect(container.querySelector('[data-stub="MobileEmcommCard"]')).toBeNull();
+
+    act(() => container.querySelector('button[aria-label="Choose cards"]').click());
+    const sheet = container.querySelector('.ohc-mobile-picker');
+    expect(sheet).not.toBeNull();
+    const emcommRow = [...sheet.querySelectorAll('label')].find((l) => l.textContent.includes('EmComm'));
+    expect(emcommRow.querySelector('input').checked).toBe(false);
+    act(() => emcommRow.querySelector('input').click());
+    expect(ids()[0]).toBe('emcomm');
+    expect(JSON.parse(localStorage.getItem(MOBILE_CARD_PREFS_KEY)).enabled.emcomm).toBe(true);
+
+    // Switching a regular card off removes it
+    const solarRow = [...sheet.querySelectorAll('label')].find((l) => l.textContent.includes('Solar'));
+    act(() => solarRow.querySelector('input').click());
+    expect(ids()).not.toContain('solar');
+    unmount();
+  });
+
+  it('EmComm card defaults on for an operator arriving from the EmComm layout', () => {
+    setViewport(390, 844);
+    localStorage.setItem(PREVIOUS_LAYOUT_KEY, 'emcomm');
+    const { container, unmount } = mount();
+    expect(container.querySelector('.ohc-mobile-card').dataset.card).toBe('emcomm');
+    // Its data component is mounted because it is the visible card
+    expect(container.querySelector('[data-stub="MobileEmcommCard"]')).not.toBeNull();
+    // ...and the default is saved so a later layout hop can't flip it
+    expect(JSON.parse(localStorage.getItem(MOBILE_CARD_PREFS_KEY)).enabled.emcomm).toBe(true);
     unmount();
   });
 

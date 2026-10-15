@@ -26,6 +26,7 @@ import {
   readSuggestionDone,
   markSuggestionDone,
   hasSavedLayout,
+  PREVIOUS_LAYOUT_KEY,
 } from './utils/mobileLayout.js';
 
 import { resetActiveLayout } from './store/layoutStore.js';
@@ -197,6 +198,21 @@ const App = () => {
       }
     }
   }, [configLoaded, config.callsign]);
+
+  // Remember the layout before the current one (the Mobile layout's card
+  // picker turns its EmComm card on by default for operators coming from
+  // the EmComm layout).
+  const prevLayoutRef = useRef(config.layout);
+  useEffect(() => {
+    if (prevLayoutRef.current && prevLayoutRef.current !== config.layout) {
+      try {
+        localStorage.setItem(PREVIOUS_LAYOUT_KEY, prevLayoutRef.current);
+      } catch {
+        /* ignore */
+      }
+    }
+    prevLayoutRef.current = config.layout;
+  }, [config.layout]);
 
   // ── Keyboard shortcuts for map layer toggling ──
   // Uses pinned shortcuts from layer metadata when available,
