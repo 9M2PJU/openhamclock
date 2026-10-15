@@ -299,6 +299,7 @@ require('./server/routes/repeaters')(app, ctx); // hearham.com repeater director
 require('./server/routes/pota-spot')(app, ctx); // POTA activator self-spotting + park lookup
 require('./server/routes/aprs')(app, ctx);
 require('./server/routes/field-reports')(app, ctx); // EmComm field reports (Winlink Express CSV ingest)
+require('./server/routes/incident')(app, ctx); // shared EmComm incident: roster, event log, reports across sites
 require('./server/routes/wsjtx')(app, ctx);
 require('./server/routes/n1mm')(app, ctx);
 require('./server/routes/openapi')(app, ctx); // Open QSO-layer API (#1015) — see docs/API.md
