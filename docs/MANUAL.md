@@ -724,6 +724,26 @@ _Net Control in the EmComm rail: a running net with its timer and counter, the c
 
 **Reloads and history.** The running net is saved in your browser after every change, so a reload or a crash does not lose it. Closed nets are kept in the **History** tab (the last 50); open any of them to see its report again, or **Export all (CSV)** for one spreadsheet of every net. The running net and history stay in this browser and are not synced to other devices.
 
+### Shared incident: one picture for several operators and sites
+
+On its own, each browser keeps its own event log and shows its own server's roster and reports. A **shared incident** puts everyone working the same activation on one operating picture: the net roster, the event log, field and shelter reports, and a small incident board.
+
+The **Incident** panel sits at the top of the EmComm rail. Its header shows the connection state (**LOCAL** when not joined, then **LIVE**, **CONNECTING**, **OFFLINE** or **ERROR**) and, once joined, how many stations are connected.
+
+- **Create:** press **Create** and give the incident a name, the incident commander and the net frequency (all optional), plus an optional label for your site (e.g. "EOC North"). You get an incident id and a join key.
+- **Invite:** **Invite** shows the id, the key (in groups of four, easy to read over the air) and a QR code. Scanning the QR code with a phone opens OpenHamClock in the EmComm layout with the Join form already filled in; **Copy link** gives the same link for a message. The key travels after the `#` in the link, so it never reaches a web server's logs.
+- **Join:** press **Join** and enter the id and key (case and dashes don't matter), or open an invite link.
+- **While joined:**
+  - The Net Roster, Event Log, Field Reports, shelter markers and the map show everything every joined station has seen, merged without duplicates. Roster rows and log entries show which site they came from (`@EOC North`).
+  - Your own server's APRS check-ins and check-outs, the stations on your running [Net Control](#net-control-voice-nets) net, the events your browser records from the moment you join, and your field and shelter reports flow to the others within a second or two.
+  - **Check in** (callsign plus status or resources) adds a voice or in-person check-in to the shared roster, and **OUT** on a roster row checks that operator out for everyone.
+  - **Edit** changes the incident board (name, IC, net frequency, notes) for everyone.
+  - The Event Log's **CSV** and **Print / PDF** export the shared log. **Clear** is disabled, because the shared log belongs to the incident.
+- **Losing the connection:** your updates queue up in the browser ("N waiting to send") and go out when the connection returns. Nothing is lost on a page reload, and nothing is duplicated when it reconnects. The last shared picture stays on screen while you are offline.
+- **Leave:** **Leave** returns this browser to local-only operation. The incident carries on for everyone else, and your own event log is still there.
+
+The server keeps incidents in `data/incidents.json`, so a restart does not lose an activation. An incident nobody has used for 7 days expires. The server stores only a salted hash of the join key, so anyone who has the id and key can read and add to the incident: share them the way you would share a net password. On the hosted site incidents cannot be listed or looked up without the key, and the limits are lower. For other tools, see the [shared incident API](API.md#shared-incident-api).
+
 Deep dive: [docs/emcomm-roadmap.md](emcomm-roadmap.md).
 
 ### Reachable Winlink gateways
