@@ -18,6 +18,15 @@ import ContestLayout from './layouts/ContestLayout.jsx';
 import EmeLayout from './layouts/EmeLayout.jsx';
 import ClockLayout from './layouts/ClockLayout';
 import FocusLayout, { FOCUS_LAYOUT_IDS } from './layouts/FocusLayout.jsx';
+import MobileLayout from './layouts/MobileLayout.jsx';
+import MobileLayoutSuggestion from './components/MobileLayoutSuggestion.jsx';
+import {
+  MOBILE_LAYOUT_ID,
+  shouldSuggestMobileLayout,
+  readSuggestionDone,
+  markSuggestionDone,
+  hasSavedLayout,
+} from './utils/mobileLayout.js';
 
 import { resetActiveLayout } from './store/layoutStore.js';
 import { RigProvider } from './contexts/RigContext.jsx';
@@ -116,6 +125,8 @@ const App = () => {
   const { config, configLoaded, showDxWeather, classicAnalogClock, handleSaveConfig, serverLocal } = useAppConfig();
 
   const [showSettings, setShowSettings] = useState(false);
+  // One-time offer of the Mobile layout on a phone-sized first visit
+  const [mobileSuggest, setMobileSuggest] = useState(false);
   const [settingsDefaultTab, setSettingsDefaultTab] = useState(null);
   const [showDXFilters, setShowDXFilters] = useState(false);
   const [showPSKFilters, setShowPSKFilters] = useState(false);
@@ -155,6 +166,20 @@ const App = () => {
   useEffect(() => {
     if (!configLoaded) return;
     const hasLocalStorage = localStorage.getItem('openhamclock_config');
+    // Phone-sized first visit with no saved layout: offer the Mobile layout
+    // once (shown after the first-run Settings dialog closes). Larger
+    // screens keep the existing auto-detection below untouched.
+    if (
+      shouldSuggestMobileLayout({
+        width: window.innerWidth,
+        height: window.innerHeight,
+        layout: config.layout,
+        firstVisit: !hasSavedLayout(hasLocalStorage),
+        alreadySuggested: readSuggestionDone(localStorage),
+      })
+    ) {
+      setMobileSuggest(true);
+    }
     if (!hasLocalStorage && config.callsign === 'N0CALL') {
       setShowSettings(true);
 
@@ -1061,7 +1086,8 @@ const App = () => {
         justifyContent: 'center',
         alignItems: 'center',
         overflow: 'hidden',
-        paddingLeft: sidebarWidth,
+        // The Mobile layout has its own settings button and no sidebar
+        paddingLeft: config.layout === MOBILE_LAYOUT_ID ? 0 : sidebarWidth,
         boxSizing: 'border-box',
         transition: 'padding-left 0.2s ease',
       }}
@@ -1114,7 +1140,7 @@ const App = () => {
         onUpdateClick={handleUpdateClick}
         showUpdateButton={isLocalInstall}
         updateInProgress={updateInProgress}
-        breakpoint={breakpoint}
+        breakpoint={config.layout === MOBILE_LAYOUT_ID ? 'mobile' : breakpoint}
         isDockable={config.layout === 'dockable'}
         layoutLocked={layoutLocked || kiosk.locked}
         onToggleLayoutLock={kiosk.locked ? kiosk.requestUnlock : toggleLayoutLock}
@@ -1131,6 +1157,8 @@ const App = () => {
             <EmeLayout {...layoutProps} />
           ) : config.layout === 'clock' ? (
             <ClockLayout {...layoutProps} />
+          ) : config.layout === MOBILE_LAYOUT_ID ? (
+            <MobileLayout {...layoutProps} />
           ) : FOCUS_LAYOUT_IDS.includes(config.layout) ? (
             <FocusLayout {...layoutProps} focus={config.layout} />
           ) : config.layout === 'dockable' ? (
@@ -1244,6 +1272,19 @@ const App = () => {
       />
       <KioskUnlockDialog open={kiosk.unlockPrompt} onCancel={kiosk.cancelUnlock} onSubmit={kiosk.tryUnlock} />
       <WhatsNew showWhatsNew={config.showWhatsNew} />
+      {mobileSuggest && !showSettings && (
+        <MobileLayoutSuggestion
+          onAccept={() => {
+            markSuggestionDone(localStorage);
+            setMobileSuggest(false);
+            handleSaveConfig({ ...config, layout: MOBILE_LAYOUT_ID });
+          }}
+          onDismiss={() => {
+            markSuggestionDone(localStorage);
+            setMobileSuggest(false);
+          }}
+        />
+      )}
       {/* Server admin's message of the day — fixed top bar, dismissible per message id */}
       <MotdBanner />
       {/* Star Trek Day 2026 (Sept 7-9) — one-shot event notice, ?stday previews */}

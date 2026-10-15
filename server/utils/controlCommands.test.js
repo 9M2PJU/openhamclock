@@ -76,6 +76,7 @@ describe('parseControlCommand', () => {
 
   it('layout: validates ids and dockable presets', () => {
     expect(parseControlCommand('layout', { layout: 'contest' }).ok).toBe(true);
+    expect(parseControlCommand('layout', { layout: 'mobile' }).ok).toBe(true);
     expect(parseControlCommand('layout', { layout: 'dockable#night' }).ok).toBe(true);
     expect(parseControlCommand('layout', { layout: 'modern#x' }).ok).toBe(false);
     expect(parseControlCommand('layout', { layout: 'bogus' }).ok).toBe(false);

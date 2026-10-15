@@ -25,6 +25,7 @@
     ['hunter', 'Hunter'],
     ['weather', 'Weather'],
     ['airtraffic', 'Air Traffic'],
+    ['mobile', 'Mobile'],
   ];
   const THEMES = [
     'dark',
