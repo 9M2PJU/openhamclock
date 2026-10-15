@@ -9,6 +9,7 @@ import { matchesDXSpotPath } from '../utils/dxClusterSpotMatcher';
 import { balanceSpotWindow } from '../utils/dxClusterFilters';
 import { IconSearch, IconMap, IconGlobe } from './Icons.jsx';
 import CallsignLink from './CallsignLink.jsx';
+import SpotBadge from './SpotBadge.jsx';
 import { useCallsignPopup } from './CallsignPopupManager.jsx';
 import { classifySpotMode } from '../hooks/useBandHealth.js';
 import { useWorkedBefore } from '../hooks/useWorkedBefore.js';
@@ -830,97 +831,7 @@ export const DXClusterPanel = ({
                       location={{ grid: spot.dxGrid, lat: spot.dxLat, lon: spot.dxLon }}
                       spot={freqMHz > 0 ? { freq: freqMHz * 1000, mode: modeInfo?.mode ?? null } : undefined}
                     />
-                    {badge === 'new' && (
-                      <span
-                        title={t('dxClusterPanel.workedBadge.newTooltip', {
-                          defaultValue: 'New one — this DXCC entity is not in your logbook (ATNO)',
-                        })}
-                        aria-label={t('dxClusterPanel.workedBadge.newTooltip', {
-                          defaultValue: 'New one — this DXCC entity is not in your logbook (ATNO)',
-                        })}
-                        style={{
-                          marginLeft: '4px',
-                          padding: '0 3px',
-                          fontSize: '8px',
-                          fontWeight: '700',
-                          letterSpacing: '0.5px',
-                          color: '#ff4444',
-                          background: 'rgba(255, 68, 68, 0.15)',
-                          border: '1px solid rgba(255, 68, 68, 0.6)',
-                          borderRadius: '2px',
-                          verticalAlign: 'middle',
-                        }}
-                      >
-                        {t('dxClusterPanel.workedBadge.new', { defaultValue: 'NEW' })}
-                      </span>
-                    )}
-                    {badge === 'new-band' && (
-                      <span
-                        title={t('dxClusterPanel.workedBadge.newBandTooltip', {
-                          defaultValue: 'Entity worked before, but not on this band — new band slot',
-                        })}
-                        aria-label={t('dxClusterPanel.workedBadge.newBandTooltip', {
-                          defaultValue: 'Entity worked before, but not on this band — new band slot',
-                        })}
-                        style={{
-                          marginLeft: '4px',
-                          padding: '0 3px',
-                          fontSize: '8px',
-                          fontWeight: '700',
-                          letterSpacing: '0.5px',
-                          color: '#ff8844',
-                          background: 'rgba(255, 136, 68, 0.12)',
-                          border: '1px solid rgba(255, 136, 68, 0.5)',
-                          borderRadius: '2px',
-                          verticalAlign: 'middle',
-                        }}
-                      >
-                        {t('dxClusterPanel.workedBadge.newBand', { defaultValue: 'BAND' })}
-                      </span>
-                    )}
-                    {badge === 'dupe' && (
-                      <span
-                        title={t('dxClusterPanel.workedBadge.dupeTooltip', {
-                          defaultValue: 'Already in your log on this band and mode — dupe',
-                        })}
-                        aria-label={t('dxClusterPanel.workedBadge.dupeTooltip', {
-                          defaultValue: 'Already in your log on this band and mode — dupe',
-                        })}
-                        style={{
-                          marginLeft: '4px',
-                          padding: '0 3px',
-                          fontSize: '8px',
-                          fontWeight: '700',
-                          letterSpacing: '0.5px',
-                          color: '#ffaa00',
-                          background: 'rgba(255, 170, 0, 0.15)',
-                          border: '1px solid rgba(255, 170, 0, 0.6)',
-                          borderRadius: '2px',
-                          verticalAlign: 'middle',
-                        }}
-                      >
-                        {t('dxClusterPanel.workedBadge.dupe', { defaultValue: 'DUPE' })}
-                      </span>
-                    )}
-                    {badge === 'worked' && (
-                      <span
-                        title={t('dxClusterPanel.workedBadge.workedTooltip', {
-                          defaultValue: 'In your log — worked before on a different band or mode',
-                        })}
-                        aria-label={t('dxClusterPanel.workedBadge.workedTooltip', {
-                          defaultValue: 'In your log — worked before on a different band or mode',
-                        })}
-                        style={{
-                          marginLeft: '4px',
-                          fontSize: '9px',
-                          color: 'var(--text-muted)',
-                          opacity: 0.75,
-                          verticalAlign: 'middle',
-                        }}
-                      >
-                        ✓
-                      </span>
-                    )}
+                    <SpotBadge badge={badge} />
                     {iota && (
                       <span
                         title={`IOTA ${iota}${iotaName(iota) ? ` — ${iotaName(iota)}` : ''}`}
