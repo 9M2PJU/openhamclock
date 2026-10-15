@@ -28,6 +28,31 @@
   var API_CACHE_MAX_ENTRIES = 150;
 
   /**
+   * Offline map area packs (Settings → Map Layers → Offline map areas).
+   * The operator downloads basemap tiles plus an EmComm data snapshot into
+   * this cache ahead of time. Unlike the versioned app/api caches it must
+   * survive deploys, so it is never treated as stale (see staleCacheNames).
+   */
+  var OFFLINE_PACK_CACHE = 'ohc-offline-packs';
+  var PERSISTENT_CACHE_PREFIX = 'ohc-offline-';
+
+  /**
+   * Cross-origin tile hosts whose basemap terms allow downloading an area
+   * for offline use. Requests to these hosts are routed through the worker
+   * so a pack can answer them when the network is gone; every other
+   * cross-origin request stays bypassed. Keep in lockstep with the
+   * `offlinePack: true` styles in src/utils/config.js MAP_STYLES (a unit
+   * test enforces it).
+   */
+  var OFFLINE_TILE_HOSTS = ['basemap.nationalmap.gov'];
+
+  /**
+   * How long a tile request may wait on the network before an offline pack
+   * copy is served instead ("lie-fi": connected but nothing comes back).
+   */
+  var PACK_TILE_NETWORK_TIMEOUT_MS = 4000;
+
+  /**
    * Normalize a version token (from the ?v= registration query param) into
    * something safe to embed in a Cache Storage name.
    */
@@ -46,16 +71,30 @@
   }
 
   /**
+   * True for caches that hold operator-created data (offline area packs)
+   * and must outlive version changes and the ?nosw cache sweep.
+   */
+  function isPersistentCacheName(name) {
+    return typeof name === 'string' && name.indexOf(PERSISTENT_CACHE_PREFIX) === 0;
+  }
+
+  /**
    * Given every Cache Storage name present, return the ohc-* caches that
    * belong to a different version and should be deleted on activate.
-   * Non-ohc caches (other apps on the origin, future features) are left alone.
+   * Non-ohc caches (other apps on the origin, future features) and the
+   * persistent offline-pack cache are left alone.
    */
   function staleCacheNames(allNames, version) {
     var names = cacheNames(version);
     var keep = [names.app, names.api];
     return (allNames || []).filter(function (n) {
-      return typeof n === 'string' && n.indexOf('ohc-') === 0 && keep.indexOf(n) === -1;
+      return typeof n === 'string' && n.indexOf('ohc-') === 0 && keep.indexOf(n) === -1 && !isPersistentCacheName(n);
     });
+  }
+
+  /** True when a URL points at a tile host that offline packs may cover. */
+  function isOfflineTileHost(hostname) {
+    return OFFLINE_TILE_HOSTS.indexOf(String(hostname || '').toLowerCase()) !== -1;
   }
 
   /** True for API paths that stream (SSE) and must be left to the browser. */
@@ -73,10 +112,12 @@
    *   method - HTTP method
    *   mode   - Request.mode ('navigate' for top-level navigations)
    *   origin - the service worker's own origin (self.location.origin)
-   * @returns {'navigation'|'asset'|'api'|'bypass'}
+   * @returns {'navigation'|'asset'|'api'|'tile'|'bypass'}
    *   navigation - network-first with cached-shell fallback
    *   asset      - cache-first, cache-on-fetch
    *   api        - network-first with cached fallback (offline resilience)
+   *   tile       - basemap tile an offline pack may hold: network when it
+   *                works, the pack copy when offline or the network fails
    *   bypass     - do not call respondWith; browser default behavior
    */
   function classifyRequest(req) {
@@ -87,7 +128,12 @@
     } catch (e) {
       return 'bypass';
     }
-    if (u.origin !== req.origin) return 'bypass'; // cross-origin: tiles, CDNs, etc.
+    if (u.origin !== req.origin) {
+      // Cross-origin is left to the browser (CDNs, most tile servers), except
+      // tile hosts an offline area pack can stand in for.
+      if (req.mode !== 'navigate' && isOfflineTileHost(u.hostname)) return 'tile';
+      return 'bypass';
+    }
     if (req.mode === 'navigate') return 'navigation';
     var p = u.pathname;
     if (p.indexOf('/api/') === 0) {
@@ -124,6 +170,11 @@
 
   global.OHC_SW_POLICY = {
     API_CACHE_MAX_ENTRIES: API_CACHE_MAX_ENTRIES,
+    OFFLINE_PACK_CACHE: OFFLINE_PACK_CACHE,
+    OFFLINE_TILE_HOSTS: OFFLINE_TILE_HOSTS,
+    PACK_TILE_NETWORK_TIMEOUT_MS: PACK_TILE_NETWORK_TIMEOUT_MS,
+    isPersistentCacheName: isPersistentCacheName,
+    isOfflineTileHost: isOfflineTileHost,
     normalizeVersion: normalizeVersion,
     cacheNames: cacheNames,
     staleCacheNames: staleCacheNames,

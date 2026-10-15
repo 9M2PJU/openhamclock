@@ -17,11 +17,17 @@
  *   - /assets/* + static: cache-first, cache-on-fetch (hashed, immutable)
  *   - GET /api/*:         network-first with cached fallback — online
  *                         behavior is unchanged, offline panels get their
- *                         last-known data. SSE streams are never touched.
+ *                         last-known data (marked X-OHC-Stale: 1 so the UI
+ *                         can say "as of"). SSE streams are never touched.
+ *   - offline-pack tiles: cross-origin tiles from hosts whose terms allow
+ *                         offline area packs — network when it works, the
+ *                         operator's downloaded pack when it doesn't.
  *   - everything else:    bypassed (browser default), incl. cross-origin
  *
  * Escape hatch: loading the app with ?nosw unregisters this worker and
- * clears all ohc-* caches (handled in src/pwa/registerServiceWorker.js).
+ * clears the versioned ohc-* caches (handled in
+ * src/pwa/registerServiceWorker.js). Offline area packs are operator data
+ * and are kept; delete them from the pack list.
  */
 'use strict';
 
@@ -106,6 +112,8 @@ self.addEventListener('fetch', function (event) {
     event.respondWith(handleAsset(req));
   } else if (decision === 'api') {
     event.respondWith(handleApi(event, req));
+  } else if (decision === 'tile') {
+    event.respondWith(handleTile(event, req));
   }
   // 'bypass' → no respondWith: streaming (SSE), non-GET, cross-origin, and
   // anything unrecognized goes straight to the network untouched.
@@ -161,12 +169,84 @@ async function handleApi(event, req) {
     return res;
   } catch (e) {
     var cached = await cache.match(req);
-    if (cached) return cached;
+    if (cached) return markStale(cached);
     return new Response(JSON.stringify({ error: 'offline', offline: true }), {
       status: 503,
       headers: { 'Content-Type': 'application/json' },
     });
   }
+}
+
+/** Re-wrap a cached API response with X-OHC-Stale: 1 so panels can show
+ *  an "as of" time (the original Date header is kept). */
+function markStale(cached) {
+  try {
+    var headers = new Headers(cached.headers);
+    headers.set('X-OHC-Stale', '1');
+    return new Response(cached.body, { status: cached.status, statusText: cached.statusText, headers: headers });
+  } catch (e) {
+    return cached;
+  }
+}
+
+/** Offline area pack tiles. Online: the network answers, exactly as before
+ *  the worker existed. When the network fails, the browser reports offline,
+ *  or a request hangs past PACK_TILE_NETWORK_TIMEOUT_MS while a pack holds
+ *  the tile, the pack copy is served and the page is told (for the subtle
+ *  "offline tiles" badge on the map). Tiles are never written here —
+ *  only the explicit "Download area" action fills the pack cache. */
+async function handleTile(event, req) {
+  var cached = null;
+  try {
+    var cache = await caches.open(POLICY.OFFLINE_PACK_CACHE);
+    cached = await cache.match(req.url, { ignoreVary: true });
+  } catch (e) {
+    cached = null;
+  }
+  if (!cached) return fetch(req);
+
+  if (self.navigator && self.navigator.onLine === false) {
+    notifyPackTile(event);
+    return cached;
+  }
+
+  var timer;
+  var timeout = new Promise(function (resolve) {
+    timer = setTimeout(function () {
+      resolve(null);
+    }, POLICY.PACK_TILE_NETWORK_TIMEOUT_MS);
+  });
+  try {
+    var res = await Promise.race([fetch(req), timeout]);
+    clearTimeout(timer);
+    if (res && res.ok) return res;
+  } catch (e) {
+    clearTimeout(timer);
+  }
+  notifyPackTile(event);
+  return cached;
+}
+
+/** Tell the page that tiles are coming from an offline pack — at most once
+ *  every few seconds per client, not once per tile. */
+var lastPackNotice = {};
+function notifyPackTile(event) {
+  var id = event.clientId || event.resultingClientId || '';
+  var now = Date.now();
+  if (lastPackNotice[id] && now - lastPackNotice[id] < 3000) return;
+  lastPackNotice[id] = now;
+  event.waitUntil(
+    (async function () {
+      try {
+        var targets = id ? [await self.clients.get(id)] : await self.clients.matchAll({ type: 'window' });
+        targets.forEach(function (c) {
+          if (c) c.postMessage({ type: 'OHC_OFFLINE_PACK_TILE', at: now });
+        });
+      } catch (e) {
+        // Best-effort UI hint.
+      }
+    })(),
+  );
 }
 
 // ── Web Push: server-sent notifications (closed-browser alerts) ───────────
