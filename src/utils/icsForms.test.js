@@ -640,19 +640,24 @@ describe('Net Control integration', () => {
     });
     expect(scheduled).toMatchObject({ rxFreq: '441.000', txFreq: '441.000', mode: 'D', modeName: 'DMR' });
     expect(ics205RowFromVoiceNet({ net: 'X', frequency: 'the usual' })).toMatchObject({ rxFreq: '', txFreq: '' });
-    // 6 m in the Americas: −1 MHz assumed, noted for checking
-    expect(ics205RowFromVoiceNet({ net: '6m', frequency: '53.150 −', region: 'R2' })).toMatchObject({
-      rxFreq: '53.150',
-      txFreq: '52.150',
-      remarks: 'TX offset −1 MHz assumed — check locally · 53.150 −',
+    // 6 m in the Americas: the ARRL plan's −500 kHz in a segment with local exceptions, noted for checking
+    expect(ics205RowFromVoiceNet({ net: '6m', frequency: '53.700 −', region: 'R2' })).toMatchObject({
+      rxFreq: '53.700',
+      txFreq: '53.200',
+      remarks: 'TX offset −500 kHz assumed — check locally · 53.700 −',
+    });
+    // ...and in the segment without exceptions, no note
+    expect(ics205RowFromVoiceNet({ net: '6m', frequency: '51.760 −', region: 'R2' })).toMatchObject({
+      txFreq: '51.260',
+      remarks: '51.760 −',
     });
     // direction without a known size: TX left for the operator, flagged and noted — never silently blank
     const unknown = ics205RowFromVoiceNet({ net: '6m', frequency: '50.840 −', region: 'R3' });
     expect(unknown).toMatchObject({ rxFreq: '50.840', txFreq: '', txUnknown: true });
     expect(unknown.remarks).toMatch(/^TX offset\? — fill in TX/);
     // the operator's override wins
-    expect(ics205RowFromVoiceNet({ net: '6m', frequency: '53.150 −', region: 'R2', offset: '500k' })).toMatchObject({
-      txFreq: '52.650',
+    expect(ics205RowFromVoiceNet({ net: '6m', frequency: '53.150 −', region: 'R2', offset: '1' })).toMatchObject({
+      txFreq: '52.150',
       remarks: '53.150 −',
     });
   });

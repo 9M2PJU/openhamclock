@@ -299,10 +299,12 @@ describe('NetControlPanel', () => {
     const freq = byLabel('Frequency / repeater (e.g. 146.940 − PL 100.0)');
     act(() => setValue(freq, '146.940 -'));
     expect(container.textContent).toContain('TX 146.340 (−600 kHz standard)');
-    act(() => setValue(freq, '53.150 -'));
-    expect(container.textContent).toContain('TX 52.150 (−1 MHz usual here — check locally)');
-    act(() => setValue(byLabel('TX offset (e.g. −0.6, +5, −500k)'), '500k'));
-    expect(container.textContent).toContain('TX 52.650 (−500 kHz as entered)');
+    act(() => setValue(freq, '53.700 -'));
+    expect(container.textContent).toContain('TX 53.200 (−500 kHz usual here — check locally)');
+    act(() => setValue(freq, '53.150 -')); // outside the band plan's output segments
+    expect(container.textContent).toContain('TX offset? — type it here');
+    act(() => setValue(byLabel('TX offset (e.g. −0.6, +5, −500k)'), '1'));
+    expect(container.textContent).toContain('TX 52.150 (−1 MHz as entered)');
     act(() => setValue(byLabel('TX offset (e.g. −0.6, +5, −500k)'), ''));
     act(() => setValue(freq, '1293.000 -'));
     expect(container.textContent).toContain('TX offset? — type it here');

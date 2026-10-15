@@ -804,15 +804,24 @@ describe('parseNetFrequency', () => {
     expect(parseNetFrequency('')).toBeNull();
   });
   it("uses the region's standard offsets, flagging ones that vary locally", () => {
-    expect(parseNetFrequency('53.150 -', R2)).toMatchObject({
-      txMhz: 52.15,
-      offsetSource: 'standard',
-      offsetCheck: true,
-    });
-    expect(parseNetFrequency('224.940 -', R2)).toMatchObject({ txMhz: 223.34 });
+    expect(parseNetFrequency('224.940 -', R2)).toMatchObject({ txMhz: 223.34, offsetCheck: false });
     expect(parseNetFrequency('439.000 -', { region: 'R1' })).toMatchObject({ txMhz: 431.4, offsetCheck: true });
     expect(parseNetFrequency('145.700 -', { region: 'R1' })).toMatchObject({ txMhz: 145.1, offsetCheck: false });
     expect(parseNetFrequency('29.660 -', { region: 'R3' })).toMatchObject({ txMhz: 29.56 });
+  });
+  it('6 m in the Americas follows the ARRL band plan segments (all −500 kHz)', () => {
+    // 51.62–51.98 outputs: the plan lists no exceptions
+    expect(parseNetFrequency('51.620 -', R2)).toMatchObject({ txMhz: 51.12, offsetMhz: -0.5, offsetCheck: false });
+    expect(parseNetFrequency('51.980 -', R2)).toMatchObject({ txMhz: 51.48, offsetCheck: false });
+    // 52.5–52.98 and 53.5–53.98 outputs: "except as noted" → check locally
+    expect(parseNetFrequency('52.700 -', R2)).toMatchObject({ txMhz: 52.2, offsetCheck: true }); // the plan's test pair
+    expect(parseNetFrequency('52.500 -', R2)).toMatchObject({ txMhz: 52.0, offsetCheck: true });
+    expect(parseNetFrequency('53.980 -', R2)).toMatchObject({ txMhz: 53.48, offsetCheck: true });
+    expect(parseNetFrequency('53.500 -', R2)).toMatchObject({ txMhz: 53.0, offsetCheck: true });
+    // outside an output segment (inputs, simplex, gaps): no standard
+    for (const f of ['51.100 -', '51.990 -', '52.400 -', '53.150 -', '53.490 -', '50.500 -']) {
+      expect(parseNetFrequency(f, R2), f).toMatchObject({ txMhz: null, offsetSource: 'unknown' });
+    }
   });
   it('reports an unknown offset instead of guessing', () => {
     for (const [text, opts] of [
@@ -824,10 +833,13 @@ describe('parseNetFrequency', () => {
     }
   });
   it('an override fills or replaces the offset; its sign may come from the text', () => {
-    expect(parseNetFrequency('53.150 -', { ...R2, offset: '500k' })).toMatchObject({
-      txMhz: 52.65,
+    // a locally coordinated 1 MHz pair outside the plan's segments
+    expect(parseNetFrequency('53.150 -', { ...R2, offset: '1' })).toMatchObject({
+      txMhz: 52.15,
       offsetSource: 'override',
     });
+    // the override also replaces a standard offset
+    expect(parseNetFrequency('53.700 -', { ...R2, offset: '1' })).toMatchObject({ txMhz: 52.7 });
     expect(parseNetFrequency('50.840 -', { region: 'R3', offset: '+0.5' })).toMatchObject({ txMhz: 51.34 });
     expect(parseNetFrequency('442.150 +5', { offset: '−5' })).toMatchObject({ txMhz: 437.15 });
     expect(parseNetFrequency('146.520', { offset: '0' })).toMatchObject({ txMhz: 146.52, offsetSource: 'override' });
