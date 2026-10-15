@@ -313,6 +313,7 @@ require('./server/routes/admin')(app, ctx);
 require('./server/routes/push')(app, ctx); // Web Push (dormant without VAPID keys); needs swpc-alerts exports
 require('./server/routes/ibp')(app, ctx); // NCDXF/IBP beacon SNR measurements from Rig Bridge KiwiSDR monitors
 require('./server/routes/hams-at')(app, ctx); // hams.at satellite pass alerts (key passed through, never stored)
+require('./server/routes/control')(app, ctx); // Remote-control API + phone remote (docs/API.md#remote-control-api)
 
 // Subsystem health background refresher (read by /api/health).
 const health = require('./server/health');

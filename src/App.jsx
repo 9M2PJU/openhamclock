@@ -86,6 +86,13 @@ import ActivateFilterManager from './components/ActivateFilterManager.jsx';
 import { useLightningAnnouncements } from './hooks/app/useLightningAnnouncements';
 import { HELP_EVENT } from './utils/helpTopics.js';
 import { useDXSpotAnnouncements } from './hooks/app/useDXSpotAnnouncements';
+import useRemoteControl from './hooks/app/useRemoteControl';
+import useDemoMode from './hooks/app/useDemoMode';
+import useKioskLock, { KIOSK_UNLOCK_REQUEST_EVENT } from './hooks/app/useKioskLock';
+import { isLocked as isKioskLocked } from './utils/kioskLock.js';
+import useSessionFlag from './hooks/app/useSessionFlag';
+import KioskUnlockDialog from './components/KioskUnlockDialog.jsx';
+import { isRemoteEnabled } from './utils/remoteControl.js';
 import { useWeatherAlertAnnouncements } from './hooks/app/useWeatherAlertAnnouncements';
 import { getBandFromFreq, detectMode, normalizeFrequencyToMHz, getCallsignInfo } from './utils/callsign';
 import { getContestReminders, contestReminderId, CONTEST_REMINDERS_EVENT } from './utils/contestReminders.js';
@@ -127,6 +134,10 @@ const App = () => {
   // Settings → Help (SettingsPanel handles tab switch + anchor scroll).
   useEffect(() => {
     const onOpenHelp = () => {
+      if (isKioskLocked()) {
+        window.dispatchEvent(new Event(KIOSK_UNLOCK_REQUEST_EVENT));
+        return;
+      }
       setSettingsDefaultTab('help');
       setShowSettings(true);
     };
@@ -210,6 +221,30 @@ const App = () => {
       ]);
   }, [layerShortcuts, t]);
 
+  // Kiosk lock (Settings → Station → Kiosk lock, or ?lock=1): while locked,
+  // Settings, layout changes and the command palette ask for the PIN instead.
+  const kiosk = useKioskLock();
+  const kioskLockedRef = useRef(kiosk.locked);
+  kioskLockedRef.current = kiosk.locked;
+  const openSettingsGuarded = useCallback(
+    (tabId) => {
+      if (kioskLockedRef.current) {
+        kiosk.requestUnlock();
+        return;
+      }
+      setSettingsDefaultTab(tabId || null);
+      setShowSettings(true);
+    },
+    [kiosk.requestUnlock], // eslint-disable-line react-hooks/exhaustive-deps
+  );
+  const setShowSettingsGuarded = useCallback(
+    (open) => {
+      if (open) openSettingsGuarded(null);
+      else setShowSettings(false);
+    },
+    [openSettingsGuarded],
+  );
+
   useEffect(() => {
     const handleKey = (e) => {
       const tag = document.activeElement?.tagName;
@@ -222,6 +257,11 @@ const App = () => {
       // and Cmd/Ctrl+K to close).
       if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'k') {
         if (inFormField || modalOpen) return;
+        if (kioskLockedRef.current) {
+          kiosk.requestUnlock();
+          e.preventDefault();
+          return;
+        }
         setShowCommandPalette(true);
         e.preventDefault();
         return;
@@ -305,7 +345,8 @@ const App = () => {
   usePresence({ callsign: config.callsign, locator: config.locator, sharePresence: config.sharePresence !== false });
 
   // Location & map state
-  const { dxLocation, dxCallsign, dxLocked, handleToggleDxLock, handleDXChange } = useDXLocation(config.defaultDX);
+  const { dxLocation, dxCallsign, dxLocked, handleToggleDxLock, handleDXChange, setDxLocation, setDxCallsign } =
+    useDXLocation(config.defaultDX);
 
   const {
     mapLayers,
@@ -357,6 +398,16 @@ const App = () => {
   const scale = useResponsiveScale();
   const isLocalInstall = useLocalInstall(serverLocal);
 
+  // Grayscale display (Settings → Display): CSS hook on <html>, rules in styles/main.css.
+  useEffect(() => {
+    const mode = config.grayscale === 'map' || config.grayscale === 'all' ? config.grayscale : 'off';
+    try {
+      document.documentElement.setAttribute('data-grayscale', mode);
+    } catch {
+      /* ignore */
+    }
+  }, [config.grayscale]);
+
   // Kiosk scene rotation (Settings → Display → Scene rotation). Paused while
   // any app-level modal is open — these existing flags are the cheap signal
   // for "a modal owns the screen" (user interaction is handled inside the
@@ -374,6 +425,10 @@ const App = () => {
   // Idle clock (Settings → Display): the Clock layout after a quiet period,
   // restored on the first input. Holds scene rotation still while it is up.
   const idleClock = useIdleClock(config, handleSaveConfig, { paused: anyModalOpen });
+
+  // Demo mode (Settings → Display, session-only): a random harmless change
+  // every 30 s. Paused while a dialog is open.
+  const demoMode = useSessionFlag('demoMode');
   const sceneRotation = useSceneRotation(config, handleSaveConfig, { paused: anyModalOpen || idleClock.active });
 
   // Responsive breakpoint for sidebar/header behavior
@@ -774,6 +829,26 @@ const App = () => {
     return `${leftSidebarWidth} 1fr ${rightSidebarWidth}`;
   };
 
+  useDemoMode({
+    active: demoMode && !anyModalOpen,
+    config,
+    spots: dxClusterData.spots,
+    setDxLocation,
+    setDxCallsign,
+  });
+
+  // Remote-control API + phone remote (docs/API.md#remote-control-api).
+  useRemoteControl({
+    enabled: configLoaded && isRemoteEnabled(config, isLocalInstall),
+    config,
+    onSaveConfig: handleSaveConfig,
+    dxLocation,
+    dxCallsign,
+    setDxLocation,
+    setDxCallsign,
+    satellites: satellites.data,
+  });
+
   const layoutProps = {
     config,
     t,
@@ -789,7 +864,7 @@ const App = () => {
     handleTimeFormatToggle,
     handleFullscreenToggle,
     isFullscreen,
-    setShowSettings,
+    setShowSettings: setShowSettingsGuarded,
     setShowDXFilters,
     setShowPSKFilters,
     setShowPotaFilters,
@@ -983,10 +1058,7 @@ const App = () => {
 
       {/* Sidebar Menu */}
       <SidebarMenu
-        onSettingsClick={(tabId) => {
-          setSettingsDefaultTab(tabId || null);
-          setShowSettings(true);
-        }}
+        onSettingsClick={openSettingsGuarded}
         onFullscreenToggle={handleFullscreenToggle}
         isFullscreen={isFullscreen}
         onUpdateClick={handleUpdateClick}
@@ -994,9 +1066,9 @@ const App = () => {
         updateInProgress={updateInProgress}
         breakpoint={breakpoint}
         isDockable={config.layout === 'dockable'}
-        layoutLocked={layoutLocked}
-        onToggleLayoutLock={toggleLayoutLock}
-        onResetLayout={handleResetLayout}
+        layoutLocked={layoutLocked || kiosk.locked}
+        onToggleLayoutLock={kiosk.locked ? kiosk.requestUnlock : toggleLayoutLock}
+        onResetLayout={kiosk.locked ? kiosk.requestUnlock : handleResetLayout}
       />
 
       <CallsignPopupProvider deLocation={config.location}>
@@ -1015,8 +1087,8 @@ const App = () => {
             <DockableLayout
               key={layoutResetKey}
               {...layoutProps}
-              layoutLocked={layoutLocked}
-              onToggleLayoutLock={toggleLayoutLock}
+              layoutLocked={layoutLocked || kiosk.locked}
+              onToggleLayoutLock={kiosk.locked ? kiosk.requestUnlock : toggleLayoutLock}
             />
           ) : config.layout === 'classic' || config.layout === 'tablet' || config.layout === 'compact' ? (
             <ClassicLayout {...layoutProps} />
@@ -1107,13 +1179,11 @@ const App = () => {
         onClose={() => setShowCommandPalette(false)}
         config={config}
         onSaveConfig={handleSaveConfig}
-        onOpenSettings={(tabId) => {
-          setSettingsDefaultTab(tabId || null);
-          setShowSettings(true);
-        }}
+        onOpenSettings={openSettingsGuarded}
         onToggleFullscreen={handleFullscreenToggle}
         isLocalInstall={isLocalInstall}
       />
+      <KioskUnlockDialog open={kiosk.unlockPrompt} onCancel={kiosk.cancelUnlock} onSubmit={kiosk.tryUnlock} />
       <WhatsNew showWhatsNew={config.showWhatsNew} />
       {/* Star Trek Day 2026 (Sept 7-9) — one-shot event notice, ?stday previews */}
       <StarTrekDayModal />

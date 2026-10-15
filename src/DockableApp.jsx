@@ -590,6 +590,24 @@ export const DockableApp = ({
     return () => window.removeEventListener('openhamclock:add-panel', onAddPanel);
   }, [model, panelDefs, layoutLocked]);
 
+  // Remote control → close a panel (`/api/control/panels {remove:[…]}`).
+  // Deletes every tab rendering that panel id; respects the layout lock.
+  useEffect(() => {
+    const onRemovePanel = (e) => {
+      const panelId = e.detail?.panelId;
+      if (!panelId || layoutLocked) return;
+      const tabIds = [];
+      const walk = (n) => {
+        if (n.getType?.() === 'tab' && n.getComponent?.() === panelId) tabIds.push(n.getId());
+        (n.getChildren?.() || []).forEach(walk);
+      };
+      walk(model.getRoot());
+      tabIds.forEach((id) => model.doAction(Actions.deleteTab(id)));
+    };
+    window.addEventListener('openhamclock:remove-panel', onRemovePanel);
+    return () => window.removeEventListener('openhamclock:remove-panel', onRemovePanel);
+  }, [model, layoutLocked]);
+
   // Render DE Location panel content
   const renderDELocation = (nodeId) => (
     <div className="panel" style={{ padding: '14px', height: '100%', overflowY: 'auto' }}>

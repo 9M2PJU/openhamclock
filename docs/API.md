@@ -16,6 +16,7 @@ Everything else under `/api/*` is an **internal implementation detail** — see
 
 - [QSO Layer API (write)](#qso-layer-api-write)
 - [IBP beacon measurements](#ibp-beacon-measurements)
+- [Remote control API](#remote-control-api)
 - [Public read endpoints](#public-read-endpoints)
 - [Authentication](#authentication)
 - [Rate limits & courtesy](#rate-limits--courtesy)
@@ -184,6 +185,108 @@ The Rig Bridge also serves its own copy without the server:
 `GET http://localhost:5555/api/beacon-monitor/measurements?hours=24` and
 `GET http://localhost:5555/api/beacon-monitor/status`.
 
+## Remote control API
+
+HamClock-style `set_*` commands for the running display — set DE/DX, switch
+layout or theme, toggle map layers, pick a satellite, shift the clock, drive
+the stopwatch, point the rotator, grab a screenshot. A phone-sized touch
+remote that uses nothing but these endpoints ships at **`/remote`** (the QR
+code in Settings → Station opens it).
+
+**How it works.** Each browser showing OpenHamClock picks a stable display id
+(`controlId`, shown in Settings → Station → Remote control) and, while
+remote control is enabled there, listens on an SSE channel
+(`GET /api/control/stream?target=<id>`) and reports its state
+(`POST /api/control/report`) every 30 s and on change. A command you POST is
+validated, queued for the target display (up to 20 commands, 60 s, while it
+is offline) and applied through the app's own setters. Remote control is on
+by default on self-hosted/LAN installs and off on the hosted site.
+
+- Every command is `POST /api/control/<command>` with a JSON body.
+- `?target=<controlId>` picks the display. Without it the command goes to
+  **every connected display on this server** — handy on a Pi with one screen.
+  Where `OHC_HOSTED` is set (openhamclock.com), or `CONTROL_REQUIRE_TARGET=true`,
+  a target is mandatory.
+- Writes are gated like the other write endpoints: `API_WRITE_KEY` as a Bearer
+  token or `?key=`, 20 requests/min per IP.
+- Responses: `{ ok, command, targets, live, queued }` — `live` is how many
+  displays received it immediately, `queued` whether it waits for a reconnect.
+  `404 No display connected` means nobody is listening (broadcast mode only).
+
+| Command (`POST /api/control/…`) | Body                                                                                                                                         | HamClock equivalent | Effect on the display                                                                                                                                                                                  |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `de`                            | `{grid}` or `{lat, lon}`, optional `call`                                                                                                    | `set_newde`         | Moves DE (Settings → Station location, locator derived) and optionally the callsign                                                                                                                    |
+| `dx`                            | `{grid}` or `{lat, lon}` or `{call}`                                                                                                         | `set_newdx`         | Sets the DX marker; a bare `call` is looked up (callbook/prefix)                                                                                                                                       |
+| `layout`                        | `{layout}` — `modern classic tablet compact dockable emcomm contest eme clock activator hunter weather airtraffic`, or `dockable#<presetId>` | —                   | Switches the layout (and named dockable preset)                                                                                                                                                        |
+| `theme`                         | `{theme}` — `dark light legacy retro matrix eightbit steampunk trek midnight ember winter spring summer fall custom`                         | —                   | Switches the theme                                                                                                                                                                                     |
+| `panels`                        | `{add:[ids], remove:[ids], focus:id}`                                                                                                        | `set_pane`          | Dockable layout: add/focus or close panels by id (ids as in `src/panelDefs.js`, e.g. `dx-cluster`)                                                                                                     |
+| `mapview`                       | `{projection, basemap, layers:{id:bool}, night:bool, grid:bool}`                                                                             | `set_mapview`       | Projection `mercator\|azimuthal\|globe3d`; basemap id (`dark streets satellite MODIS terrain topo …`); layer toggles (ids from Settings → Map Layers, e.g. `grayline`); night shading; Maidenhead grid |
+| `satellite`                     | `{name}` or `{name:"none"}`                                                                                                                  | `set_satname`       | Selects a tracked satellite on the map (`none` clears)                                                                                                                                                 |
+| `time`                          | `{time:"now"}`, `{offsetMs}` or `{iso}`                                                                                                      | `set_time`          | Clock offset for the display (dispatched as `ohc:set-time`)                                                                                                                                            |
+| `title`                         | `{text, fg?, bg?}` — up to six titles separated by `;`, `text:null` clears                                                                   | `set_title`         | Session-only text (and colours) in the callsign box, rotating every 10 s                                                                                                                               |
+| `alarm`                         | `{kind:"once"\|"daily"\|"off", time:"HH:MM", utc:bool, armed:bool}`                                                                          | `set_alarm`         | Dispatched as `ohc:set-alarm` for the alarm feature                                                                                                                                                    |
+| `stopwatch`                     | `{action:"reset"\|"run"\|"stop"\|"lap"\|"countdown", minutes?}`                                                                              | `set_stopwatch`     | Drives the Stopwatch panel                                                                                                                                                                             |
+| `rotator`                       | `{az}` / `{el}` / `{stop:true}`                                                                                                              | `set_rotator`       | Forwarded to the server's rotator (`ROTOR_PROVIDER`); 503 when none is configured                                                                                                                      |
+| `touch`                         | `{x, y}`                                                                                                                                     | `set_touch`         | Synthesises a click at viewport coordinates (optional, for automation)                                                                                                                                 |
+| `capture`                       | —                                                                                                                                            | `get_capture.bmp`   | Asks the display to upload a fresh frame (see below)                                                                                                                                                   |
+
+Read-backs:
+
+| Endpoint                                             | Returns                                                                                                                                                                                                                     |
+| ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/control`                                   | `{commands, requireTarget, writeKeyRequired, displays}`                                                                                                                                                                     |
+| `GET /api/control/state?target=<id>`                 | `{target, connected, lastReport, state}` — the display's last report: callsign, DE/DX, layout, theme, projection, basemap, time offset, titles, docked panels, tracked satellites, map layers with on/off, kiosk/demo flags |
+| `GET /api/control/state` (no target, local only)     | `{displays: {<id>: {connected, lastReport, state}}}`                                                                                                                                                                        |
+| `GET /api/control/displays` (local only)             | `{displays:[{id, connected, lastReport, callsign, layout}]}`                                                                                                                                                                |
+| `GET /api/control/capture.png?target=<id>&wait=5000` | The display's latest PNG frame. Sends a `capture` command first and waits up to `wait` ms (max 15 s) for a fresh upload; falls back to the last stored frame (`X-Frame-Stale: true`); `404`/`504` when none                 |
+
+```bash
+# All examples: self-hosted at http://localhost:3000, one display → no target needed.
+# Add  -H "Authorization: Bearer $API_WRITE_KEY"  when the server sets a key,
+# and  ?target=ohc-xxxxxxxxxxxx  to address one display (required on the hosted site).
+
+# DX by grid / by callsign; DE by coordinates
+curl -X POST localhost:3000/api/control/dx -H 'Content-Type: application/json' -d '{"grid":"PM95"}'
+curl -X POST localhost:3000/api/control/dx -H 'Content-Type: application/json' -d '{"call":"JA1ABC"}'
+curl -X POST localhost:3000/api/control/de -H 'Content-Type: application/json' -d '{"lat":40.015,"lon":-105.27}'
+
+# Layout, theme, panels (dockable)
+curl -X POST localhost:3000/api/control/layout -H 'Content-Type: application/json' -d '{"layout":"contest"}'
+curl -X POST localhost:3000/api/control/theme  -H 'Content-Type: application/json' -d '{"theme":"retro"}'
+curl -X POST localhost:3000/api/control/panels -H 'Content-Type: application/json' \
+  -d '{"add":["sat-passes"],"remove":["contests"],"focus":"dx-cluster"}'
+
+# Map: 3D globe, dark basemap, gray line on, grid off, night shading off
+curl -X POST localhost:3000/api/control/mapview -H 'Content-Type: application/json' \
+  -d '{"projection":"globe3d","basemap":"dark","layers":{"grayline":true},"grid":false,"night":false}'
+
+# Satellite, time, title, alarm, stopwatch
+curl -X POST localhost:3000/api/control/satellite -H 'Content-Type: application/json' -d '{"name":"ISS (ZARYA)"}'
+curl -X POST localhost:3000/api/control/time      -H 'Content-Type: application/json' -d '{"iso":"2026-12-25T18:00:00Z"}'
+curl -X POST localhost:3000/api/control/time      -H 'Content-Type: application/json' -d '{"time":"now"}'
+curl -X POST localhost:3000/api/control/title     -H 'Content-Type: application/json' -d '{"text":"Field Day;W1AW","fg":"#000","bg":"#ffb000"}'
+curl -X POST localhost:3000/api/control/alarm     -H 'Content-Type: application/json' -d '{"kind":"daily","time":"06:30","utc":true}'
+curl -X POST localhost:3000/api/control/stopwatch -H 'Content-Type: application/json' -d '{"action":"countdown","minutes":10}'
+
+# Rotator (needs ROTATOR_PROVIDER on this server)
+curl -X POST localhost:3000/api/control/rotator -H 'Content-Type: application/json' -d '{"az":245}'
+
+# What is the display showing? / screenshot
+curl "localhost:3000/api/control/state?target=ohc-xxxxxxxxxxxx" | jq .state.layout
+curl -o shack.png "localhost:3000/api/control/capture.png?target=ohc-xxxxxxxxxxxx"
+```
+
+**Screenshot limitations.** Inside the desktop (Electron) app the frame is a
+pixel-perfect `webContents.capturePage()`. In a plain browser there is no
+DOM-to-image API without a dependency, so the display composites what it can
+— background, the 3D globe / azimuthal / chart canvases and, when the browser
+permits, the map tiles; text panels are not rendered. Use the Electron app or
+a desktop screenshot tool when you need the full picture.
+
+Environment: `CONTROL_REQUIRE_TARGET` (default: true when `OHC_HOSTED` is
+set), `CONTROL_MAX_DISPLAYS` (50 local / 2000 hosted), `MAX_SSE_PER_IP` (10).
+Everything is in memory: a server restart forgets reports, queues and frames.
+
 ---
 
 ## Public read endpoints
@@ -343,7 +446,9 @@ for OpenHamClock's own UI. Shapes, paths, and semantics change between
 releases without notice. If you build on them, pin your OpenHamClock version.
 
 The QSO-layer ingest contract above (field names, batch envelope, auth) **is**
-stable: additive changes only within a major version.
+stable: additive changes only within a major version. The remote-control
+command names and bodies are stable in the same sense; the shape of the
+`state` report is informational and may grow between releases.
 
 ---
 
