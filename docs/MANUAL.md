@@ -29,6 +29,7 @@ Features tagged are already merged and will ship in the next monthly drop — yo
 - [Satellites](#satellites)
 - [Rig control and Rig Bridge](#rig-control-and-rig-bridge)
 - [WSJT-X and digital modes](#wsjt-x-and-digital-modes)
+  - [Decoder panel: CW from your receiver](#decoder-panel-cw-from-your-receiver)
 - [The EmComm layout](#the-emcomm-layout)
 - [The EME layout](#the-eme-layout)
 - [Alerts and notifications](#alerts-and-notifications)
@@ -331,6 +332,7 @@ _The Solar panel cycling through live imagery, indices, X-ray flux, and the moon
 - **Rig Control** — current frequency and mode from your radio via Rig Bridge, with a band plan overlay on the frequency display and PTT status. Set your US license class in Settings → Station and the band plan bar hatches out the ranges outside your privileges (Technician/General/Amateur Extra, per the FCC Part 97 / ARRL band chart); leave it on Other for no restriction display.
 - **Frequencies** — your own named channel list: calling frequencies, repeaters, club nets, whatever you keep going back to. Each entry has a name, frequency, optional mode and notes, and a band chip; with rig control enabled, clicking a row tunes the radio (same click-to-tune path as spots). A "From rig" button grabs the current frequency and mode from a connected rig, and up/down buttons reorder the list. Synced, profiled, and backed up with the rest of your settings.
 - **Nets** — two tabs. **My nets** is a recurring net schedule you define: name, day (or daily), start time in UTC, optional frequency/mode/duration/notes. The list sorts by next occurrence with a live countdown ("in 2h 14m"), highlights nets that are **ON NOW**, shows each start in your local time, and click-to-tunes when a frequency is set. All the occurrence math is done in UTC, so daylight-saving shifts never move your net. **Live** shows what is actually on the air right now according to [NetLogger](https://www.netlogger.org) — every net currently being logged, with frequency, mode, band, net control and check-in count, refreshed every minute through the server (one upstream request per minute for everyone). Expand a net to see its check-ins (callsign, name, city/state, grid — never street addresses) and click the frequency to tune the rig.
+- **Decoder (CW)** — listens to your receiver through a sound input or a KiwiSDR, shows a live waterfall and copies CW in the browser, with clickable callsigns and a local My decodes list. See [Decoder panel](#decoder-panel-cw-from-your-receiver).
 - **On Air** — a big red ON AIR light driven by your rig's PTT. Point a webcam at it, or don't — it looks great either way.
 - **ID Timer** — 10-minute countdown that beeps and pops a reminder to identify; dismissing restarts it.
 - **Rotator** — compass rose, live bearing, and controls for a PSTRotator-compatible rotator (self-hosted only).
@@ -664,6 +666,40 @@ Decodes from WSJT-X, JTDX, or anything speaking the same UDP protocol appear liv
 - **Cloud/hosted:** UDP can't cross the internet; use the Rig Bridge WSJT-X plugin (or the legacy relay agent with `WSJTX_RELAY_KEY`) to forward decodes over HTTPS, tied to your browser session.
 
 Selecting a callsign in WSJT-X can auto-set your DX target, and clicking a decode tunes the rig to the correct dial frequency. PSKReporter integration is separate and automatic — see the PSK Reporter panel.
+
+### Decoder panel: CW from your receiver
+
+The **Decoder** panel (🎧, in the ＋ panel picker) listens to your receiver's audio right in the browser, shows it on a live waterfall, and copies CW — no extra decoding program needed. Everything runs on your own machine; no audio leaves the browser.
+
+![The Decoder panel copying a CW signal: waterfall with the passband on the trace, speed and S/N meters, clickable callsigns](images/manual/decoder-panel.jpg)
+
+_The Decoder panel locked onto a 700 Hz CW signal: the yellow passband sits on the trace, the meters show 21 WPM and 22 dB S/N, and W1AW is clickable in the copy and in the chip above it._
+
+**Pick a source**
+
+- **Sound input** — any audio input the browser can see: the USB sound card built into most modern rigs, a SignaLink-style interface, a line-in, or (for practice) the microphone. Choose the device from the list (names appear after you have allowed microphone access once). The decoder turns off the browser's echo cancellation, noise suppression and automatic gain, which would otherwise chew up keying.
+- **KiwiSDR (Rig Bridge)** — hear what a KiwiSDR hears. Turn on _KiwiSDR Audio (Decoder panel)_ in the Rig Bridge setup page (leave its host blank to reuse the beacon monitor's receiver), then enter a frequency in kHz and press **Start**; **← rig** copies your rig's frequency. The bridge connects to the Kiwi only while the panel is listening and lets go the moment you press Stop. This needs a direct connection to Rig Bridge — it does not work through the Cloud Relay.
+
+**Tune and copy**
+
+1. Press **Start**. The waterfall shows the audio from about 0 to 2.5 kHz (0–1.5 kHz for a KiwiSDR in CW mode); the yellow band is the decoder's passband.
+2. **Click a trace** on the waterfall (or focus it and use ←/→, Shift for bigger steps) to put the passband on that signal, type a **Tone** in Hz, or press **Find** — the decoder listens for three seconds and locks onto the strongest keyed tone. With a KiwiSDR it runs Find for you right after starting.
+3. Decoded text scrolls in the **Copy** tab. The meter row shows key-down (the dot), the measured speed in WPM (tracked automatically from 5 to 45 WPM, including Farnsworth spacing) and a signal-to-noise bar.
+
+**Settings**
+
+- **Filter** — _Auto_ narrows the detector as the sender slows down (better weak-signal copy) and widens it for fast senders; fixed widths of 50–300 Hz are there for crowded bands or drifting signals.
+- **Squelch** — _Normal_ prints nothing from band noise; _Low_ digs deeper into weak signals at the cost of the odd stray E or T; _High_ only copies strong signals.
+- **🔊** — play the audio through your speakers (handy with a KiwiSDR; leave it off with a microphone to avoid feedback).
+
+**Callsigns in the copy** are highlighted. Click one for the callsign popup (with the frequency filled in when it is known from the rig or the KiwiSDR), or use the chips above the copy: 🎯 sets that station as your DX target (honours DX lock) and ＋ adds it to **My decodes** — a list kept on this device with the time (UTC), frequency, speed, signal and the line of copy it came from. Logging the same call on the same frequency within five minutes just updates its entry. From My decodes, 📻 tunes the rig to the decode (same as clicking a spot) and 🎯 sets DX.
+
+**What it needs, and what to expect**
+
+- A secure page: OpenHamClock over **HTTPS**, on **localhost**, or the desktop app. Browsers only allow audio capture there — opening a Pi's dashboard from another computer as `http://192.168.x.x` will show a notice instead.
+- Clean machine-sent CW at everyday speeds (12–25 WPM) is copied essentially perfectly down to a signal-to-noise ratio of about −3 dB (in a 2.5 kHz bandwidth), and most of it still at −5 dB; fast senders (35 WPM and up) need a few dB more. Hand-sent CW with an uneven fist, heavy QSB and QRM cost accuracy, as with any machine decoder.
+- **Try it without a radio:** play a CW practice recording (an MP3 from an online Morse trainer) out of a phone or speaker near your computer's microphone, choose the microphone, press Start and click the trace.
+- It decodes CW only. For FT8, FT4 and the other WSJT modes keep using WSJT-X/JTDX and the WSJT-X panel above.
 
 ---
 
