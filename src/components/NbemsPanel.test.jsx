@@ -3,7 +3,7 @@
  * pane; Send / ICS-213 / mode POST straight to Rig Bridge with the token.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import React, { act } from 'react';
+import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -18,7 +18,7 @@ vi.mock('react-i18next', () => ({
   }),
 }));
 
-const rig = { rigUrl: 'http://localhost:5555', isCloudRelay: false };
+const rig = { rigUrl: 'http://localhost:5555', isCloudRelay: false, cloudRelaySession: '' };
 vi.mock('../contexts/RigContext.jsx', () => ({ useRig: () => rig }));
 
 import NbemsPanel from './NbemsPanel.jsx';
@@ -54,7 +54,8 @@ const mount = async (props = {}) => {
 
 beforeEach(() => {
   rig.isCloudRelay = false;
-  fetchMock = vi.fn(async (url, opts) => {
+  rig.cloudRelaySession = '';
+  fetchMock = vi.fn(async (url) => {
     if (url.endsWith('/api/fldigi/status')) {
       return { ok: true, json: async () => ({ enabled: true, running: true, modes: ['BPSK31', 'MT63-2KL'] }) };
     }
@@ -164,10 +165,41 @@ describe('NbemsPanel', () => {
     expect(container.textContent).toContain('Last form: ICS-213 (NBEMS) from N8TAG');
   });
 
-  it('in cloud-relay mode, explains that NBEMS needs a direct connection', async () => {
+  it('in cloud-relay mode, waits for relayed status without fetching the bridge', async () => {
     rig.isCloudRelay = true;
+    rig.cloudRelaySession = 'sess0001';
     await mount();
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(container.textContent).toMatch(/direct connection to Rig Bridge/);
+    expect(container.textContent).toMatch(/through the cloud relay/);
+  });
+
+  it('in cloud-relay mode, sends through the hosted server with the token and waits for the result', async () => {
+    rig.isCloudRelay = true;
+    rig.cloudRelaySession = 'sess0001';
+    await mount({ apiToken: 'tok' });
+    emit('fldigi', { connected: true, mode: 'BPSK31', trx: 'rx' });
+    const box = container.querySelector('input[aria-label="Text to transmit through fldigi"]');
+    type(box, 'QST');
+    await act(async () => box.form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+    const [url, opts] = fetchMock.mock.calls.find(([u]) => u.startsWith('/api/rig-bridge/relay/command'));
+    expect(url).toBe('/api/rig-bridge/relay/command?session=sess0001');
+    const sent = JSON.parse(opts.body);
+    expect(sent).toMatchObject({ type: 'fldigi', payload: { action: 'send', body: { text: 'QST' }, token: 'tok' } });
+    expect(container.textContent).not.toContain('Queued for transmit'); // still waiting
+    emit('fldigi-cmd-result', { requestId: sent.payload.requestId, ok: true, status: 200, id: 3 });
+    await flush();
+    expect(container.textContent).toContain('Queued for transmit');
+  });
+
+  it('in cloud-relay mode, shows the bridge’s refusal of a bad token', async () => {
+    rig.isCloudRelay = true;
+    rig.cloudRelaySession = 'sess0001';
+    await mount();
+    emit('fldigi', { connected: true, mode: 'BPSK31', trx: 'tx', txActive: true });
+    await act(async () => button('Stop TX').click());
+    const sent = JSON.parse(fetchMock.mock.calls.find(([u]) => u.startsWith('/api/rig-bridge/relay'))[1].body);
+    emit('fldigi-cmd-result', { requestId: sent.payload.requestId, ok: false, status: 401, error: 'Unauthorized' });
+    await flush();
+    expect(container.textContent).toMatch(/rejected the API token/);
   });
 });

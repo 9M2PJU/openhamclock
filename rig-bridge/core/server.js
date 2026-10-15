@@ -1150,6 +1150,8 @@ function buildSetupHtml(version, firstRunToken = null) {
         { id: 'flmsgEnabled', label: 'Watch flmsg folders', type: 'checkbox', default: true },
         { id: 'flmsgDirs', label: 'flmsg folders (blank = NBEMS.files defaults; separate with ;)', type: 'text', default: '' },
         { id: 'flmsgMaxAgeHours', label: 'Ignore forms older than (hours, at start-up)', type: 'number', default: 72 },
+        { id: 'flmsgIncludeLocal', label: 'Also forward my own drafts and sent forms', type: 'checkbox', default: false },
+        { id: 'flmsgDateFormat', label: 'Read ambiguous form dates as', type: 'select', options: ['auto', 'mdy', 'dmy', 'ymd', 'ydm'], default: 'auto' },
         { id: 'serverForward', label: 'Forward forms to OpenHamClock server', type: 'checkbox', default: true },
         { id: 'ohcUrl', label: 'OpenHamClock server URL', type: 'text', default: 'http://localhost:3000' },
         { id: 'verbose', label: 'Verbose logging', type: 'checkbox', default: false },

@@ -1,17 +1,19 @@
 <flmsg>4.0.23
-:hdr_fm:20 N8TAG 20261015120000
-:hdr_ed:20 N8TAG 20261015120000
+:hdr_fm:21 
+N8TAG 20261510120000
+:hdr_ed:21 
+N8TAG 20261510120000
 <radiogram>
 :nbr:2 42
 :prec:8 PRIORITY
 :hx:3 HXG
-:sta:5 N8TAG
-:ck:2 12
-:org:11 Columbus OH
+:d1:6 OCT 15
 :t1:5 1200Z
-:d1:10 2026-10-15
 :to:35 American Red Cross
 Columbus Chapter
 :tel:12 614-555-0100
 :msg:53 SHELTER AT LINCOLN HS OPEN X CAPACITY 150 X NEED COTS
 :sig:7 J SMITH
+:ck:2 12
+:sta:5 N8TAG
+:org:11 Columbus OH

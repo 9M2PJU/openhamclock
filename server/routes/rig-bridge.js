@@ -133,6 +133,42 @@ module.exports = function (app, ctx) {
     relayCommandWaiters.delete(sessionId);
   }
 
+  // ─── Relayed plugin events (fldigi / NBEMS) ───────────────────────────
+  // rig-bridge's cloud relay pushes these as `pluginEvents` with the same
+  // { event, source, data } shape as its local /stream. Only known events are
+  // fanned out, each capped in size; the latest fldigi status and receive-text
+  // tail are kept so a browser that opens the stream later starts populated.
+  const RELAYED_PLUGIN_EVENTS = new Set(['fldigi', 'fldigi-rx', 'nbems-form', 'fldigi-cmd-result']);
+  const PLUGIN_EVENT_MAX_BYTES = 20000;
+  const FLDIGI_RX_TAIL = 4000;
+
+  function relayPluginEvents(session, events, sseClients) {
+    for (const ev of events.slice(0, 50)) {
+      if (!ev || typeof ev !== 'object' || !RELAYED_PLUGIN_EVENTS.has(ev.event)) continue;
+      if (!ev.data || typeof ev.data !== 'object') continue;
+      let json;
+      try {
+        json = JSON.stringify({ type: 'plugin', event: ev.event, source: 'fldigi', data: ev.data });
+      } catch {
+        continue;
+      }
+      if (json.length > PLUGIN_EVENT_MAX_BYTES) continue;
+      if (ev.event === 'fldigi') session.fldigiStatus = ev.data;
+      if (ev.event === 'fldigi-rx') {
+        const text = typeof ev.data.text === 'string' ? ev.data.text : '';
+        session.fldigiRx = (ev.data.reset ? text : (session.fldigiRx || '') + text).slice(-FLDIGI_RX_TAIL);
+      }
+      if (!sseClients) continue;
+      for (const client of sseClients) {
+        try {
+          client.write(`data: ${json}\n\n`);
+        } catch (e) {
+          sseClients.delete(client);
+        }
+      }
+    }
+  }
+
   function getRelaySession(sessionId) {
     if (!relaySessions.has(sessionId)) {
       if (relaySessions.size >= MAX_RELAY_SESSIONS) {
@@ -382,6 +418,10 @@ module.exports = function (app, ctx) {
         }
       }
 
+      if (Array.isArray(req.body.pluginEvents) && req.body.pluginEvents.length > 0) {
+        relayPluginEvents(session, req.body.pluginEvents, sseClients && sseClients.size > 0 ? sseClients : null);
+      }
+
       res.json({ ok: true });
     } catch (err) {
       logWarn(`[RigBridge] relay/state push error: ${err.message}`);
@@ -431,6 +471,18 @@ module.exports = function (app, ctx) {
         : { type: 'state', connected: false, freq: 0, mode: '', ptt: false, relayActive: false };
       try {
         res.write(`data: ${JSON.stringify(initState)}\n\n`);
+        // Replay the latest fldigi status and receive tail (NBEMS panel)
+        const s = relaySessions.get(sessionId);
+        if (s?.fldigiStatus) {
+          res.write(
+            `data: ${JSON.stringify({ type: 'plugin', event: 'fldigi', source: 'fldigi', data: s.fldigiStatus })}\n\n`,
+          );
+        }
+        if (s?.fldigiRx) {
+          res.write(
+            `data: ${JSON.stringify({ type: 'plugin', event: 'fldigi-rx', source: 'fldigi', data: { text: s.fldigiRx, reset: true } })}\n\n`,
+          );
+        }
       } catch (e) {
         return; // Client already disconnected
       }
