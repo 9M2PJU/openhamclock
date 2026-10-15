@@ -123,7 +123,7 @@ echo ""
 
 # Show what's new
 echo "📝 Changes since your version:"
-git log --oneline HEAD..origin/$BRANCH
+git --no-pager log --oneline HEAD..origin/$BRANCH
 echo ""
 
 # Confirm update
