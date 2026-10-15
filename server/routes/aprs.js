@@ -4,6 +4,7 @@
  */
 
 const net = require('net');
+const crypto = require('crypto');
 
 const { parseAprsPacket: parseAprsPosition, parseResourceTokens } = require('../utils/aprsParser');
 const { identifyDevice } = require('../utils/aprsDeviceId');
@@ -30,6 +31,23 @@ module.exports = function (app, ctx) {
   const APRS_MAX_MESSAGES = 200;
   // Net operations: operator roster keyed by callsign
   const netRoster = new Map(); // callsign → { call, status, netName, checkinTime, lastHeard, location, resources }
+  // The roster lives in memory, so a restart empties it. `rosterBootId`
+  // changes on every server start and `rosterGeneration` on every roster
+  // change, which lets a client tell "the server restarted" (ignore the empty
+  // roster) from "everyone checked out" (same boot, roster emptied).
+  const rosterBootId = crypto.randomBytes(8).toString('hex');
+  let rosterGeneration = 0;
+  const rosterSet = netRoster.set.bind(netRoster);
+  const rosterDelete = netRoster.delete.bind(netRoster);
+  netRoster.set = (k, v) => {
+    rosterGeneration++;
+    return rosterSet(k, v);
+  };
+  netRoster.delete = (k) => {
+    const removed = rosterDelete(k);
+    if (removed) rosterGeneration++;
+    return removed;
+  };
   let aprsSocket = null;
   let aprsReconnectTimer = null;
   let aprsConnected = false;
@@ -409,7 +427,7 @@ module.exports = function (app, ctx) {
       });
     }
     roster.sort((a, b) => a.age - b.age);
-    res.json({ count: roster.length, roster });
+    res.json({ count: roster.length, roster, bootId: rosterBootId, generation: rosterGeneration });
   });
 
   // REST endpoint: POST /api/aprs/net/checkin — manual check-in (for operators without APRS TX)

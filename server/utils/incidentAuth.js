@@ -62,8 +62,26 @@ function verifyJoinKey(presented, salt, hash) {
   return crypto.timingSafeEqual(a, b);
 }
 
+/**
+ * A plausible amateur callsign (prefix with a digit, 1–4 letter suffix,
+ * optional portable designator). Placeholder calls are refused: the hosted
+ * site uses this to tie each new incident to a real-looking station.
+ */
+function isValidCallsign(call) {
+  const c = String(call || '')
+    .trim()
+    .toUpperCase();
+  if (!/^[A-Z0-9]{1,3}\d[A-Z]{1,4}(\/[A-Z0-9]{1,4})?$/.test(c)) return false;
+  return !/^N0CALL\b|^NOCALL\b|^MYCALL\b/.test(c);
+}
+
+/** Random opaque token for one-time stream tickets (url-safe, 32 chars). */
+const makeTicket = () => crypto.randomBytes(24).toString('base64url');
+
 module.exports = {
   ALPHABET,
+  isValidCallsign,
+  makeTicket,
   ID_LENGTH,
   KEY_LENGTH,
   randomToken,

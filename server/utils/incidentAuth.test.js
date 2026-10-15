@@ -13,6 +13,8 @@ const {
   isValidIncidentId,
   hashJoinKey,
   verifyJoinKey,
+  isValidCallsign,
+  makeTicket,
 } = require('./incidentAuth.js');
 
 describe('incidentAuth', () => {
@@ -66,5 +68,18 @@ describe('incidentAuth', () => {
     expect(verifyJoinKey('', salt, hash)).toBe(false);
     expect(verifyJoinKey(key, salt, 'nothex')).toBe(false);
     expect(verifyJoinKey(key, undefined, hash)).toBe(false);
+  });
+
+  it('accepts real-looking callsigns and refuses placeholders', () => {
+    for (const c of ['W1AW', 'k0cjh', 'VE3ABC', '2E0XYZ', 'W1AW/P', 'JA1ABC/1'])
+      expect(isValidCallsign(c), c).toBe(true);
+    for (const c of ['', 'N0CALL', 'NOCALL', 'HELLO', '12345', 'W1', 'W1AWXYZ'])
+      expect(isValidCallsign(c), c).toBe(false);
+  });
+
+  it('makes url-safe, distinct tickets', () => {
+    const a = makeTicket();
+    expect(a).toMatch(/^[A-Za-z0-9_-]{32}$/);
+    expect(makeTicket()).not.toBe(a);
   });
 });
