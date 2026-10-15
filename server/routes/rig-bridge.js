@@ -533,22 +533,34 @@ module.exports = function (app, ctx) {
   app.get('/api/rig-bridge/relay/commands', requireRelayAuth, (req, res) => {
     try {
       const sessionId = req.query.session;
-      if (!sessionId || !relaySessions.has(sessionId)) {
+      if (!sessionId) {
         return res.json({ commands: [] });
-      }
-      const session = relaySessions.get(sessionId);
-
-      // Commands already queued — return immediately (no hold needed)
-      if (session.commands.length > 0) {
-        const commands = [...session.commands];
-        session.commands = [];
-        session.lastPoll = Date.now();
-        return res.json({ commands });
       }
 
       // Long-poll: hold until a command arrives or timeout fires.
       // Cap at 30 s to stay within typical proxy/load-balancer idle timeouts.
       const waitMs = Math.min(parseInt(req.query.wait) || 0, 30000);
+
+      // Sessions live in memory but relay tokens are persisted, so an
+      // authenticated bridge can poll for a session this process has never
+      // seen (server restart) or has expired. Answering that long-poll at once
+      // makes the bridge re-poll in a tight loop; register the session and hold
+      // instead. Its state arrives with the bridge's next push.
+      if (!relaySessions.has(sessionId) && !waitMs) {
+        return res.json({ commands: [] });
+      }
+      const session = getRelaySession(sessionId);
+      // A long-poll is activity: without this, a bridge whose rig sits idle
+      // (no state changes, so no pushes) loses its session after the TTL.
+      session.lastPoll = Date.now();
+
+      // Commands already queued — return immediately (no hold needed)
+      if (session.commands.length > 0) {
+        const commands = [...session.commands];
+        session.commands = [];
+        return res.json({ commands });
+      }
+
       if (!waitMs) {
         return res.json({ commands: [] });
       }
