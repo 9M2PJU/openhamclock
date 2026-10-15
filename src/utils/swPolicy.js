@@ -13,6 +13,11 @@ const policy = globalThis.OHC_SW_POLICY;
 
 export const {
   API_CACHE_MAX_ENTRIES,
+  OFFLINE_PACK_CACHE,
+  OFFLINE_TILE_HOSTS,
+  PACK_TILE_NETWORK_TIMEOUT_MS,
+  isPersistentCacheName,
+  isOfflineTileHost,
   normalizeVersion,
   cacheNames,
   staleCacheNames,

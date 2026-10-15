@@ -39,6 +39,17 @@ import {
   buildIcs213Html,
   buildIcs205Html,
   buildIcsHtml,
+  ics309Rows,
+  newIcs309Row,
+  editIcs309Row,
+  removeIcs309Row,
+  defaultTr,
+  newSendState,
+  applySendResult,
+  firstUnsentPart,
+  sendStateMatches,
+  zonesOf,
+  groupRowsByZone,
 } from './icsForms.js';
 
 const T0 = Date.UTC(2026, 9, 14, 18, 0, 0); // 2026-10-14 1800Z
@@ -170,10 +181,11 @@ describe('eventsInRange / headerRange', () => {
 
 describe('ICS 309 rows from the event log', () => {
   const rows = ics309RowsFromEvents(LOG, { from: T0, to: T0 + 3600_000, operatorCall: 'k0cjh' });
-  const byId = Object.fromEntries(rows.map((r) => [r.id, r]));
+  const byId = Object.fromEntries(rows.map((r) => [r.eventId, r]));
 
   it('includes all event types when no filter is given, in time order, range-limited', () => {
-    expect(rows.map((r) => r.id)).toEqual(['e1', 'e2', 'e3', 'e4', 'e5', 'e6', 'e7', 'e8', 'e9']);
+    expect(rows.map((r) => r.eventId)).toEqual(['e1', 'e2', 'e3', 'e4', 'e5', 'e6', 'e7', 'e8', 'e9']);
+    expect(rows[0].id).toBe('ev-e1');
     expect(rows[0].time).toBe('1801');
     expect(rows[0].date).toBe('2026-10-14');
   });
@@ -204,8 +216,39 @@ describe('ICS 309 rows from the event log', () => {
     expect(byId.e9.message).toBe('ICS 213 — Water needed: 200 gal at shelter 3');
   });
 
-  it('message-number columns start blank', () => {
-    expect(rows.every((r) => r.fromMsg === '' && r.toMsg === '')).toBe(true);
+  it('numbers message traffic: FROM Msg # for traffic we sent, TO Msg # for traffic received', () => {
+    // Legacy events (no msgNo) get numbers derived in time order across the
+    // whole log: e0 (before the period) = 1, e1 = 2, e2 = 3, e3 = 4,
+    // e4 (received bulletin) = 5, e8 = 6, e9 = 7
+    expect(byId.e1).toMatchObject({ fromMsg: '', toMsg: '2' });
+    expect(byId.e2).toMatchObject({ fromMsg: '3', toMsg: '' });
+    expect(byId.e3).toMatchObject({ fromMsg: '', toMsg: '4' });
+    expect(byId.e4).toMatchObject({ fromMsg: '', toMsg: '5' });
+    expect(byId.e8).toMatchObject({ toMsg: '6' });
+    expect(byId.e9).toMatchObject({ fromMsg: '7', toMsg: '' });
+    // Alerts, reports and first-heard stations are not message traffic
+    for (const id of ['e5', 'e6', 'e7']) expect(byId[id]).toMatchObject({ fromMsg: '', toMsg: '' });
+  });
+
+  it('uses the stored msgNo when the event has one', () => {
+    const log = [
+      { id: 'a', ts: T0, type: 'aprs_msg_sent', callsign: 'K0CJH', summary: 'Message to N0EOC', msgNo: 41 },
+      { id: 'b', ts: T0 + 1000, type: 'aprs_msg_rx', callsign: 'N0EOC', summary: 'Message to K0CJH', msgNo: 42 },
+    ];
+    const r = ics309RowsFromEvents(log, { operatorCall: 'K0CJH' });
+    expect(r.map((x) => [x.fromMsg, x.toMsg])).toEqual([
+      ['41', ''],
+      ['', '42'],
+    ]);
+  });
+
+  it('renumbers the period from the operator’s starting number', () => {
+    const r = ics309RowsFromEvents(LOG, { from: T0, operatorCall: 'K0CJH', startNumber: 100 });
+    const nums = r.map((x) => x.fromMsg || x.toMsg).filter(Boolean);
+    expect(nums).toEqual(['100', '101', '102', '103', '104', '105']);
+    // Blank / invalid start keeps the running numbers
+    const keep = ics309RowsFromEvents(LOG, { from: T0, operatorCall: 'K0CJH', startNumber: '' });
+    expect(keep[0].toMsg).toBe('2');
   });
 
   it('filters by event type (defaults leave out alerts and first-heard stations)', () => {
@@ -227,17 +270,17 @@ describe('ICS 309 CSV', () => {
     d.ics309.operatorName = 'Chris';
     d.ics309.operatorCall = 'K0CJH';
     const rows = ics309RowsFromEvents(LOG, { ...headerRange(d.header), operatorCall: 'K0CJH' });
-    const csv = ics309Csv(d, rows);
+    const csv = ics309Csv(d, rows, { now: T0 });
     const lines = csv.split('\r\n');
     expect(lines[0]).toBe('Form,ICS 309 Communications Log');
-    expect(lines[1]).toBe('1. Incident Name,"River Flood, 2026"');
-    expect(lines[2]).toBe('2. Operational Period (UTC),2026-10-14 1800 to 2026-10-14 1900');
-    expect(lines[3]).toBe('3. Radio Net Name / Position,ARES Tactical');
-    expect(lines[4]).toBe('4. Radio Operator,Chris K0CJH');
+    expect(lines[1]).toBe('1. Incident Name and Activation Number,"River Flood, 2026"');
+    expect(lines[2]).toBe('2. Operational Period (UTC),2026-10-14 1800 – 2026-10-14 1900');
+    expect(lines[3]).toBe('3. Radio Net Name (for NCS) or Position/Tactical Call,ARES Tactical');
+    expect(lines[4]).toBe('"4. Radio Operator (Name, Call Sign)",Chris K0CJH');
     expect(csv).toContain(
-      'Date (UTC),Time (24:00),From Call Sign/ID,From Msg #,To Call Sign/ID,To Msg #,Message\r\n2026-10-14,1801,KE8PLM,,K0CJH,,Checked into ARES',
+      'Date (UTC),Time (24:00),From Call Sign/ID,From Msg #,To Call Sign/ID,To Msg #,Message\r\n2026-10-14,1801,KE8PLM,,K0CJH,2,Checked into ARES',
     );
-    expect(csv).toContain('2026-10-14,1806,KE8PLM-9,,K0CJH,,"Roger, en route"');
+    expect(csv).toContain('2026-10-14,1806,KE8PLM-9,,K0CJH,4,"Roger, en route"');
     expect(csv.endsWith('\r\n')).toBe(true);
   });
 });
@@ -495,7 +538,7 @@ describe('print HTML', () => {
       '6. Prepared by (Communications Unit Leader)',
     ])
       expect(html).toContain(label);
-    expect(html).toContain('146.520 N');
+    expect(html).toContain('146.520 W');
     expect(html).toContain('<td>1</td>');
   });
 
@@ -527,11 +570,35 @@ describe('Net Control integration', () => {
       ev('c', 4, 'net_traffic'),
     ];
     const rows = ics309RowsFromEvents(log, { operatorCall: 'K0CJH', types: ICS309_DEFAULT_TYPES });
-    expect(rows.map((r) => r.id)).toEqual(['a', 'c']);
+    expect(rows.map((r) => r.eventId)).toEqual(['a', 'c']);
     expect(ics214RowsFromEvents(log).map((r) => r.id)).toEqual(['ev-a', 'ev-c']);
     // undoing the withdrawal (a withdrawal of the withdrawal) reinstates the check-in
     const reinstated = [...log, ev('w2', 5, 'net_withdrawn', { ref: 'w1' })];
-    expect(ics309RowsFromEvents(reinstated, { types: ICS309_DEFAULT_TYPES }).map((r) => r.id)).toEqual(['a', 'b', 'c']);
+    expect(ics309RowsFromEvents(reinstated, { types: ICS309_DEFAULT_TYPES }).map((r) => r.eventId)).toEqual([
+      'a',
+      'b',
+      'c',
+    ]);
+  });
+  it('a withdrawn message keeps its number: the 309 skips it without shifting later numbers', () => {
+    const log = [
+      ev('a', 1, 'net_checkin', { msgNo: 1 }),
+      ev('b', 2, 'net_checkin', { callsign: 'K0CJH', msgNo: 2 }),
+      ev('w1', 3, 'net_withdrawn', { ref: 'b' }),
+      ev('c', 4, 'net_checkin', { callsign: 'KE8PLM', msgNo: 3 }),
+    ];
+    const rows = ics309RowsFromEvents(log, { types: ICS309_DEFAULT_TYPES });
+    expect(rows.map((r) => [r.eventId, r.toMsg])).toEqual([
+      ['a', '1'],
+      ['c', '3'],
+    ]);
+    // the editable-row builder sees the same active log
+    const d = defaultDrafts(T0);
+    d.header.periodFrom = '';
+    d.header.periodTo = '';
+    expect(ics309Rows(d, log).map((r) => r.eventId)).toEqual(['a', 'c']);
+    // an explicit start number renumbers only the rows on the form
+    expect(ics309RowsFromEvents(log, { startNumber: 10 }).map((r) => r.toMsg)).toEqual(['10', '11']);
   });
   it('net traffic is on the 309 by default, from the station to the operator', () => {
     expect(ICS309_DEFAULT_TYPES).toContain('net_traffic');
@@ -551,6 +618,12 @@ describe('Net Control integration', () => {
       mode: 'A',
       remarks: 'NCS K0CJH · 146.940 − PL 100.0',
       source: 'net-control',
+      // Same row shape as the other 205 sources: zone (filled by the panel's
+      // zone picker), separate RX/TX N/W, mode name
+      zone: '',
+      rxNW: 'W',
+      txNW: 'W',
+      modeName: '',
     });
     const scheduled = ics205RowFromVoiceNet({
       net: 'DMR net',
@@ -558,7 +631,167 @@ describe('Net Control integration', () => {
       mode: 'DMR',
       frequency: '441.000 MHz DMR',
     });
-    expect(scheduled).toMatchObject({ rxFreq: '441.000', txFreq: '441.000', mode: 'D' });
+    expect(scheduled).toMatchObject({ rxFreq: '441.000', txFreq: '441.000', mode: 'D', modeName: 'DMR' });
     expect(ics205RowFromVoiceNet({ net: 'X', frequency: 'the usual' })).toMatchObject({ rxFreq: '', txFreq: '' });
+  });
+});
+
+describe('ICS 309 editable rows', () => {
+  const drafts = () => {
+    const d = defaultDrafts(T0);
+    d.header.periodFrom = '2026-10-14T18:00';
+    d.header.periodTo = '2026-10-14T19:00';
+    d.ics309.operatorCall = 'K0CJH';
+    return d;
+  };
+
+  it('starts as the event rows for the period', () => {
+    const rows = ics309Rows(drafts(), LOG);
+    expect(rows.map((r) => r.eventId)).toEqual(['e1', 'e2', 'e3', 'e4', 'e7', 'e8', 'e9']); // default types
+  });
+
+  it('keeps edits per row while the log keeps updating', () => {
+    const d = drafts();
+    const [first] = ics309Rows(d, LOG);
+    d.ics309 = editIcs309Row(d.ics309, first, { message: 'Checked in, 2 operators', toMsg: '17' });
+    let rows = ics309Rows(d, LOG);
+    expect(rows[0]).toMatchObject({ message: 'Checked in, 2 operators', toMsg: '17', edited: true, from: 'KE8PLM' });
+    // A new event arrives — the edit survives and the new row appears
+    const more = [...LOG, { id: 'n1', ts: T0 + 20 * 60_000, type: 'net_checkin', callsign: 'W1NEW', summary: 'In' }];
+    rows = ics309Rows(d, more);
+    expect(rows[0].message).toBe('Checked in, 2 operators');
+    expect(rows[rows.length - 1].from).toBe('W1NEW');
+  });
+
+  it('edits the time and re-sorts', () => {
+    const d = drafts();
+    const rows0 = ics309Rows(d, LOG);
+    d.ics309 = editIcs309Row(d.ics309, rows0[0], { dateTime: '2026-10-14T18:30' });
+    const rows = ics309Rows(d, LOG);
+    expect(rows[rows.length - 1]).toMatchObject({ eventId: 'e1', time: '1830' });
+  });
+
+  it('adds, edits and removes manual rows; hides event rows', () => {
+    let d = drafts();
+    const manual = newIcs309Row(T0 + 2 * 60_000, { from: 'N0EOC', to: 'K0CJH', toMsg: '9', message: 'Phone relay' });
+    d.ics309 = { ...d.ics309, manual: [manual] };
+    let rows = ics309Rows(d, LOG);
+    expect(rows[1]).toMatchObject({ source: 'manual', time: '1802', message: 'Phone relay' });
+    d.ics309 = editIcs309Row(d.ics309, rows[1], { message: 'Phone relay from EOC' });
+    expect(d.ics309.manual[0].message).toBe('Phone relay from EOC');
+    d.ics309 = removeIcs309Row(d.ics309, rows[0]); // hide e1
+    rows = ics309Rows(d, LOG);
+    expect(rows.map((r) => r.eventId || r.source)).not.toContain('e1');
+    d.ics309 = removeIcs309Row(d.ics309, rows[0]); // the manual row
+    expect(d.ics309.manual).toEqual([]);
+  });
+
+  it('applies the starting number before the operator’s edits', () => {
+    const d = drafts();
+    d.ics309.startNumber = '50';
+    const rows = ics309Rows(d, LOG);
+    expect(rows[0].toMsg).toBe('50');
+    expect(rows[1].fromMsg).toBe('51');
+  });
+
+  it('prints edited rows and manual rows', () => {
+    const d = drafts();
+    d.ics309.manual = [newIcs309Row(T0 + 2 * 60_000, { from: 'N0EOC', message: 'Phone relay' })];
+    const html = buildIcsHtml('309', d, { events: LOG, now: T0 });
+    expect(html).toContain('Phone relay');
+    expect(html).toContain('<td class="mono">2</td>'); // TO Msg # of the first check-in
+  });
+});
+
+describe('print labels', () => {
+  it('defaultTr interpolates the English text', () => {
+    expect(defaultTr('x', { defaultValue: 'Page {{page}} of {{total}}', page: 2, total: 3 })).toBe('Page 2 of 3');
+    expect(defaultTr('x', {})).toBe('');
+  });
+
+  it('every printed label key exists in en.json with the same English text', async () => {
+    const en = (await import('../lang/en.json')).default;
+    const used = new Map();
+    const tr = (key, opts) => {
+      used.set(key, opts.defaultValue);
+      return defaultTr(key, opts);
+    };
+    const d = defaultDrafts(T0);
+    for (const id of ['309', '214', '213', '205']) buildIcsHtml(id, d, { events: LOG, now: T0, tr });
+    ics309Csv(d, [], { now: T0, tr });
+    expect(used.size).toBeGreaterThan(50);
+    for (const [key, def] of used) expect(en[key], key).toBe(def);
+  });
+
+  it('routes every label through the translate function with icsForms.print.* keys', () => {
+    const seen = new Set();
+    const tr = (key, opts) => {
+      seen.add(key);
+      return `«${defaultTr(key, opts)}»`;
+    };
+    const d = defaultDrafts(T0);
+    d.ics205.rows = [newSimplexRow({ name: 'S1', mhz: 146.52 })];
+    for (const id of ['309', '214', '213', '205']) {
+      const html = buildIcsHtml(id, d, { events: LOG, now: T0, tr });
+      // No label left untranslated: every bold label/section/header is wrapped
+      const labels = [...html.matchAll(/<div class="ics-label">([^<]*)<\/div>/g)].map((m) => m[1]);
+      for (const l of labels) if (l && l !== '8.' && !/^\d+\. «/.test(l)) expect(l).toMatch(/^«.*»$/);
+      const ths = [...html.matchAll(/<th[^>]*>([^<]*)/g)].map((m) => m[1].trim()).filter(Boolean);
+      for (const h of ths) expect(h).toMatch(/^«/);
+    }
+    expect([...seen].every((k) => k.startsWith('icsForms.print.'))).toBe(true);
+    expect(seen.has('icsForms.print.309.b1')).toBe(true);
+    expect(seen.has('icsForms.print.205.channelName')).toBe(true);
+    expect(seen.has('icsForms.print.pageOf')).toBe(true);
+    const csv = ics309Csv(d, [], { now: T0, tr });
+    expect(csv.startsWith('«Form»,«ICS 309 Communications Log»')).toBe(true);
+  });
+});
+
+describe('ICS 213 per-part send state', () => {
+  const parts = ['1/3 a', '2/3 b', '3/3 c'];
+
+  it('tracks a partial failure and resumes from the first unsent part', () => {
+    let st = newSendState('n0eoc', parts, T0);
+    expect(st.to).toBe('N0EOC');
+    expect(firstUnsentPart(st)).toBe(0);
+    st = applySendResult(st, 0, { sent: 1, total: 3, error: 'TNC not connected' });
+    expect(st.parts.map((p) => p.state)).toEqual(['sent', 'failed', 'pending']);
+    expect(st.parts[1].error).toBe('TNC not connected');
+    expect(firstUnsentPart(st)).toBe(1);
+    st = applySendResult(st, 1, { sent: 2, total: 2 });
+    expect(st.parts.map((p) => p.state)).toEqual(['sent', 'sent', 'sent']);
+    expect(st.parts[1].error).toBeUndefined();
+    expect(firstUnsentPart(st)).toBe(-1);
+  });
+
+  it('matches only the same addressee and identical parts', () => {
+    const st = newSendState('N0EOC', parts);
+    expect(sendStateMatches(st, 'n0eoc', parts)).toBe(true);
+    expect(sendStateMatches(st, 'W1AW', parts)).toBe(false);
+    expect(sendStateMatches(st, 'N0EOC', ['1/3 a', '2/3 b', '3/3 X'])).toBe(false);
+    expect(sendStateMatches(null, 'N0EOC', parts)).toBe(false);
+  });
+});
+
+describe('ICS 205 zones', () => {
+  it('lists zones in order and groups rows stably, blank zone last', () => {
+    const rows = [
+      { id: 1, zone: 'B' },
+      { id: 2, zone: '' },
+      { id: 3, zone: 'A' },
+      { id: 4, zone: 'B' },
+      { id: 5, zone: 'A' },
+    ];
+    expect(zonesOf(rows)).toEqual(['B', 'A']);
+    expect(groupRowsByZone(rows).map((r) => r.id)).toEqual([1, 4, 3, 5, 2]);
+  });
+
+  it('prints RX and TX bandwidth independently', () => {
+    const d = defaultDrafts(T0);
+    d.ics205.rows = [{ ...newSimplexRow({ mhz: 146.52 }), rxNW: 'N', txNW: 'W' }];
+    const html = buildIcs205Html(d, { now: T0 });
+    expect(html).toContain('146.520 N</td>');
+    expect(html).toContain('146.520 W</td>');
   });
 });

@@ -42,6 +42,7 @@ import { useGps } from '../hooks/useGps.js';
 import { useBridgeEvent } from '../hooks/useBridgeEvent.js';
 import { BRIGHTNESS_PREVIEW_EVENT } from '../hooks/app/useDisplayBrightness.js';
 import SpokenAlertsSettings from './SpokenAlertsSettings.jsx';
+import { LightningGuardSettings, LightningRelayPinSettings } from './LightningGuardSettings.jsx';
 import {
   isPushSupported,
   getServerPushStatus,
@@ -68,6 +69,7 @@ const SettingsTabIcon = ({ tab }) => {
 };
 import HelpTab from './HelpTab.jsx';
 import HelpLink from './HelpLink.jsx';
+import OfflineAreaPacks from './OfflineAreaPacks.jsx';
 import WeatherSourceCard from './WeatherSourceCard.jsx';
 import WatchlistEditor from './WatchlistEditor.jsx';
 import {
@@ -5650,6 +5652,53 @@ export const SettingsPanel = ({
                   </div>
                 </label>
               </div>
+
+              {/* Offline map areas — basemap tiles + EmComm data for use without internet */}
+              <div
+                style={{
+                  background: 'var(--bg-tertiary)',
+                  border: '1px solid var(--border-color)',
+                  borderRadius: '8px',
+                  padding: '14px',
+                  marginTop: '16px',
+                }}
+              >
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    marginBottom: '8px',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <span style={{ fontSize: '18px' }}>📦</span>
+                    <div>
+                      <div
+                        style={{
+                          color: 'var(--text-primary)',
+                          fontSize: '14px',
+                          fontWeight: '600',
+                          fontFamily: 'var(--font-mono)',
+                        }}
+                      >
+                        {t('offlinePacks.settings.title', { defaultValue: 'Offline map areas' })}
+                      </div>
+                      <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                        {t('offlinePacks.settings.description', {
+                          defaultValue:
+                            'Save the map and EmComm data for an area so the map still draws when the internet is gone',
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                  <HelpLink
+                    topic="offline-map-areas"
+                    label={t('offlinePacks.settings.title', { defaultValue: 'Offline map areas' })}
+                  />
+                </div>
+                <OfflineAreaPacks deLocation={config.location} />
+              </div>
             </div>
           )}
         </div>
@@ -7366,7 +7415,14 @@ export const SettingsPanel = ({
           aria-labelledby="tab-settings-alerts"
           hidden={activeTab !== 'alerts'}
         >
-          {activeTab === 'alerts' && <AudioAlertsTab callsign={config?.callsign} timeZone={config?.timezone} />}
+          {activeTab === 'alerts' && (
+            <AudioAlertsTab
+              callsign={config?.callsign}
+              timeZone={config?.timezone}
+              imperial={distUnits === 'imperial'}
+              hasLocation={Number.isFinite(config?.location?.lat) && Number.isFinite(config?.location?.lon)}
+            />
+          )}
         </div>
 
         {/* Rig Bridge Tab */}
@@ -7933,6 +7989,13 @@ export const SettingsPanel = ({
                 deLat={Number.isFinite(parseFloat(lat)) ? parseFloat(lat) : null}
                 deLon={Number.isFinite(parseFloat(lon)) ? parseFloat(lon) : null}
               />
+              {/* Lightning guard relay — GPIO line for the antenna-protection relay */}
+              <LightningRelayPinSettings
+                rigEnabled={rigEnabled}
+                rigHost={rigHost}
+                rigPort={rigPort}
+                rigApiToken={rigApiToken}
+              />
             </div>
           )}
         </div>
@@ -8129,7 +8192,7 @@ function WebPushCard({ notifPermission }) {
 }
 
 /** Audio Alerts settings tab */
-function AudioAlertsTab({ callsign, timeZone }) {
+function AudioAlertsTab({ callsign, timeZone, imperial = false, hasLocation = true }) {
   const { t } = useTranslation();
   const [alertSettings, setAlertSettingsState] = useState(() => getAlertSettings());
   // CQ zone derived from the callsign — the Band Openings scope default (#1191)
@@ -8210,6 +8273,14 @@ function AudioAlertsTab({ callsign, timeZone }) {
 
       {/* Web Push — closed-browser space weather alerts */}
       <WebPushCard notifPermission={notifPermission} />
+
+      {/* Lightning guard — strike distance alerts + Rig Bridge antenna relay */}
+      <LightningGuardSettings
+        alertSettings={alertSettings}
+        updateSettings={updateSettings}
+        imperial={imperial}
+        hasLocation={hasLocation}
+      />
 
       {/* Volume */}
       <div

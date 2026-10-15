@@ -29,7 +29,8 @@ export function isPushSupported() {
 
 /**
  * Ask the server whether push is configured and get the VAPID public key.
- * Resolves { configured: boolean, publicKey?: string }. Network failures
+ * Resolves { configured: boolean, publicKey?: string, lightning?: boolean }
+ * (lightning: the server accepts lightning guard broadcasts). Network failures
  * report configured: false — the UI treats that the same as dormant.
  */
 export async function getServerPushStatus() {
@@ -37,7 +38,7 @@ export async function getServerPushStatus() {
     const res = await apiFetch('/api/push/vapid-key');
     if (!res) return { configured: false };
     const data = await res.json().catch(() => null);
-    if (res.ok && data?.publicKey) return { configured: true, publicKey: data.publicKey };
+    if (res.ok && data?.publicKey) return { configured: true, publicKey: data.publicKey, lightning: !!data.lightning };
     return { configured: false };
   } catch {
     return { configured: false };
@@ -138,6 +139,35 @@ export async function sendTestPush() {
     if (res?.ok) return { ok: true };
     const data = await res?.json().catch(() => null);
     return { ok: false, error: data?.error || 'failed' };
+  } catch {
+    return { ok: false, error: 'failed' };
+  }
+}
+
+/**
+ * Lightning guard → server → every push subscriber (the operator's phone).
+ * Only works on a server started with PUSH_LIGHTNING_BROADCAST=true; the
+ * server throttles repeats. Never throws; resolves { ok, skipped?, error? }.
+ *
+ * @param {{ level: 'warn'|'alarm'|'clear', distanceKm?: number, bearingDeg?: number,
+ *           imperial?: boolean, relay?: boolean|null }} report
+ */
+export async function sendLightningPush(report) {
+  try {
+    const res = await apiFetch('/api/push/lightning', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        level: report?.level,
+        distanceKm: Number.isFinite(report?.distanceKm) ? Math.round(report.distanceKm * 10) / 10 : null,
+        bearingDeg: Number.isFinite(report?.bearingDeg) ? Math.round(report.bearingDeg) : null,
+        imperial: report?.imperial === true,
+        relay: typeof report?.relay === 'boolean' ? report.relay : null,
+      }),
+    });
+    if (!res) return { ok: false, error: 'backoff' };
+    const data = await res.json().catch(() => null);
+    return res.ok ? { ok: true, skipped: !!data?.skipped } : { ok: false, error: data?.error || `HTTP ${res.status}` };
   } catch {
     return { ok: false, error: 'failed' };
   }

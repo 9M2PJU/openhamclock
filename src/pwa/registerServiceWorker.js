@@ -21,14 +21,18 @@
  * takes control.
  *
  * Escape hatch: load the app with `?nosw` in the URL to unregister every
- * service worker on the origin and clear all ohc-* caches — useful for
- * digging out of a bad deploy or debugging cache weirdness. Example:
+ * service worker on the origin and clear the ohc-* caches (offline area
+ * packs excepted) — useful for digging out of a bad deploy or debugging
+ * cache weirdness. Example:
  *   https://openhamclock.com/?nosw
  * The parameter is one-shot: remove it and reload to re-register.
  */
 
 // __OHC_VERSION__ / __OHC_BUILD_TS__ are injected by vite.config.mjs `define`
 // (declared as globals for src/ in eslint.config.js).
+
+import { isPersistentCacheName } from '../utils/swPolicy.js';
+
 const VERSION = typeof __OHC_VERSION__ !== 'undefined' ? `${__OHC_VERSION__}-${__OHC_BUILD_TS__}` : 'dev';
 
 let userAcceptedUpdate = false;
@@ -105,12 +109,16 @@ function watchForUpdates(reg) {
   });
 }
 
-/** Unregister everything and clear ohc-* caches (the ?nosw escape hatch). */
+/** Unregister everything and clear ohc-* caches (the ?nosw escape hatch).
+ *  Offline area packs (ohc-offline-*) are operator-downloaded data, inert
+ *  without a worker, and are kept — they are deleted from the pack list. */
 async function teardownServiceWorker() {
   const clearOhcCaches = async () => {
     if (typeof caches === 'undefined') return;
     const names = await caches.keys();
-    await Promise.all(names.filter((n) => n.startsWith('ohc-')).map((n) => caches.delete(n)));
+    await Promise.all(
+      names.filter((n) => n.startsWith('ohc-') && !isPersistentCacheName(n)).map((n) => caches.delete(n)),
+    );
   };
   try {
     const regs = await navigator.serviceWorker.getRegistrations();

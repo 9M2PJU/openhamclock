@@ -81,6 +81,21 @@
     "haDiscovery": true,
     "publishInterval": 60000
   },
+  "fldigi": {
+    "enabled": false,
+    "url": "http://127.0.0.1:7362",
+    "pollInterval": 1000,
+    "rxBufferChars": 4000,
+    "maxTxSeconds": 600,
+    "callsign": "",
+    "flmsgEnabled": true,
+    "flmsgDirs": "",
+    "flmsgPollInterval": 15,
+    "flmsgMaxAgeHours": 72,
+    "serverForward": true,
+    "ohcUrl": "http://localhost:3000",
+    "verbose": false
+  },
   "tls": {
     "enabled": false,
     "certGenerated": false

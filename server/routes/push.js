@@ -24,6 +24,12 @@
  *   POST /api/push/unsubscribe  { endpoint }     → drop it
  *   POST /api/push/test         { subscription } → send a test push to the
  *                               caller's own subscription only
+ *   POST /api/push/lightning    { level, distanceKm, bearingDeg, imperial, relay }
+ *                               → broadcast a lightning guard transition to
+ *                               every subscription. Opt-in per server with
+ *                               PUSH_LIGHTNING_BROADCAST=true (403 otherwise):
+ *                               it is meant for a station's own server, where
+ *                               the subscribers are the operator's devices.
  */
 
 const fs = require('fs');
@@ -37,6 +43,9 @@ module.exports = function (app, ctx) {
   const VAPID_PRIVATE_KEY = (process.env.VAPID_PRIVATE_KEY || '').trim();
   // Contact URI push services may use to reach the operator (mailto: or https:).
   const VAPID_SUBJECT = (process.env.VAPID_SUBJECT || 'mailto:admin@example.com').trim();
+  // Lightning guard pushes go to EVERY subscriber, so they are off unless the
+  // operator says this server is theirs alone.
+  const LIGHTNING_PUSH = /^(1|true|yes|on)$/i.test((process.env.PUSH_LIGHTNING_BROADCAST || '').trim());
 
   // ── Dormant mode: no keys → every endpoint 503s and nothing else runs ────
   let webpush = null;
@@ -61,6 +70,7 @@ module.exports = function (app, ctx) {
     app.post('/api/push/subscribe', dormant);
     app.post('/api/push/unsubscribe', dormant);
     app.post('/api/push/test', dormant);
+    app.post('/api/push/lightning', dormant);
     return {};
   }
 
@@ -195,7 +205,7 @@ module.exports = function (app, ctx) {
 
   // ── Endpoints ────────────────────────────────────────────────────────────
   app.get('/api/push/vapid-key', (req, res) => {
-    res.json({ configured: true, publicKey: VAPID_PUBLIC_KEY });
+    res.json({ configured: true, publicKey: VAPID_PUBLIC_KEY, lightning: LIGHTNING_PUSH });
   });
 
   app.post('/api/push/subscribe', (req, res) => {
@@ -238,6 +248,27 @@ module.exports = function (app, ctx) {
     res
       .status(502)
       .json({ ok: false, error: `Push service rejected the request (${result.statusCode || 'network error'})` });
+  });
+
+  // Lightning guard transition from a browser → every subscriber (opt-in).
+  let lastLightningPush = null;
+  app.post('/api/push/lightning', async (req, res) => {
+    if (!LIGHTNING_PUSH) {
+      return res.status(403).json({
+        ok: false,
+        enabled: false,
+        error: 'Lightning push is not enabled on this server (set PUSH_LIGHTNING_BROADCAST=true).',
+      });
+    }
+    const payload = helpers.buildLightningPushPayload(req.body);
+    if (!payload) return res.status(400).json({ ok: false, error: 'Invalid lightning report' });
+    const now = Date.now();
+    if (!helpers.shouldPushLightning(lastLightningPush, req.body.level, now)) {
+      return res.json({ ok: true, skipped: true });
+    }
+    lastLightningPush = { at: now, level: req.body.level };
+    const result = await broadcast(payload);
+    res.json({ ok: true, ...result });
   });
 
   return { _pushStore: store, _broadcast: broadcast, _handleSwpcAlerts: handleSwpcAlerts };

@@ -3,7 +3,7 @@
  *
  * Accumulates significant events (net check-ins/outs, APRS messages sent and
  * received, new NWS alerts, shelter and field reports, first-heard EmComm
- * stations) into localStorage so operators can export an After Action Review
+ * stations, lightning guard warnings / alarms / all-clears) into localStorage so operators can export an After Action Review
  * as CSV or a print-friendly report.
  *
  * Storage: localStorage key `openhamclock_emcommEventLog`, capped at 2000
@@ -15,6 +15,21 @@ import { esc } from './escapeHtml.js';
 
 export const STORAGE_KEY = 'openhamclock_emcommEventLog';
 export const MAX_EVENTS = 2000;
+/** Last message number handed out (persisted so numbers survive reloads). */
+export const MSG_SEQ_KEY = 'openhamclock_emcommMsgSeq';
+
+/**
+ * Event types that are message traffic and get a station message number at
+ * record time (shown in the ICS 309 Msg # columns). Alerts, first-heard
+ * stations and reports are logged but not numbered.
+ */
+export const MESSAGE_EVENT_TYPES = new Set([
+  'aprs_msg_sent',
+  'aprs_msg_rx',
+  'ics213_sent',
+  'net_checkin',
+  'net_checkout',
+]);
 
 /** Human-readable labels + colors per event type (used by UI + print export) */
 export const EVENT_TYPE_META = {
@@ -34,6 +49,8 @@ export const EVENT_TYPE_META = {
   field_report: { label: 'Field Report', color: '#f472b6' },
   station_heard: { label: 'Station Heard', color: '#a855f7' },
   ics213_sent: { label: 'ICS 213 Sent', color: '#eab308' },
+  lightning: { label: 'Lightning', color: '#facc15' },
+  incident_note: { label: 'Incident', color: '#38bdf8' },
 };
 
 // ── In-memory state (mirrors localStorage) ──────────────────────────────────
@@ -41,6 +58,7 @@ let events = null; // lazy-loaded array, oldest first
 let dedupeIndex = null; // Set of `${type}:${dedupeKey}`
 const listeners = new Set();
 let idCounter = 0;
+let msgSeq = null; // last message number handed out (lazy-loaded)
 
 function safeStorage() {
   try {
@@ -99,6 +117,54 @@ function notify() {
   }
 }
 
+/**
+ * Message number for every message-type event, keyed by event id.
+ *
+ * Events recorded since numbering was introduced carry `msgNo`. Older events
+ * (and any whose number was lost) get one derived here: walking the log in
+ * time order, a missing number is the previous number + 1. Because the
+ * persisted sequence is seeded from this same walk, derived numbers never
+ * collide with ones handed out later.
+ * @returns {Map<string, number>}
+ */
+export function messageNumbers(evts) {
+  const out = new Map();
+  let last = 0;
+  const ordered = (evts || []).filter((ev) => ev && MESSAGE_EVENT_TYPES.has(ev.type));
+  ordered.sort((a, b) => (a.ts || 0) - (b.ts || 0));
+  for (const ev of ordered) {
+    const n = Number(ev.msgNo);
+    const no = Number.isInteger(n) && n > 0 ? n : last + 1;
+    out.set(ev.id, no);
+    last = Math.max(last, no);
+  }
+  return out;
+}
+
+function nextMsgNo() {
+  if (msgSeq == null) {
+    let stored = NaN;
+    const ls = safeStorage();
+    try {
+      stored = Number(ls?.getItem(MSG_SEQ_KEY));
+    } catch {
+      /* unreadable — derive below */
+    }
+    // Seed from the log so legacy (unnumbered) events keep their derived numbers
+    let derivedMax = 0;
+    for (const n of messageNumbers(events).values()) derivedMax = Math.max(derivedMax, n);
+    msgSeq = Math.max(Number.isFinite(stored) ? stored : 0, derivedMax);
+  }
+  msgSeq += 1;
+  const ls = safeStorage();
+  try {
+    ls?.setItem(MSG_SEQ_KEY, String(msgSeq));
+  } catch {
+    /* number still unique for this session */
+  }
+  return msgSeq;
+}
+
 /** Return a copy of all events, oldest first. */
 export function getEvents() {
   return load().slice();
@@ -122,14 +188,19 @@ export function recordEvent(type, data = {}) {
     if (dedupeIndex.has(key)) return null;
     dedupeIndex.add(key);
   }
+  const now = Date.now();
   const ev = {
-    id: `${Date.now()}-${++idCounter}`,
-    ts: Number.isFinite(ts) ? ts : Date.now(),
+    id: `${now}-${++idCounter}`,
+    ts: Number.isFinite(ts) ? ts : now,
+    // When this browser wrote the entry (ts may be the event's own time) —
+    // a shared incident mirrors only entries recorded after joining.
+    recordedAt: now,
     type,
     callsign: String(callsign || ''),
     summary: String(summary || ''),
     details: String(details || ''),
     ...(dedupeKey != null ? { dedupeKey: String(dedupeKey) } : {}),
+    ...(MESSAGE_EVENT_TYPES.has(type) ? { msgNo: nextMsgNo() } : {}),
     ...(ref != null ? { ref: String(ref) } : {}),
   };
   events.push(ev);
@@ -144,6 +215,13 @@ export function clearEvents() {
   load();
   events = [];
   dedupeIndex = new Set();
+  // A cleared log starts a new operation — message numbers restart at 1
+  msgSeq = 0;
+  try {
+    safeStorage()?.setItem(MSG_SEQ_KEY, '0');
+  } catch {
+    /* ignore */
+  }
   persist();
   notify();
 }
@@ -165,6 +243,7 @@ export function subscribeEvents(fn) {
 export function reloadFromStorage() {
   events = null;
   dedupeIndex = null;
+  msgSeq = null; // re-seed from MSG_SEQ_KEY, which the other tab advanced
   notify();
 }
 
@@ -194,7 +273,16 @@ export function withdrawnEventIds(evts) {
   return out;
 }
 
-/** The log without withdrawn entries and without the withdrawal records — what forms should use. */
+/**
+ * The log without withdrawn entries and without the withdrawal records — what
+ * forms should use.
+ *
+ * Message numbers: net_withdrawn is not a message type, so a withdrawal record
+ * never takes a number. A withdrawn check-in keeps the number it was given —
+ * it is skipped on the ICS 309, leaving a gap, but later numbers do not shift
+ * (numbers already read out on the air or written down stay valid). Number
+ * the rows with messageNumbers() over the full log, not over activeEvents().
+ */
 export function activeEvents(evts) {
   const gone = withdrawnEventIds(evts);
   return (evts || []).filter((ev) => ev.type !== 'net_withdrawn' && !gone.has(ev.id));
@@ -204,6 +292,7 @@ export function activeEvents(evts) {
 export function _resetForTests() {
   events = null;
   dedupeIndex = null;
+  msgSeq = null;
   listeners.clear();
 }
 

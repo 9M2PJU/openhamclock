@@ -2,9 +2,15 @@
  * useEmcommData Hook
  * Polls NWS Alerts, FEMA Shelters, and FEMA Disaster Declarations.
  * Zero API calls when not in EmComm layout.
+ *
+ * Offline: when a request fails, alerts and shelters fall back to the
+ * newest last-known copy — the service worker's cached response or an
+ * offline area pack snapshot (Settings → Map Layers → Offline map areas) —
+ * and `asOf.alerts` / `asOf.shelters` carry its timestamp (null when live).
  */
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { apiFetch } from '../utils/apiFetch';
+import { fetchWithPackFallback } from '../utils/offlinePackStore.js';
 
 const ALERTS_INTERVAL = 3 * 60 * 1000; // 3 min
 const SHELTERS_INTERVAL = 5 * 60 * 1000; // 5 min
@@ -17,6 +23,11 @@ export const useEmcommData = (options = {}) => {
   const [shelters, setShelters] = useState([]);
   const [disasters, setDisasters] = useState([]);
   const [loading, setLoading] = useState(false);
+  // Timestamp of the last-known copy being shown per kind (null = live)
+  const [asOf, setAsOf] = useState({ alerts: null, shelters: null });
+  // When each kind last came back live — an older offline copy never
+  // replaces newer live data that is already on screen.
+  const liveAtRef = useRef({ alerts: 0, shelters: 0 });
 
   const locationRef = useRef(location);
   locationRef.current = location;
@@ -47,35 +58,37 @@ export const useEmcommData = (options = {}) => {
     return loc;
   }, []);
 
+  // Live fetch with offline fallback; `apply` receives the array to show.
+  const fetchKind = useCallback(async (kind, url, apply) => {
+    const loc = locationRef.current;
+    try {
+      const r = await fetchWithPackFallback(apiFetch, url, { cache: 'no-store' }, { kind, lat: loc.lat, lon: loc.lon });
+      if (!r || r.source === 'none') return;
+      if (r.source === 'live') {
+        liveAtRef.current[kind] = Date.now();
+        apply(Array.isArray(r.data) ? r.data : []);
+        setAsOf((prev) => (prev[kind] == null ? prev : { ...prev, [kind]: null }));
+        return;
+      }
+      if ((r.fetchedAt || 0) <= liveAtRef.current[kind]) return;
+      apply(Array.isArray(r.data) ? r.data : []);
+      setAsOf((prev) => ({ ...prev, [kind]: r.fetchedAt || null }));
+    } catch (err) {
+      console.error(`[EmComm] ${kind} fetch error:`, err);
+    }
+  }, []);
+
   const fetchAlerts = useCallback(async () => {
     const loc = locationRef.current;
     if (loc?.lat == null || loc?.lon == null) return;
-    try {
-      const res = await apiFetch(`/api/emcomm/alerts?lat=${loc.lat}&lon=${loc.lon}`, { cache: 'no-store' });
-      if (res?.ok) {
-        const data = await res.json();
-        setAlerts(Array.isArray(data) ? data : []);
-      }
-    } catch (err) {
-      console.error('[EmComm] Alerts fetch error:', err);
-    }
-  }, []);
+    await fetchKind('alerts', `/api/emcomm/alerts?lat=${loc.lat}&lon=${loc.lon}`, setAlerts);
+  }, [fetchKind]);
 
   const fetchShelters = useCallback(async () => {
     const loc = locationRef.current;
     if (loc?.lat == null || loc?.lon == null) return;
-    try {
-      const res = await apiFetch(`/api/emcomm/shelters?lat=${loc.lat}&lon=${loc.lon}&radius=200`, {
-        cache: 'no-store',
-      });
-      if (res?.ok) {
-        const data = await res.json();
-        setShelters(Array.isArray(data) ? data : []);
-      }
-    } catch (err) {
-      console.error('[EmComm] Shelters fetch error:', err);
-    }
-  }, []);
+    await fetchKind('shelters', `/api/emcomm/shelters?lat=${loc.lat}&lon=${loc.lon}&radius=200`, setShelters);
+  }, [fetchKind]);
 
   const fetchDisasters = useCallback(async () => {
     const loc = locationRef.current;
@@ -106,6 +119,8 @@ export const useEmcommData = (options = {}) => {
       setAlerts([]);
       setShelters([]);
       setDisasters([]);
+      setAsOf({ alerts: null, shelters: null });
+      liveAtRef.current = { alerts: 0, shelters: 0 };
       return;
     }
 
@@ -125,5 +140,5 @@ export const useEmcommData = (options = {}) => {
     };
   }, [enabled, fetchAlerts, fetchShelters, fetchDisasters]);
 
-  return { alerts, shelters, disasters, loading, state: resolvedStateRef.current?.state ?? null };
+  return { alerts, shelters, disasters, loading, asOf, state: resolvedStateRef.current?.state ?? null };
 };

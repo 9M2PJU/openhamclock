@@ -19,12 +19,13 @@ It also connects FT8/FT4 decoding software (WSJT-X, JTDX, MSHV, JS8Call) to Open
 7. [APRS via Local TNC _(Beta)_](#aprs-via-local-tnc-beta)
 8. [MeshCom UDP _(Beta)_](#meshcom-udp-plugin-beta)
 9. [Winlink Express CSV Ingest _(Beta)_](#winlink-express-csv-ingest-beta)
-10. [Antenna Rotator](#antenna-rotator-alpha)
-11. [Raspberry Pi Hardware _(Alpha)_ — GPS, BME280, GPIO, brightness](#raspberry-pi-hardware-alpha)
-12. [HTTPS Setup (needed for openhamclock.com)](#https-setup)
-13. [Troubleshooting](#troubleshooting)
-14. [Glossary](#glossary)
-15. [Advanced Topics](#advanced-topics)
+10. [NBEMS: fldigi and flmsg _(Beta)_](#nbems-fldigi-and-flmsg-beta)
+11. [Antenna Rotator](#antenna-rotator-alpha)
+12. [Raspberry Pi Hardware _(Alpha)_ — GPS, BME280, GPIO, brightness](#raspberry-pi-hardware-alpha)
+13. [HTTPS Setup (needed for openhamclock.com)](#https-setup)
+14. [Troubleshooting](#troubleshooting)
+15. [Glossary](#glossary)
+16. [Advanced Topics](#advanced-topics)
 
 ---
 
@@ -730,6 +731,123 @@ Plugin status endpoint: `GET http://localhost:5555/api/winlink-express-csv/statu
 
 ---
 
+## NBEMS: fldigi and flmsg _(Beta)_
+
+NBEMS (fldigi for the modem, flmsg for the forms) is how many ARES groups pass ICS-213 messages and radiograms over HF and VHF. The `fldigi` plugin brings both into OpenHamClock's **EmComm layout**:
+
+- **fldigi** — connection, mode, dial frequency, audio offset and TX/RX state; a live tail of the receive pane; a send box; a mode picker; and a compact ICS-213 form that goes out through fldigi. All of it shows in the EmComm layout's **NBEMS** panel.
+- **flmsg** — forms that arrive in flmsg's folders (ICS-213, radiograms, and other flmsg forms) are parsed and forwarded to your OpenHamClock server. They appear in the **Field Reports** panel tagged **NBEMS**, with the form type (for example `ICS-213 (NBEMS)`), and as 📋 map markers when the form carries a position.
+
+```
+fldigi ◀──XML-RPC :7362──▶ Rig Bridge — fldigi plugin ──SSE /stream──▶ EmComm layout · NBEMS panel
+                                       │
+~/NBEMS.files/ICS/messages ──watch──▶  │ parse flmsg forms
+~/NBEMS.files/WRAP/recv    ──watch──▶  │ POST /api/emcomm/field-reports
+                                       ▼
+                         OpenHamClock server ──▶ Field Reports panel + map markers
+```
+
+#### Setup
+
+1. **fldigi:** nothing to change — its XML-RPC server listens on `127.0.0.1:7362` by default. If you changed it, it is under fldigi's _Configure → Misc → TCP-IP sockets_ (XML-RPC).
+2. **flmsg:** keep using it as usual. Received transfers land in `NBEMS.files/WRAP/recv`, and forms you open and save in flmsg go to `NBEMS.files/ICS/messages`. Both folders sit in your home directory on Linux, macOS and Windows (`C:\Users\<you>\NBEMS.files` on Windows).
+3. In the Rig Bridge setup page, open **Plugins**, switch on **fldigi + flmsg (NBEMS)**, set **Your Callsign** (it goes into the header of forms you send) and the **OpenHamClock server URL**, then save. Or in `rig-bridge-config.json`:
+
+```json
+{
+  "fldigi": {
+    "enabled": true,
+    "url": "http://127.0.0.1:7362",
+    "callsign": "KE8PLM",
+    "ohcUrl": "http://localhost:3000"
+  }
+}
+```
+
+4. Switch OpenHamClock to the EmComm layout. The **NBEMS** panel shows fldigi's state within a second, and forms from the last 72 hours already in the folders appear in Field Reports.
+
+Sending (text, ICS-213, mode change, Stop TX) goes from the browser straight to Rig Bridge, like click-to-tune, and uses your Rig Bridge API token when one is set (Settings → Rig Bridge).
+
+#### Config reference
+
+| Field               | Description                                                                                             | Default                 |
+| ------------------- | ------------------------------------------------------------------------------------------------------- | ----------------------- |
+| `enabled`           | Activate the plugin on startup                                                                          | `false`                 |
+| `url`               | fldigi's XML-RPC address                                                                                | `http://127.0.0.1:7362` |
+| `pollInterval`      | Milliseconds between status and receive-text polls (minimum 250)                                        | `1000`                  |
+| `rxBufferChars`     | Receive text kept for browsers that connect later                                                       | `4000`                  |
+| `maxTxSeconds`      | Transmit watchdog: a transmission still running after this long is aborted and fldigi set to receive    | `600`                   |
+| `callsign`          | Station callsign written into the flmsg header of forms you send                                        | `""`                    |
+| `flmsgEnabled`      | Watch the flmsg folders for forms                                                                       | `true`                  |
+| `flmsgDirs`         | Folders to watch, separated by `;` — blank means `NBEMS.files/ICS/messages` and `NBEMS.files/WRAP/recv` | `""`                    |
+| `flmsgPollInterval` | Seconds between folder scans (file-system events also trigger a scan straight away)                     | `15`                    |
+| `flmsgMaxAgeHours`  | At start-up, forms older than this are remembered but not reported                                      | `72`                    |
+| `serverForward`     | POST forms to the OpenHamClock server                                                                   | `true`                  |
+| `ohcUrl`            | OpenHamClock server URL                                                                                 | `http://localhost:3000` |
+| `verbose`           | Log every TX completion and other detail                                                                | `false`                 |
+
+Changes saved from the setup page restart the plugin; no Rig Bridge restart is needed.
+
+#### How it talks to fldigi
+
+| Job          | fldigi XML-RPC calls                                                                                                       |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------- |
+| Status       | `main.get_frequency`, `modem.get_name`, `modem.get_carrier`, `main.get_trx_status`                                         |
+| On connect   | `fldigi.version`, `modem.get_names` (the mode list for the picker)                                                         |
+| Receive text | `text.get_rx_length` + `text.get_rx` — reads the receive pane without consuming it (`rx.get_data` on builds without these) |
+| Send         | `text.add_tx` with `^r` appended, then `main.tx` — fldigi returns to receive when the text is sent                         |
+| Mode         | `modem.set_by_name`                                                                                                        |
+| Stop TX      | `main.abort`, `text.clear_tx`, `main.rx`                                                                                   |
+
+Messages are sent one at a time: the next one starts only after fldigi is back on receive. If fldigi is closed or restarted the panel shows _not connected_ and the plugin retries every 2 s, backing off to 30 s, until it answers again.
+
+#### Forms
+
+- **ICS-213** fields (incident, to/from with positions, subject, date, time, message, approved-by) are read by name. The report's text is the subject and message; the to/from/subject/approved-by details travel with it.
+- **Radiograms** come through with number, precedence, handling, check, place of origin, addressee and signature; the station of origin becomes the report's callsign.
+- **Other flmsg forms** (ICS-205, ICS-214, plain text, ...) are listed under their form name with their raw fields.
+- **Positions:** an ICS-213 has no position field, so put one in the message: `GRID EM29qb`, `LAT 39.10 LON -94.58`, or a decimal pair such as `39.0997, -94.5786`. Forms without one still appear in the list.
+- **Received transfers** (`[WRAP:beg]...[WRAP:end]`) are checked against their CRC-16; a mismatch shows in the report's details as `checksum: MISMATCH` and the form is still listed.
+- Each form is reported once, even when the same form is in both folders or the file is saved again unchanged.
+
+**Send ICS-213** (the ICS-213 button in the NBEMS panel, or `POST /api/fldigi/send-ics213`) writes the form in flmsg's file format, dated now in UTC, wraps it in the `[WRAP:...]` envelope with its CRC-16, and transmits it in fldigi's current mode. A receiving station running fldigi and flmsg gets it as a normal flmsg transfer.
+
+#### Known limitations
+
+- **Compressed transfers are not read.** flmsg can compress forms before sending; the plugin skips those and logs `... is compressed — turn off compression in flmsg`. Ask stations to send uncompressed, or open the form in flmsg, which saves it uncompressed to `ICS/messages` where the plugin reads it. Forms sent from OpenHamClock are never compressed.
+- **Sent forms follow flmsg's format; flmsg remains the reference.** If a receiving flmsg ever reports a checksum error on a form sent from OpenHamClock, send that traffic from flmsg directly and report the case. Characters outside plain ASCII are the most likely trigger.
+- `^` in outgoing text is sent as a space: fldigi reads `^` as the start of a transmit command.
+- `ICS/messages` also holds forms you drafted in flmsg yourself; they are listed too.
+- In cloud-relay mode the NBEMS panel has no data: it needs a direct (local or LAN) connection between the browser and Rig Bridge. Received forms still reach a cloud server when `ohcUrl` points at it.
+- Dates written `DD/MM/YY` are read as `MM/DD/YY`; flmsg's default ISO dates (`2026-10-15`) are unambiguous.
+
+#### API
+
+| Endpoint                       | Description                                                             |
+| ------------------------------ | ----------------------------------------------------------------------- |
+| `GET /api/fldigi/status`       | Connection, mode, frequency, TX queue, folder watcher and counters      |
+| `GET /api/fldigi/rx`           | The receive-text tail                                                   |
+| `GET /api/fldigi/forms`        | The last 50 forms read from the flmsg folders                           |
+| `POST /api/fldigi/send`        | `{ "text": "..." }` — queue text for transmit (token)                   |
+| `POST /api/fldigi/send-ics213` | `{ "to", "from", "subject", "message", ... }` — send an ICS-213 (token) |
+| `POST /api/fldigi/mode`        | `{ "mode": "MT63-2KL" }` — change fldigi's mode (token)                 |
+| `POST /api/fldigi/abort`       | Stop transmitting and clear the queue (token)                           |
+
+"(token)" endpoints need the `X-RigBridge-Token` header when an API token is configured. Live updates reach the browser on `/stream` as plugin events `fldigi` (status), `fldigi-rx` (receive text) and `nbems-form` (a form just read).
+
+#### Troubleshooting
+
+| Problem                                  | Solution                                                                                           |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| NBEMS panel says _not connected_         | Is fldigi running? Check `url` and fldigi's XML-RPC port (Configure → Misc → TCP-IP sockets)       |
+| Send says the API token was rejected     | Copy the token from the Rig Bridge setup page into OpenHamClock Settings → Rig Bridge              |
+| No forms in Field Reports                | `GET /api/fldigi/status` → `flmsg.dirs` shows which folders exist; check `ohcUrl` and `postErrors` |
+| A form shows but has no map marker       | Add `GRID ...` or `LAT ... LON ...` to the message — ICS-213 has no position field                 |
+| Log says a file is compressed            | The sender used flmsg compression — open it in flmsg and save, or ask for uncompressed sends       |
+| Transmission cut off after a few minutes | The watchdog (`maxTxSeconds`) stopped it — raise it for long messages in slow modes                |
+
+---
+
 ### Rotator Plugin
 
 Controls antenna rotators via Hamlib's `rotctld`.
@@ -825,7 +943,7 @@ Rig Bridge can control antenna rotators via [Hamlib's](https://hamlib.github.io/
 
 ## Raspberry Pi Hardware _(Alpha)_
 
-Four plugins bring Raspberry Pi hardware into the shack display: a GPS receiver, BME280 environment sensors, the GPIO header lines (ON-AIR, alarm, countdown, satellite, buttons) and an ambient-light sensor driving the display brightness. None of them needs a compiled Node module: serial and TCP go through `serialport`/`net`, I2C goes through the optional `i2c-bus` package, and GPIO uses the `gpiod` command-line tools or sysfs. Everything also has a **mock** mode, so the OpenHamClock panels can be tried on any computer without a Pi.
+Four plugins bring Raspberry Pi hardware into the shack display: a GPS receiver, BME280 environment sensors, the GPIO header lines (ON-AIR, alarm, countdown, satellite, lightning relay, buttons) and an ambient-light sensor driving the display brightness. None of them needs a compiled Node module: serial and TCP go through `serialport`/`net`, I2C goes through the optional `i2c-bus` package, and GPIO uses the `gpiod` command-line tools or sysfs. Everything also has a **mock** mode, so the OpenHamClock panels can be tried on any computer without a Pi.
 
 All four are enabled on the **Plugins** tab of the setup page (<http://localhost:5555>) and restart in place when you change their settings — no rig-bridge restart needed. The browser receives their state over the same `/stream` connection as the rig (`{ type:'plugin', event:'gps'|'env'|'gpio'|'brightness' }`), and the latest state is replayed to every new browser connection.
 
@@ -893,16 +1011,17 @@ API: `GET /api/env/status`, `GET /api/env/history`.
 
 Drives indicator and switch lines on the Pi header, plus a PTT sense input. Pin numbers below are **BCM GPIO numbers** (what `gpioinfo` shows); the header position is in brackets. You may also type a header pin as `P37` in the config.
 
-| Function            | Direction | Default BCM (header) | Notes                                                                         |
-| ------------------- | --------- | -------------------- | ----------------------------------------------------------------------------- |
-| `pttIn`             | input     | 16 (36)              | PTT / ON-AIR sense, active low → bridge `onAir` state → browser shows ON AIR  |
-| `countdownResetIn`  | input     | 26 (37)              | Button to restart the ID / countdown timer                                    |
-| `alarmSilenceIn`    | input     | 5 (29)               | Button to silence the alarm line                                              |
-| `onAirOut`          | output    | 21 (40)              | ON-AIR LED — rig PTT (CAT) or `pttIn` active                                  |
-| `alarmOut`          | output    | 6 (31)               | Alarm ringing — the ID timer has expired                                      |
-| `countdownGreenOut` | output    | 13 (33)              | Countdown running                                                             |
-| `countdownRedOut`   | output    | 19 (35)              | Countdown expired                                                             |
-| `satOut`            | output    | 20 (38)              | 1 Hz the minute before AOS, steady during the pass, 2 Hz the last minute (SA) |
+| Function            | Direction | Default BCM (header)           | Notes                                                                                     |
+| ------------------- | --------- | ------------------------------ | ----------------------------------------------------------------------------------------- |
+| `pttIn`             | input     | 16 (36)                        | PTT / ON-AIR sense, active low → bridge `onAir` state → browser shows ON AIR              |
+| `countdownResetIn`  | input     | 26 (37)                        | Button to restart the ID / countdown timer                                                |
+| `alarmSilenceIn`    | input     | 5 (29)                         | Button to silence the alarm line                                                          |
+| `onAirOut`          | output    | 21 (40)                        | ON-AIR LED — rig PTT (CAT) or `pttIn` active                                              |
+| `alarmOut`          | output    | 6 (31)                         | Alarm ringing — the ID timer has expired                                                  |
+| `countdownGreenOut` | output    | 13 (33)                        | Countdown running                                                                         |
+| `countdownRedOut`   | output    | 19 (35)                        | Countdown expired                                                                         |
+| `satOut`            | output    | 20 (38)                        | 1 Hz the minute before AOS, steady during the pass, 2 Hz the last minute (SA)             |
+| `lightningOut`      | output    | off (suggested 25 / header 22) | Lightning antenna-protection relay — see [Lightning relay](#lightning-relay-lightningout) |
 
 Set a pin to `-1` to disable that function. `activeLow` (default on) means switches pull the input to ground; `outputActiveLow` inverts the outputs for sink-driven LEDs.
 
@@ -914,9 +1033,32 @@ gpio=5,16,26=pu
 
 **Backends** (`backend`): `auto` picks sysfs when `/sys/class/gpio` exists (every Raspberry Pi OS release so far) and otherwise the libgpiod tools (`gpioget`/`gpioset`/`gpiomon`, v1 or v2 — install with `sudo apt install gpiod`). `mock` keeps everything in memory; `POST /api/gpio/mock/input { "name": "pttIn", "level": 1 }` presses a virtual button so you can watch the ON AIR panel react.
 
-The browser tells the bridge what to show by posting its indicator state to `POST /api/indicators` (`{ satVisible, satAosInSec, satLosInSec, countdown: off|running|expired, alarm }`, token-protected, every 15 s and on change). Any plugin can subscribe with `pluginBus.on('indicators', fn)`. Physical button presses go the other way as `{ type:'plugin', event:'gpio-button' }` — the **ID Timer** panel restarts on `countdown-restart` and dismisses its reminder on `alarm-silence`.
+The browser tells the bridge what to show by posting its indicator state to `POST /api/indicators` (`{ satVisible, satAosInSec, satLosInSec, countdown: off|running|expired, alarm, lightning?: clear|warn|alarm, lightningRelay?: bool }`, token-protected, every 15 s and on change). Any plugin can subscribe with `pluginBus.on('indicators', fn)`. Physical button presses go the other way as `{ type:'plugin', event:'gpio-button' }` — the **ID Timer** panel restarts on `countdown-restart` and dismisses its reminder on `alarm-silence`.
 
 API: `GET /api/gpio/status`, `POST /api/gpio/mock/input`, `POST /api/indicators`, `GET /api/indicators`.
+
+#### Lightning relay (`lightningOut`)
+
+> ⚠️ **Safety first.** The lightning relay is a **convenience, not lightning protection.** Lightning data can arrive late or not at all, and the browser, network, Pi or relay can fail. A relay a few millimetres apart does not stop a direct or nearby strike. It does **not** replace a proper station ground, bonding, coax surge arrestors at the entry panel, and disconnecting antennas by hand when storms are forecast. Never use it to make outdoor work safe.
+
+The GPIO plugin can drive one more output, `lightningOut`, from the browser's **lightning guard** (OpenHamClock → Settings → Alerts → Lightning guard): the relay engages when strikes come inside the alarm radius (or the warning radius, if chosen there) and releases automatically after the all-clear time. The browser sends `lightningRelay: true|false` and the guard level `lightning` in the indicator payload above; a browser that does not drive the relay leaves both out, so a second display cannot release a relay the first one engaged.
+
+| Setting                  | Default | Description                                                                                                                    |
+| ------------------------ | ------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `pins.lightningOut`      | `-1`    | BCM line for the relay (`-1` = off). Suggested `25` (header 22) — free on a bare Pi. `P22` also works                          |
+| `lightningFailSafe`      | `false` | Invert this line only: energised = antenna **connected**. Power loss, a crash or a stopped bridge then disconnects the antenna |
+| `lightningHoldWhenStale` | `true`  | Keep the relay engaged when the browser stops reporting (90 s). Off: release with the other indicator lines                    |
+
+Assign the line from OpenHamClock (**Settings → Rig Bridge → Lightning relay (GPIO)** → _Push to Rig Bridge_) or on the setup page (Plugins → Raspberry Pi GPIO). `GET /api/gpio/status` reports `lightning: { pin, relay, requested, level, reportAgeMs, failSafe, holdWhenStale }`. With the **mock** backend you can watch it work without hardware: enable the guard, click _Simulate alarm strike_, and `mockLevels` in the status shows the line switching.
+
+**Wiring:**
+
+- A Pi GPIO gives 3.3 V and a few milliamps — drive a **relay module** (one with a transistor driver and flyback diode on board, logic input rated for 3.3 V), never a bare relay coil. Feed the module from the Pi's 5 V pin or its own supply, and tie the grounds together.
+- Switch the antenna with a relay or **coax switch rated for your RF power and frequency** (a proper coaxial relay for anything above a few watts); a PCB signal relay is only good for a receive antenna. Only switch while receiving.
+- A common layout: the antenna feedline on the relay's common (C) contact, the radio on one throw and a grounded dummy load or a direct ground on the other. Which throw is "protected" decides the wiring:
+  - **Normal mode** (`lightningFailSafe: false`): the line is high while protecting. Radio on **NC** (connected while the coil is off), ground/load on **NO**. If the Pi or bridge stops, the antenna stays connected to the radio.
+  - **Fail-safe** (`lightningFailSafe: true`): the line is high while it is safe to connect. Radio on **NO**, ground/load on **NC**. Anything that removes power — Pi off, bridge stopped, crash, a pulled wire — disconnects the antenna. Remember the antenna is then also disconnected whenever the bridge isn't running.
+- Many relay modules switch on a _low_ input; use `outputActiveLow` for those (it inverts every output line, so check your LEDs), or pick an active-high module.
 
 ### Light Sensor / Brightness plugin
 
@@ -1240,6 +1382,7 @@ rig-bridge/
     ├── rotator.js         # Antenna rotator via rotctld (Hamlib)
     ├── winlink-gateway.js # Winlink RMS gateway discovery + Pat client
     ├── winlink-express-csv.js # Winlink Express form-export CSV → EmComm field reports
+    ├── fldigi.js          # NBEMS: fldigi XML-RPC (status, RX, TX, ICS-213) + flmsg form folders
     ├── cloud-relay.js     # Cloud relay — bridges local rig-bridge to cloud OHC
     ├── gps.js             # GPS receiver (serial NMEA / gpsd / fifo / mock)
     ├── env-sensors.js     # BME280/BMP280 over I2C + HTTP JSON sensors, 24 h history

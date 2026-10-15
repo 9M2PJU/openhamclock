@@ -244,6 +244,13 @@ pluginBus.on('hamalert', (alert) => {
   broadcast({ type: 'plugin', event: 'hamalert', source: 'hamalert', data: alert });
 });
 
+// NBEMS (fldigi plugin): status, receive text, and flmsg forms as they arrive.
+// useFldigi in the browser keeps the status and accumulates the RX text;
+// 'nbems-form' prompts the EmComm layout to refresh its Field Reports.
+for (const event of ['fldigi', 'fldigi-rx', 'nbems-form']) {
+  pluginBus.on(event, (data) => broadcast({ type: 'plugin', event, source: 'fldigi', data }));
+}
+
 pluginBus.on('meshcom', (pkt) => {
   // Bridge MeshCom packets to the SSE /stream for browsers in local/direct mode.
   // In cloud relay mode, cloud-relay.js batches and POSTs these to the OHC server

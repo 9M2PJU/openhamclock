@@ -13,6 +13,12 @@
  *   countdownGreenOut / countdownRedOut   countdown running / expired
  *   satOut            1 Hz the minute before AOS, steady during the pass,
  *                     2 Hz for the last minute (browser posts /api/indicators)
+ *   lightningOut      lightning antenna-protection relay — engaged while the
+ *                     browser's lightning guard asks for it (`lightningRelay`
+ *                     in /api/indicators). Off unless a pin is assigned. Held
+ *                     when the browser goes quiet (lightningHoldWhenStale);
+ *                     `lightningFailSafe` inverts the line so the relay is
+ *                     energised to keep the antenna CONNECTED.
  *
  * Backends (config.gpio.backend):
  *   auto   — sysfs if /sys/class/gpio exists, else libgpiod CLI tools
@@ -344,6 +350,7 @@ const descriptor = {
     const outputLevels = {}; // output name → bool (logical)
     let indicators = logic.sanitizeIndicators(null);
     let indicatorsAt = 0;
+    let lightningAt = 0; // last report that carried lightningRelay
     let alarmSilenced = false;
     let rigPtt = !!(state && state.ptt);
 
@@ -396,17 +403,24 @@ const descriptor = {
           pttIn: !!inputActive.pttIn,
           indicators,
           indicatorsStale: now - indicatorsAt > INDICATORS_STALE_MS,
+          lightningStale: now - lightningAt > INDICATORS_STALE_MS,
+          lightningHoldWhenStale: cfg().lightningHoldWhenStale !== false,
           alarmSilenced,
         },
         now,
       );
-      const invert = !!cfg().outputActiveLow;
+      const polarity = { outputActiveLow: !!cfg().outputActiveLow, lightningFailSafe: !!cfg().lightningFailSafe };
       for (const [name, bcm] of Object.entries(pinMap.outputs)) {
         const want = !!desired[name];
         if (outputLevels[name] === want) continue;
+        const wasOn = outputLevels[name];
         outputLevels[name] = want;
+        if (name === 'lightningOut' && wasOn !== undefined) {
+          log(`Lightning relay ${want ? 'ENGAGED (antenna protect)' : 'released'}`);
+          emitGpioEvent();
+        }
         try {
-          await backend.write(bcm, (want ? 1 : 0) ^ (invert ? 1 : 0));
+          await backend.write(bcm, logic.physicalLevel(name, want, polarity));
         } catch (e) {
           if (!backendError) console.error(`[GPIO] write ${name} (BCM ${bcm}) failed: ${e.message}`);
           backendError = e.message;
@@ -438,10 +452,11 @@ const descriptor = {
       if (prop === 'ptt') rigPtt = !!value;
     };
     const onIndicators = (body) => {
-      const next = logic.sanitizeIndicators(body);
+      const { indicators: next, lightningReported } = logic.mergeIndicators(indicators, body);
       if (!next.alarm) alarmSilenced = false;
       indicators = next;
       indicatorsAt = Date.now();
+      if (lightningReported) lightningAt = indicatorsAt;
     };
 
     async function start() {
@@ -525,6 +540,17 @@ const descriptor = {
         indicatorsAgeMs: indicatorsAt ? Date.now() - indicatorsAt : null,
         alarmSilenced,
         rigPtt,
+        lightning: {
+          pin: pinMap.outputs.lightningOut ?? null,
+          relay: !!outputLevels.lightningOut,
+          requested: indicators.lightningRelay,
+          level: indicators.lightning,
+          reportAgeMs: lightningAt ? Date.now() - lightningAt : null,
+          failSafe: !!cfg().lightningFailSafe,
+          holdWhenStale: cfg().lightningHoldWhenStale !== false,
+        },
+        // Mock backend only: raw line levels by BCM number (after inversion)
+        ...(backend && backend.name === 'mock' && backend.getOutputs ? { mockLevels: backend.getOutputs() } : {}),
       };
     }
 

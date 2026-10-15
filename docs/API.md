@@ -17,6 +17,7 @@ Everything else under `/api/*` is an **internal implementation detail** — see
 - [QSO Layer API (write)](#qso-layer-api-write)
 - [IBP beacon measurements](#ibp-beacon-measurements)
 - [Remote control API](#remote-control-api)
+- [Shared incident API](#shared-incident-api)
 - [Public read endpoints](#public-read-endpoints)
 - [Authentication](#authentication)
 - [Rate limits & courtesy](#rate-limits--courtesy)
@@ -325,6 +326,116 @@ a desktop screenshot tool when you need the full picture.
 Environment: `CONTROL_REQUIRE_TARGET` (default: true when `OHC_HOSTED` is
 set), `CONTROL_MAX_DISPLAYS` (50 local / 2000 hosted), `MAX_SSE_PER_IP` (10).
 Everything is in memory: a server restart forgets reports, queues and frames.
+
+---
+
+## Shared incident API
+
+The EmComm layout's **Incident** panel uses these endpoints to share one
+operating picture between operators and sites: a net roster, an event log,
+field and shelter reports, and an incident board (name, IC, net frequency,
+notes). Anything that can make an HTTP request can join in. For example, a
+script can post check-ins from a voice net logger, or a dashboard can show the
+live roster.
+
+**Auth.** `POST /api/incident` returns an `id` (8 characters) and a `joinKey`
+(16 characters). The key is shown only once, and the server stores only a
+salted SHA-256 of it. Every other call must present the key as an
+`X-Incident-Key: <key>` header, as `key` in a JSON body, or as `?key=` (needed
+for `EventSource`, which cannot set headers). Ids and keys use
+`A–Z 2–9` without `I L O 0 1`. Case, spaces and dashes are ignored. A wrong key
+returns `403`. An unknown id returns `404` on a self-hosted server and the same
+`403` as a wrong key when `OHC_HOSTED` is set, so ids cannot be probed. This
+key is separate from `API_WRITE_KEY`: the join key alone admits a caller.
+
+**Records and merging.** Every record has a stable id, so sending the same
+thing twice (a retry, a reconnect, two browsers seeing the same event) changes
+nothing:
+
+| Collection | Key                  | Fields                                                                                                            | Merge rule                                                                                         |
+| ---------- | -------------------- | ----------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `roster`   | `call`               | `netName, status, checkinTime, lastHeard, lat, lon, tokens[], source, site, checkedOut, updatedAt`                | Newest `updatedAt` wins. A check-out is `checkedOut: true`, never a delete, so late joiners see it |
+| `events`   | `id` (+ `dedupeKey`) | `ts, type, callsign, summary, details, site, dedupeKey` · `type` is one of the Event Log types or `incident_note` | First write wins. A second event with the same `type` + `dedupeKey` is ignored                     |
+| `reports`  | `id`                 | `kind` (`field` \| `shelter`), `callsign, formType, text, lat, lon, timestamp, tokens[], extra{}, site`           | First write wins                                                                                   |
+| `board`    | —                    | `name, ic, netFreq, notes, updatedAt`                                                                             | Newest `updatedAt` wins                                                                            |
+
+Each accepted change increments the incident's `seq` and stamps the record
+with it. `GET ?since=<seq>` and the stream return only what changed after a
+cursor. Records sent with a `site` keep it; otherwise the request's `site` is
+stamped on them.
+
+| Endpoint                               | Body / query                                                                                     | Returns                                                                                                                                       |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/incident`                    | —                                                                                                | `{hosted, listing, limits}`                                                                                                                   |
+| `POST /api/incident`                   | `{name?, ic?, netFreq?, notes?, clientId?, call?}`                                               | `{ok, id, joinKey, incident}` — `incident` is the full state (below)                                                                          |
+| `POST /api/incident/:id/join`          | `{key, clientId?, call?}`                                                                        | `{ok, id, incident}`                                                                                                                          |
+| `POST /api/incident/:id/leave`         | `{key, clientId}`                                                                                | `{ok, participants}`                                                                                                                          |
+| `GET /api/incident/:id`                | `?since=<seq>&clientId=` + key                                                                   | `{id, seq, since, board, participants, counts, roster[], events[], reports[]}` — only records after `since`; `board` is `null` when unchanged |
+| `POST /api/incident/:id/sync`          | `{key, clientId?, call?, site?, roster?[], events?[], reports?[], board?}` (≤200 per collection) | `{ok, seq, accepted:{roster, events, reports, board}}` — counts of records that actually changed                                              |
+| `GET /api/incident/:id/stream`         | `?key=&clientId=&since=` (or `Last-Event-ID`)                                                    | Server-sent events (below)                                                                                                                    |
+| `GET /api/incident/list` (self-hosted) | `API_WRITE_KEY` when set                                                                         | `{incidents:[{id, name, createdAt, lastActivity, participants, counts}]}` — never keys. `403` when `OHC_HOSTED` is set                        |
+
+**Stream.** `GET /api/incident/:id/stream` first sends `event: snapshot` (the
+full state, or changes since `since` / `Last-Event-ID`), then
+`event: change` (`{seq, roster[], events[], reports[], board}`) whenever any
+client syncs, and `event: presence` (`{participants}`) when the number of
+connected stations changes. `snapshot` and `change` carry `id: <seq>`, so a
+browser's automatic reconnect resumes where it left off. A comment line
+keeps the connection alive every 25 s. `event: expired` arrives if the
+incident expires while you are listening. A station counts as connected while
+it holds a stream or has synced or read within the last 150 s with a
+`clientId`.
+
+```bash
+B=http://localhost:3000/api/incident
+
+# Create (keep the joinKey — it is not shown again)
+curl -s -X POST $B -H 'Content-Type: application/json' \
+  -d '{"name":"River flood","ic":"K0CJH","netFreq":"146.520"}' | jq '{id, joinKey}'
+ID=SG4U6D2M; KEY=JKMNPQRSTUVWXYZ2
+
+# Join, read everything, read only what changed after seq 12
+curl -s -X POST $B/$ID/join -H 'Content-Type: application/json' -d "{\"key\":\"$KEY\",\"call\":\"W1AW\"}" | jq .incident.seq
+curl -s $B/$ID -H "X-Incident-Key: $KEY" | jq '.roster[].call'
+curl -s "$B/$ID?since=12" -H "X-Incident-Key: $KEY" | jq '.events[] | [.type, .callsign, .summary]'
+
+# A voice check-in, a log entry and a field report from a script at "EOC North"
+curl -s -X POST $B/$ID/sync -H 'Content-Type: application/json' -H "X-Incident-Key: $KEY" -d '{
+  "site": "EOC North",
+  "roster":  [{"call":"KD0ABC","netName":"ARES","status":"At shelter [Beds 30/100]","source":"manual","updatedAt":1792106419000}],
+  "events":  [{"id":"logger-0001","type":"net_checkin","callsign":"KD0ABC","summary":"Checked into ARES","dedupeKey":"KD0ABC-1792106419000"}],
+  "reports": [{"id":"fsr-17","kind":"field","callsign":"KD0ABC","formType":"Field Situation Report","text":"Bridge out on Rt 9","lat":39.1,"lon":-94.6}]
+}'
+
+# Check the operator out
+curl -s -X POST $B/$ID/sync -H 'Content-Type: application/json' -H "X-Incident-Key: $KEY" \
+  -d '{"roster":[{"call":"KD0ABC","status":"Checked out","checkedOut":true,"updatedAt":1792110000000}]}'
+
+# Follow live changes
+curl -N "$B/$ID/stream?key=$KEY"
+
+# Update the board, leave
+curl -s -X POST $B/$ID/sync -H 'Content-Type: application/json' -H "X-Incident-Key: $KEY" \
+  -d '{"board":{"name":"River flood","ic":"K0CJH","netFreq":"146.520","notes":"Shelter open at the high school","updatedAt":1792110100000}}'
+curl -s -X POST $B/$ID/leave -H 'Content-Type: application/json' -d "{\"key\":\"$KEY\",\"clientId\":\"script-1\"}"
+```
+
+**Limits.** Self-hosted: 500 incidents, and per incident 300 roster entries,
+2000 events, 500 reports and 100 tracked participants, with 50 streams per
+incident and 20 streams per IP (`INCIDENT_MAX_SSE_PER_IP`). With `OHC_HOSTED`:
+50 incidents, 100 / 500 / 200 records, 25 streams per incident and 3 creates
+per IP per hour (20 self-hosted). When a collection is full, the oldest
+records are dropped, and checked-out operators leave the roster first. When
+the server is full, a new incident replaces the longest-idle one that nobody
+has used for an hour. Otherwise create returns `503`. Rate limits: create and
+join share `writeLimiter` (20/min per IP). Sync and leave allow 240/min per
+IP, because several browsers at one site often share an address.
+
+**Persistence.** Incidents are written to `data/incidents.json` (override with
+`INCIDENT_FILE`; same location rules as the group-log file) a couple of
+seconds after each change, atomically, and reloaded at start-up. Incidents
+idle for 7 days expire. Presence is held in memory, so after a restart it
+rebuilds as clients reconnect.
 
 ---
 

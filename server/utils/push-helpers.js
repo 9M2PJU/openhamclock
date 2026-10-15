@@ -114,6 +114,60 @@ function buildSwpcPushPayload(alert) {
   return { title, body, tag: 'ohc-push-swpc' };
 }
 
+// ── Lightning guard (station-broadcast push) ────────────────────────────────
+const LIGHTNING_PUSH_LEVELS = ['warn', 'alarm', 'clear'];
+const LIGHTNING_PUSH_MIN_GAP_MS = 20 * 1000; // any two lightning pushes
+const LIGHTNING_PUSH_REPEAT_MS = 10 * 60 * 1000; // the same level again
+const CARDINALS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+
+/**
+ * Build the push payload for a lightning guard transition from the
+ * browser's report. Only validated numbers and a fixed level vocabulary
+ * reach the text — nothing free-form from the request is echoed.
+ * Returns null for an invalid report.
+ */
+function buildLightningPushPayload(report) {
+  const r = report && typeof report === 'object' ? report : {};
+  if (!LIGHTNING_PUSH_LEVELS.includes(r.level)) return null;
+  const title =
+    r.level === 'alarm' ? 'Lightning ALARM' : r.level === 'warn' ? 'Lightning warning' : 'Lightning all clear';
+  const parts = [];
+  const km = Number(r.distanceKm);
+  if (
+    r.level !== 'clear' &&
+    r.distanceKm !== null &&
+    r.distanceKm !== '' &&
+    Number.isFinite(km) &&
+    km >= 0 &&
+    km <= 2000
+  ) {
+    const imperial = r.imperial === true;
+    const v = imperial ? km * 0.621371 : km;
+    const brg = Number(r.bearingDeg);
+    const dir =
+      r.bearingDeg != null && Number.isFinite(brg)
+        ? ` ${CARDINALS[Math.round((((brg % 360) + 360) % 360) / 45) % 8]}`
+        : '';
+    parts.push(`Nearest strike ${v < 10 ? v.toFixed(1) : Math.round(v)} ${imperial ? 'mi' : 'km'}${dir}`);
+  }
+  if (r.level === 'clear') parts.push('No strikes nearby for the all-clear time');
+  if (r.relay === true) parts.push('antenna relay engaged');
+  else if (r.relay === false && r.level === 'clear') parts.push('antenna relay released');
+  return { title, body: parts.join(' · '), tag: 'ohc-lightning' };
+}
+
+/**
+ * Throttle for lightning pushes: never two within LIGHTNING_PUSH_MIN_GAP_MS,
+ * and the same level is not repeated within LIGHTNING_PUSH_REPEAT_MS (a
+ * flapping browser or several displays reporting the same storm).
+ */
+function shouldPushLightning(last, level, now = Date.now()) {
+  if (!last || !last.at) return true;
+  if (now - last.at < LIGHTNING_PUSH_MIN_GAP_MS) return false;
+  if (last.level === level && now - last.at < LIGHTNING_PUSH_REPEAT_MS) return false;
+  return true;
+}
+
 module.exports = {
   MIN_PUSH_SCALE_LEVEL,
   MAX_PUSH_ALERT_AGE_MS,
@@ -126,4 +180,8 @@ module.exports = {
   selectNewSevereAlerts,
   prunePushedKeys,
   buildSwpcPushPayload,
+  LIGHTNING_PUSH_MIN_GAP_MS,
+  LIGHTNING_PUSH_REPEAT_MS,
+  buildLightningPushPayload,
+  shouldPushLightning,
 };

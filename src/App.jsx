@@ -108,10 +108,13 @@ import { isRemoteEnabled } from './utils/remoteControl.js';
 import { useWeatherAlertAnnouncements } from './hooks/app/useWeatherAlertAnnouncements';
 import useGpsFollow from './hooks/app/useGpsFollow.js';
 import useHardwareIndicators from './hooks/app/useHardwareIndicators.js';
+import useLightningGuard, { acknowledgeRelayReport } from './hooks/useLightningGuard.js';
+import { LightningGuardBanner } from './components/LightningGuardIndicator.jsx';
 import useDisplayBrightness from './hooks/app/useDisplayBrightness.js';
 import { extractBaseCall } from './components/CallsignLink.jsx';
 import { getBandFromFreq, detectMode, normalizeFrequencyToMHz, getCallsignInfo } from './utils/callsign';
 import { getContestReminders, contestReminderId, CONTEST_REMINDERS_EVENT } from './utils/contestReminders.js';
+import { parseJoinUrl } from './utils/incidentSync.js';
 
 // Load DXCC entity database on app startup (non-blocking)
 initCtyLookup();
@@ -197,6 +200,16 @@ const App = () => {
       }
     }
   }, [configLoaded, config.callsign]);
+
+  // A shared-incident invite link (#incident=…&key=…, e.g. scanned from the
+  // Incident panel's QR code) opens the EmComm layout, whose Incident panel
+  // picks the invite up and asks to join.
+  useEffect(() => {
+    if (!configLoaded || config.layout === 'emcomm') return;
+    if (parseJoinUrl(window.location.hash)) handleSaveConfig({ ...config, layout: 'emcomm' });
+    // Once, when the config has loaded — not again on every config change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [configLoaded]);
 
   // ── Keyboard shortcuts for map layer toggling ──
   // Uses pinned shortcuts from layer metadata when available,
@@ -689,8 +702,20 @@ const App = () => {
     'grid-change': gridChangeAlerts,
     opportunity: opportunities.alertItems,
   });
-  // Mirror satellite / countdown state to the bridge's GPIO indicator lines
-  useHardwareIndicators({ satellites: satellites.data, rigConfig: config.rigControl });
+  // Lightning antenna protection (Settings → Alerts → Lightning guard): own
+  // strike feed subscription, alerts, and the relay request for the bridge
+  const lightningGuard = useLightningGuard({
+    location: config.location,
+    allUnits: config.allUnits,
+    layout: config.layout,
+  });
+  // Mirror satellite / countdown / lightning-relay state to the bridge's GPIO lines
+  useHardwareIndicators({
+    satellites: satellites.data,
+    rigConfig: config.rigControl,
+    lightning: lightningGuard,
+    onLightningAck: acknowledgeRelayReport,
+  });
   const localWeather = useWeather(config.location, config.allUnits);
   const dxWeather = useWeather(dxLocation, config.allUnits);
   const localAlerts = useWeatherAlerts(config.location);
@@ -1233,6 +1258,7 @@ const App = () => {
         keybindings={keybindingsList}
       />
       <AlarmBanner timeZone={config.timezone} />
+      <LightningGuardBanner />
       <ActivateFilterManager
         name="POTA"
         filters={potaFilters}

@@ -473,6 +473,14 @@ const cartoApiKey = getCartoApiKey();
 const CARTO_ATTRIBUTION =
   '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>';
 
+// Offline area packs (Settings → Map Layers → Offline map areas) may only be
+// downloaded from styles flagged `offlinePack: true` — tile sources whose
+// terms allow fetching an area ahead of time. Esri ArcGIS Online basemaps
+// (offline use goes through Esri's own export-tiles workflow with an ArcGIS
+// account), Google, CARTO, and OpenStreetMap's own tile servers (which ban
+// "save area for offline" outright) are deliberately not flagged; NASA GIBS
+// imagery is date-stamped and changes daily. A flagged style's tile host must
+// also be listed in public/sw-policy.js OFFLINE_TILE_HOSTS (unit-tested).
 export const MAP_STYLES = {
   dark: cartoApiKey
     ? {
@@ -538,6 +546,17 @@ export const MAP_STYLES = {
     name: 'Gray',
     url: 'https://services.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}',
     attribution: '&copy; Esri',
+  },
+  usgsTopo: {
+    name: 'USGS Topo',
+    // The National Map (U.S. Geological Survey): U.S. public-domain topo
+    // tiles — roads, contours, hydrography, place names. Detailed for the
+    // United States; elsewhere only coarse world data at low zoom.
+    url: 'https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}',
+    attribution: 'USGS The National Map',
+    offlinePack: true,
+    offlineAvgTileBytes: 28 * 1024, // measured: ~10–36 KB JPEG tiles, z6–z16
+    offlineMaxZoom: 16,
   },
   natgeo: {
     name: 'Nat Geo',
