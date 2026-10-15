@@ -15,6 +15,21 @@ import { esc } from './escapeHtml.js';
 
 export const STORAGE_KEY = 'openhamclock_emcommEventLog';
 export const MAX_EVENTS = 2000;
+/** Last message number handed out (persisted so numbers survive reloads). */
+export const MSG_SEQ_KEY = 'openhamclock_emcommMsgSeq';
+
+/**
+ * Event types that are message traffic and get a station message number at
+ * record time (shown in the ICS 309 Msg # columns). Alerts, first-heard
+ * stations and reports are logged but not numbered.
+ */
+export const MESSAGE_EVENT_TYPES = new Set([
+  'aprs_msg_sent',
+  'aprs_msg_rx',
+  'ics213_sent',
+  'net_checkin',
+  'net_checkout',
+]);
 
 /** Human-readable labels + colors per event type (used by UI + print export) */
 export const EVENT_TYPE_META = {
@@ -34,6 +49,7 @@ let events = null; // lazy-loaded array, oldest first
 let dedupeIndex = null; // Set of `${type}:${dedupeKey}`
 const listeners = new Set();
 let idCounter = 0;
+let msgSeq = null; // last message number handed out (lazy-loaded)
 
 function safeStorage() {
   try {
@@ -92,6 +108,54 @@ function notify() {
   }
 }
 
+/**
+ * Message number for every message-type event, keyed by event id.
+ *
+ * Events recorded since numbering was introduced carry `msgNo`. Older events
+ * (and any whose number was lost) get one derived here: walking the log in
+ * time order, a missing number is the previous number + 1. Because the
+ * persisted sequence is seeded from this same walk, derived numbers never
+ * collide with ones handed out later.
+ * @returns {Map<string, number>}
+ */
+export function messageNumbers(evts) {
+  const out = new Map();
+  let last = 0;
+  const ordered = (evts || []).filter((ev) => ev && MESSAGE_EVENT_TYPES.has(ev.type));
+  ordered.sort((a, b) => (a.ts || 0) - (b.ts || 0));
+  for (const ev of ordered) {
+    const n = Number(ev.msgNo);
+    const no = Number.isInteger(n) && n > 0 ? n : last + 1;
+    out.set(ev.id, no);
+    last = Math.max(last, no);
+  }
+  return out;
+}
+
+function nextMsgNo() {
+  if (msgSeq == null) {
+    let stored = NaN;
+    const ls = safeStorage();
+    try {
+      stored = Number(ls?.getItem(MSG_SEQ_KEY));
+    } catch {
+      /* unreadable — derive below */
+    }
+    // Seed from the log so legacy (unnumbered) events keep their derived numbers
+    let derivedMax = 0;
+    for (const n of messageNumbers(events).values()) derivedMax = Math.max(derivedMax, n);
+    msgSeq = Math.max(Number.isFinite(stored) ? stored : 0, derivedMax);
+  }
+  msgSeq += 1;
+  const ls = safeStorage();
+  try {
+    ls?.setItem(MSG_SEQ_KEY, String(msgSeq));
+  } catch {
+    /* number still unique for this session */
+  }
+  return msgSeq;
+}
+
 /** Return a copy of all events, oldest first. */
 export function getEvents() {
   return load().slice();
@@ -122,6 +186,7 @@ export function recordEvent(type, data = {}) {
     summary: String(summary || ''),
     details: String(details || ''),
     ...(dedupeKey != null ? { dedupeKey: String(dedupeKey) } : {}),
+    ...(MESSAGE_EVENT_TYPES.has(type) ? { msgNo: nextMsgNo() } : {}),
   };
   events.push(ev);
   if (events.length > MAX_EVENTS) events.splice(0, events.length - MAX_EVENTS);
@@ -135,6 +200,13 @@ export function clearEvents() {
   load();
   events = [];
   dedupeIndex = new Set();
+  // A cleared log starts a new operation — message numbers restart at 1
+  msgSeq = 0;
+  try {
+    safeStorage()?.setItem(MSG_SEQ_KEY, '0');
+  } catch {
+    /* ignore */
+  }
   persist();
   notify();
 }
@@ -152,6 +224,7 @@ export function subscribeEvents(fn) {
 export function _resetForTests() {
   events = null;
   dedupeIndex = null;
+  msgSeq = null;
   listeners.clear();
 }
 

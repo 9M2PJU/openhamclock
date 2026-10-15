@@ -15,6 +15,8 @@ import {
   diffAdded,
   buildPrintHtml,
   _resetForTests,
+  MSG_SEQ_KEY,
+  messageNumbers,
 } from './emcommEventLog.js';
 
 beforeEach(() => {
@@ -202,5 +204,48 @@ describe('buildPrintHtml', () => {
     const html = buildPrintHtml({ events: [], callsign: '' });
     expect(html).toContain('No events recorded');
     expect(html).toContain('N0CALL');
+  });
+});
+
+describe('message numbers', () => {
+  it('numbers message traffic sequentially at record time and persists the sequence', () => {
+    const a = recordEvent('aprs_msg_sent', { callsign: 'K0CJH', summary: 'Message to N0EOC' });
+    const alert = recordEvent('nws_alert', { summary: 'Flood Warning' });
+    const b = recordEvent('aprs_msg_rx', { callsign: 'N0EOC', summary: 'Message to K0CJH' });
+    const c = recordEvent('net_checkin', { callsign: 'KE8PLM', summary: 'Checked in' });
+    const d = recordEvent('ics213_sent', { callsign: 'K0CJH', summary: 'ICS 213 to N0EOC: x' });
+    expect([a.msgNo, b.msgNo, c.msgNo, d.msgNo]).toEqual([1, 2, 3, 4]);
+    expect(alert.msgNo).toBeUndefined();
+    expect(localStorage.getItem(MSG_SEQ_KEY)).toBe('4');
+    // Survives a reload
+    _resetForTests();
+    expect(recordEvent('aprs_msg_sent', { summary: 'Message to X' }).msgNo).toBe(5);
+    expect(getEvents().find((e) => e.id === a.id).msgNo).toBe(1);
+  });
+
+  it('derives numbers for legacy events and continues after them', () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify([
+        { id: 'old1', ts: 1000, type: 'net_checkin', callsign: 'A', summary: '' },
+        { id: 'old2', ts: 2000, type: 'nws_alert', callsign: '', summary: '' },
+        { id: 'old3', ts: 3000, type: 'aprs_msg_rx', callsign: 'B', summary: '' },
+      ]),
+    );
+    _resetForTests();
+    const nums = messageNumbers(getEvents());
+    expect(nums.get('old1')).toBe(1);
+    expect(nums.get('old3')).toBe(2);
+    expect(nums.has('old2')).toBe(false);
+    const fresh = recordEvent('aprs_msg_sent', { summary: 'Message to B' });
+    expect(fresh.msgNo).toBe(3);
+    expect(messageNumbers(getEvents()).get(fresh.id)).toBe(3);
+  });
+
+  it('restarts at 1 when the log is cleared', () => {
+    recordEvent('aprs_msg_sent', { summary: 'Message to X' });
+    recordEvent('aprs_msg_sent', { summary: 'Message to X' });
+    clearEvents();
+    expect(recordEvent('aprs_msg_sent', { summary: 'Message to X' }).msgNo).toBe(1);
   });
 });
