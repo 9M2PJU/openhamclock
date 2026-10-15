@@ -6,7 +6,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRoot } from 'react-dom/client';
 import { act } from 'react';
-import '../lang/i18n.js';
+import i18n from '../lang/i18n.js';
 import IcsFormsPanel from './IcsFormsPanel.jsx';
 import { recordEvent, getEvents, _resetForTests } from '../utils/emcommEventLog.js';
 import { ICS_DRAFTS_KEY } from '../utils/icsForms.js';
@@ -95,6 +95,121 @@ describe('IcsFormsPanel', () => {
     const saved = JSON.parse(localStorage.getItem(ICS_DRAFTS_KEY));
     expect(saved.ics214.rows.length).toBe(1);
     expect(saved.ics205.rows.length).toBe(1);
+  });
+
+  it('309 shows message numbers, keeps row edits in the draft, and adds/removes rows', () => {
+    recordEvent('net_checkin', { callsign: 'KE8PLM', summary: 'Checked into ARES' });
+    const { container, unmount } = render(<IcsFormsPanel config={{ callsign: 'K0CJH' }} initialForm="309" />);
+    const msgCell = () => container.querySelector('input[aria-label="Msg #"]:nth-of-type(1)');
+    // TO Msg # of the check-in is the event's message number (1)
+    const toMsg = [...container.querySelectorAll('input[aria-label="Msg #"]')][1];
+    expect(toMsg.value).toBe('1');
+    expect(msgCell()).toBeTruthy();
+    const message = container.querySelector('textarea[aria-label="Message"]');
+    setInput(message, 'Checked in with 2 operators');
+    expect(container.querySelector('.ics-paper').innerHTML).toContain('Checked in with 2 operators');
+    click(buttonByText(container, 'Add entry'));
+    expect(container.querySelectorAll('textarea[aria-label="Message"]').length).toBe(2);
+    click(container.querySelectorAll('button[aria-label="Remove"]')[0]);
+    expect(buttonByText(container, 'Restore removed (1)')).toBeTruthy();
+    unmount();
+    const saved = JSON.parse(localStorage.getItem(ICS_DRAFTS_KEY));
+    expect(Object.values(saved.ics309.edits)[0].message).toBe('Checked in with 2 operators');
+    expect(saved.ics309.manual.length).toBe(1);
+    expect(saved.ics309.removed.length).toBe(1);
+  });
+
+  it('prints labels in English by default and in the interface language on request', () => {
+    i18n.addResourceBundle('de', 'translation', { 'icsForms.print.309.name': 'FUNKPROTOKOLL' }, true, true);
+    act(() => {
+      i18n.changeLanguage('de');
+    });
+    try {
+      const { container, unmount } = render(<IcsFormsPanel config={{ callsign: 'K0CJH' }} initialForm="309" />);
+      expect(container.querySelector('.ics-paper').innerHTML).toContain('COMM Log');
+      const select = [...container.querySelectorAll('select')].find((s) => s.querySelector('option[value="ui"]'));
+      act(() => {
+        select.value = 'ui';
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+      expect(container.querySelector('.ics-paper').innerHTML).toContain('FUNKPROTOKOLL');
+      unmount();
+    } finally {
+      act(() => {
+        i18n.changeLanguage('en');
+      });
+    }
+  });
+
+  it('205 imports a CHIRP CSV and exports the plan', async () => {
+    const created = [];
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    vi.stubGlobal('URL', { ...URL, createObjectURL: (b) => (created.push(b), 'blob:x'), revokeObjectURL: () => {} });
+    const { container, unmount } = render(<IcsFormsPanel config={{ callsign: 'K0CJH' }} initialForm="205" />);
+    const csv =
+      'Location,Name,Frequency,Duplex,Offset,Tone,rToneFreq,cToneFreq,DtcsCode,DtcsPolarity,Mode,TStep,Skip,Comment,URCALL,RPT1CALL,RPT2CALL\n' +
+      '0,W0XYZ,146.940000,-,0.600000,Tone,100.0,88.5,023,NN,FM,5.00,,Denver,,,\n';
+    const input = container.querySelector('[data-testid="chirp-import"]');
+    const file = new File([csv], 'radio.csv', { type: 'text/csv' });
+    Object.defineProperty(input, 'files', { value: [file], configurable: true });
+    await act(async () => {
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 50));
+    });
+    expect(container.querySelector('[role="status"]')?.textContent).toBe('Imported 1 channel(s) from radio.csv.');
+    expect(container.querySelector('.ics-paper').innerHTML).toContain('146.340 W');
+    click(buttonByText(container, '⤒'));
+    expect(created.length).toBe(1);
+    const text = await new Promise((resolve) => {
+      const fr = new FileReader();
+      fr.onload = () => resolve(fr.result);
+      fr.readAsText(created[0]);
+    });
+    expect(text).toContain('W0XYZ,146.940000,-,0.600000,Tone,100.0');
+    unmount();
+  });
+
+  it('213 offers "Resend remaining parts" after a partial failure and resumes from the first unsent part', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    let calls = 0;
+    fetchMock.mockImplementation(async (url) => {
+      if (String(url).includes('tnc-status')) return { ok: true, status: 200, json: async () => ({ connected: true }) };
+      calls++;
+      if (calls === 2) return { ok: false, status: 503, json: async () => ({ error: 'TNC not connected' }) };
+      return { ok: true, status: 200, json: async () => ({ ok: true }) };
+    });
+    const { container, unmount } = render(<IcsFormsPanel config={{ callsign: 'K0CJH' }} initialForm="213" />);
+    setInput(
+      [...container.querySelectorAll('input')].find((i) => i.maxLength === 9),
+      'N0EOC',
+    );
+    setInput(
+      container.querySelector('textarea'),
+      'Shelter 3 needs 200 gallons of potable water, 50 cots, two generators and fuel for 48 hours before 2200 local tonight please.',
+    );
+    await act(async () => {
+      buttonByText(container, 'Send as APRS message').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    const states = () => [...container.querySelectorAll('[data-part-state]')].map((li) => li.dataset.partState);
+    expect(states()).toEqual(['sent', 'failed', 'pending']);
+    expect(container.textContent).toContain('Part 2 of 3 failed');
+    const resend = buttonByText(container, 'Resend remaining parts (2–3)');
+    expect(resend).toBeTruthy();
+    await act(async () => {
+      resend.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(states()).toEqual(['sent', 'sent', 'sent']);
+    const bodies = fetchMock.mock.calls
+      .filter(([url]) => url === '/api/aprs/message')
+      .map(([, o]) => JSON.parse(o.body).message.slice(0, 4));
+    expect(bodies).toEqual(['1/3 ', '2/3 ', '2/3 ', '3/3 ']);
+    const evs = getEvents().filter((e) => e.type === 'ics213_sent');
+    expect(evs.length).toBe(2);
+    expect(evs[0].details).toContain('[parts 1 of 3 sent; stopped: TNC not connected]');
+    expect(evs[1].summary).toContain('(resumed)');
+    expect(evs[1].details).toContain('[parts 2–3 of 3 sent]');
+    expect(buttonByText(container, 'Resend remaining')).toBeFalsy();
+    unmount();
   });
 
   it('213 sends the message as APRS parts and records it in the event log', async () => {
