@@ -198,17 +198,13 @@ export function formatAlertBody(feedId, item) {
       if (main) parts.push(main);
       break;
     }
-    case 'lightning': {
-      const dist = item.distance != null ? `${Math.round(item.distance)} km` : '';
-      if (dist) parts.push(dist);
-      break;
-    }
     case 'lightning-guard': {
       // Lightning guard: { level, distance ("12 km NE"), rate (strikes/10 min), relay }
       if (item.level === 'clear') parts.push('All clear');
       else if (item.distance) parts.push(`Nearest strike ${item.distance}`);
       if (item.level !== 'clear' && Number.isFinite(item.count) && item.count > 0) {
-        parts.push(`${item.count} strike${item.count === 1 ? '' : 's'} in 10 min`);
+        const win = Number.isFinite(item.windowMin) ? item.windowMin : 10;
+        parts.push(`${item.count} strike${item.count === 1 ? '' : 's'} in ${win} min`);
       }
       if (item.relay === true) parts.push('antenna relay engaged');
       else if (item.relay === false) parts.push('antenna relay released');

@@ -6,17 +6,38 @@
  * lightning relay — the lightning guard level and relay request
  * (`lightning`, `lightningRelay`; see hooks/useLightningGuard.js).
  *
- * POSTs <rig-bridge>/api/indicators every 15 s and within 1 s of a change.
- * Silent when rig control is disabled, in cloud-relay mode, or when the
+ * POSTs <rig-bridge>/api/indicators every 15 s and within 1 s of a change;
+ * in Cloud Relay mode the same payload goes through the server as an
+ * `indicators` relay command, which the bridge's cloud-relay plugin hands to
+ * its local /api/indicators. Silent when rig control is disabled or the
  * bridge is unreachable (backs off to once a minute after 3 failures).
+ *
+ * Lightning reports carry a stable per-browser `displayId`, so the bridge can
+ * hold a claim per display (engaged while ANY display wants protection) and
+ * keep a quiet display's claim for its `lightningAllClearMin`.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { buildRigUrl } from '../../contexts/RigContext.jsx';
-import { isRelayConfigured } from '../../utils/relaySession.js';
+import { getRelaySessionId, isRelayConfigured } from '../../utils/relaySession.js';
 
 const PUSH_INTERVAL_MS = 15000;
 const CHANGE_DEBOUNCE_MS = 1000;
 const BACKOFF_MS = 60000;
+
+const DISPLAY_ID_KEY = 'ohc_display_id';
+
+/** Stable random id for this browser (8–24 chars, [a-z0-9]). */
+export function getDisplayId() {
+  try {
+    const v = localStorage.getItem(DISPLAY_ID_KEY);
+    if (v && /^[a-z0-9]{8,24}$/.test(v)) return v;
+    const id = (Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2)).slice(0, 16);
+    localStorage.setItem(DISPLAY_ID_KEY, id);
+    return id;
+  } catch {
+    return 'display';
+  }
+}
 
 /** Window event the ID timer fires: detail = { state: 'off'|'running'|'expired' } */
 export const COUNTDOWN_STATE_EVENT = 'ohc-countdown-state';
@@ -58,13 +79,16 @@ export function deriveSatIndicators(satellites, now = Date.now()) {
  * when `lightning.relay` is a boolean — a display that does not drive the
  * relay leaves the bridge's lightning state alone.
  */
-export function buildIndicatorPayload(sat, countdown, lightning) {
+export function buildIndicatorPayload(sat, countdown, lightning, displayId) {
   const payload = { ...sat, countdown, alarm: countdown === 'expired' };
   if (lightning && typeof lightning.relay === 'boolean') {
     payload.lightningRelay = lightning.relay;
     if (lightning.level === 'clear' || lightning.level === 'warn' || lightning.level === 'alarm') {
       payload.lightning = lightning.level;
     }
+    if (Number.isFinite(lightning.allClearMin)) payload.lightningAllClearMin = lightning.allClearMin;
+    if (lightning.override === 'on' || lightning.override === 'off') payload.lightningOverride = lightning.override;
+    if (displayId) payload.displayId = displayId;
   }
   return payload;
 }
@@ -84,21 +108,42 @@ export default function useHardwareIndicators({ satellites, rigConfig, lightning
     return () => window.removeEventListener(COUNTDOWN_STATE_EVENT, onState);
   }, []);
 
-  const enabled = !!rigConfig?.enabled && !isRelayConfigured();
+  const viaRelay = isRelayConfigured();
+  const enabled = !!rigConfig?.enabled;
   const rigUrl = buildRigUrl(rigConfig);
+  const [displayId] = useState(getDisplayId);
   const apiToken = rigConfig?.apiToken?.trim() || '';
 
   const sat = useMemo(() => deriveSatIndicators(satellites), [satellites]);
   const lightningLevel = lightning?.level;
   const lightningRelay = lightning?.relay;
+  const lightningAllClear = lightning?.allClearMin;
+  const lightningOverride = lightning?.override;
   const payload = useMemo(
-    () => buildIndicatorPayload(sat, countdown, { level: lightningLevel, relay: lightningRelay }),
-    [sat.satVisible, sat.satAosInSec, sat.satLosInSec, countdown, lightningLevel, lightningRelay], // eslint-disable-line react-hooks/exhaustive-deps
+    () =>
+      buildIndicatorPayload(
+        sat,
+        countdown,
+        { level: lightningLevel, relay: lightningRelay, allClearMin: lightningAllClear, override: lightningOverride },
+        displayId,
+      ),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [
+      sat.satVisible,
+      sat.satAosInSec,
+      sat.satLosInSec,
+      countdown,
+      lightningLevel,
+      lightningRelay,
+      lightningAllClear,
+      lightningOverride,
+      displayId,
+    ],
   );
   const ackRef = useRef(onLightningAck);
   ackRef.current = onLightningAck;
   // Coarse key: AOS/LOS seconds change every tick; only re-push on meaningful changes
-  const key = `${payload.satVisible}|${payload.countdown}|${payload.satAosInSec != null && payload.satAosInSec <= 90}|${payload.satLosInSec != null && payload.satLosInSec <= 90}|${payload.lightning ?? ''}|${payload.lightningRelay ?? ''}`;
+  const key = `${payload.satVisible}|${payload.countdown}|${payload.satAosInSec != null && payload.satAosInSec <= 90}|${payload.satLosInSec != null && payload.satLosInSec <= 90}|${payload.lightning ?? ''}|${payload.lightningRelay ?? ''}|${payload.lightningAllClearMin ?? ''}|${payload.lightningOverride ?? ''}`;
 
   useEffect(() => {
     if (!enabled) return undefined;
@@ -106,12 +151,19 @@ export default function useHardwareIndicators({ satellites, rigConfig, lightning
     const push = async () => {
       if (!active) return;
       try {
-        const res = await fetch(`${rigUrl}/api/indicators`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...(apiToken ? { 'X-RigBridge-Token': apiToken } : {}) },
-          body: JSON.stringify(payload),
-          signal: AbortSignal.timeout(4000),
-        });
+        const res = viaRelay
+          ? await fetch(`/api/rig-bridge/relay/command?session=${encodeURIComponent(getRelaySessionId() || '')}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ type: 'indicators', payload }),
+              signal: AbortSignal.timeout(4000),
+            })
+          : await fetch(`${rigUrl}/api/indicators`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', ...(apiToken ? { 'X-RigBridge-Token': apiToken } : {}) },
+              body: JSON.stringify(payload),
+              signal: AbortSignal.timeout(4000),
+            });
         failuresRef.current = res.ok ? 0 : failuresRef.current + 1;
         if (res.ok && typeof payload.lightningRelay === 'boolean') ackRef.current?.(payload.lightningRelay);
       } catch {
@@ -129,7 +181,7 @@ export default function useHardwareIndicators({ satellites, rigConfig, lightning
       active = false;
       clearTimeout(timerRef.current);
     };
-  }, [enabled, rigUrl, apiToken, key]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [enabled, viaRelay, rigUrl, apiToken, key]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return payload;
 }

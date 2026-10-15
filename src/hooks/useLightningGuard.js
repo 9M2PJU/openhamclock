@@ -8,9 +8,11 @@
  *    warn → alarm → all-clear state machine (utils/lightningGuard.js) and on
  *    each transition fires the chosen alert channels: tone, spoken alert,
  *    browser notification, Web Push (opt-in servers), plus an EmComm event
- *    log entry when the EmComm layout is active. Returns { level, relay } —
- *    `relay` (true/false/null) is what useHardwareIndicators posts to the
- *    Rig Bridge as `lightningRelay` for the GPIO lightningOut line.
+ *    log entry when the EmComm layout is active; during an alarm it alerts
+ *    again when lightning comes markedly closer (repeatCloser). Returns
+ *    { level, relay, allClearMin, override } — what useHardwareIndicators
+ *    posts to the Rig Bridge (lightningRelay, lightningAllClearMin,
+ *    lightningOverride) for the GPIO lightningOut line.
  *  • useLightningGuardStatus(): any component (header indicator, banner,
  *    settings) subscribes to the live status.
  *
@@ -22,23 +24,22 @@
  * the map layer shows them too.
  */
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import i18n from '../lang/i18n';
 import { subscribeStrikes, injectStrike } from '../utils/lightningFeed.js';
 import {
-  addStrikes,
   cardinal,
   describeStrike,
   destinationPoint,
-  evaluateGuard,
+  GuardRunner,
   nextOverride,
   normalizeGuardSettings,
   OVERRIDES,
   relayDemand,
-  transitionKind,
 } from '../utils/lightningGuard.js';
 import { ALERT_SETTINGS_EVENT, getAlertSettings, playTone } from '../utils/audioAlerts.js';
 import { formatAlertBody, getNotificationPermission, showAlertNotification } from '../utils/notifications.js';
 import { formatSpeechText, getSpeechSettings, speakText } from '../utils/speechAlerts.js';
-import { sendLightningPush } from '../utils/push.js';
+import { sendLightningPush, setLightningPushPrefs } from '../utils/push.js';
 import { recordEvent } from '../utils/emcommEventLog.js';
 
 export const INJECT_LIGHTNING_EVENT = 'ohc:inject-lightning';
@@ -77,6 +78,7 @@ export function getRelayOverride() {
 const OFF_STATUS = {
   enabled: false,
   level: 'off',
+  windowMin: 10,
   since: null,
   nearest: null,
   last: null,
@@ -154,14 +156,35 @@ export function simulateStrike(distanceKm = 10, bearingDeg = 45) {
 }
 
 // ── Alerts ─────────────────────────────────────────────────────────────────
-const TITLES = { warn: 'Lightning warning', alarm: 'Lightning ALARM', clear: 'Lightning all clear' };
+// Notification titles follow the UI language; spoken text and the EmComm log
+// stay English like every other spoken alert and log entry.
+const NOTIFY_TITLES = {
+  warn: () => i18n.t('lightningGuard.notify.warn', { defaultValue: 'Lightning warning' }),
+  alarm: () => i18n.t('lightningGuard.notify.alarm', { defaultValue: 'Lightning ALARM' }),
+  clear: () => i18n.t('lightningGuard.notify.clear', { defaultValue: 'Lightning all clear' }),
+  closer: () => i18n.t('lightningGuard.notify.closer', { defaultValue: 'Lightning closer' }),
+  downgraded: () =>
+    i18n.t('lightningGuard.notify.downgraded', { defaultValue: 'Lightning alarm ended — warning continues' }),
+};
+const notifyTitle = (key) => NOTIFY_TITLES[key]();
+const LOG_TITLES = {
+  warn: 'Lightning warning',
+  alarm: 'Lightning ALARM',
+  clear: 'Lightning all clear',
+  closer: 'Lightning closer',
+  downgraded: 'Lightning alarm ended — warning continues',
+};
 
-function fireAlerts({ prev, st, settings, demand, prevDemand, imperial, layout }) {
-  const kind = transitionKind(prev, st.level);
-  if (!kind) return;
+/**
+ * Fire the chosen channels for a transition or a "closer" re-alert.
+ * kind: 'escalate' | 'deescalate' | 'closer'
+ */
+function fireAlerts({ kind, st, settings, demand, prevDemand, imperial, layout }) {
   // Mention the relay when it is engaged, or when this transition released it
   const relay = demand === true ? true : demand === false && prevDemand === true ? false : null;
   const downgraded = kind === 'deescalate' && st.level === 'warn';
+  const closer = kind === 'closer';
+  const key = closer ? 'closer' : downgraded ? 'downgraded' : st.level;
   const strike = st.nearest;
   const alertSettings = getAlertSettings();
   const ch = settings.channels;
@@ -183,10 +206,11 @@ function fireAlerts({ prev, st, settings, demand, prevDemand, imperial, layout }
       {
         level: st.level,
         downgraded,
+        closer,
         distanceKm: strike?.distanceKm,
         bearing: strike ? cardinal(strike.bearingDeg, { words: true }) : '',
         imperial,
-        relay,
+        relay: closer ? null : relay,
       },
       { phonetic: getSpeechSettings(alertSettings).phonetic },
     );
@@ -197,8 +221,14 @@ function fireAlerts({ prev, st, settings, demand, prevDemand, imperial, layout }
   if (ch.notify && getNotificationPermission() === 'granted') {
     showAlertNotification({
       feedId: 'lightning-guard',
-      title: downgraded ? 'Lightning alarm ended — warning continues' : TITLES[st.level],
-      body: formatAlertBody('lightning-guard', { level: st.level, distance, count: st.warnCount, relay }),
+      title: notifyTitle(key),
+      body: formatAlertBody('lightning-guard', {
+        level: st.level,
+        distance,
+        count: st.warnCount,
+        windowMin: st.windowMin,
+        relay: closer ? null : relay,
+      }),
       tag: 'ohc-lightning-guard',
     });
   }
@@ -206,25 +236,61 @@ function fireAlerts({ prev, st, settings, demand, prevDemand, imperial, layout }
   if (ch.push && !downgraded) {
     sendLightningPush({
       level: st.level,
-      distanceKm: strike?.distanceKm,
-      bearingDeg: strike?.bearingDeg,
+      strike: strike && st.level !== 'clear' ? { lat: strike.lat, lon: strike.lon, timestamp: strike.timestamp } : null,
+      simulated: !!strike?.simulated,
+      closer,
       imperial,
-      relay,
+      relay: closer ? null : relay,
     });
+  }
+
+  // Screen readers (aria-live announcer in App, useLightningAnnouncements)
+  if (strike && st.level !== 'clear' && !downgraded && typeof document !== 'undefined') {
+    document.dispatchEvent(
+      new CustomEvent('lightning:proximity', {
+        detail: {
+          distanceKm: Math.round(strike.distanceKm),
+          distanceMiles: Math.round(strike.distanceKm * 0.621371 * 10) / 10,
+          direction: cardinal(strike.bearingDeg, { words: true }),
+        },
+      }),
+    );
   }
 
   if (layout === 'emcomm') {
     recordEvent('lightning', {
-      summary: downgraded ? 'Lightning alarm ended — warning continues' : TITLES[st.level],
+      summary: LOG_TITLES[key],
       details: [
         distance && st.level !== 'clear' ? `nearest strike ${distance}` : '',
-        st.level !== 'clear' ? `${st.warnCount} strike(s) within ${settings.warnKm} km in 10 min` : '',
-        relay === true ? 'antenna relay engaged' : relay === false ? 'antenna relay released' : '',
+        st.level !== 'clear' && !closer
+          ? `${st.warnCount} strike(s) within ${settings.warnKm} km in ${st.windowMin ?? 10} min`
+          : '',
+        !closer && relay === true
+          ? 'antenna relay engaged'
+          : !closer && relay === false
+            ? 'antenna relay released'
+            : '',
       ]
         .filter(Boolean)
         .join(' · '),
     });
   }
+}
+
+// ── Push opt-in (server stores this browser's location + radii) ────────────
+const PUSH_PREFS_KEY = 'ohc_lightning_push_prefs'; // last prefs the server accepted (JSON) or absent
+const PUSH_PREFS_DEBOUNCE_MS = 2000;
+
+/** The prefs this browser should have on the server, or null to opt out. */
+export function lightningPushPrefsFor({ active, settings, lat, lon, imperial }) {
+  if (!active || !settings?.channels?.push) return null;
+  return {
+    lat: Math.round(lat * 100) / 100,
+    lon: Math.round(lon * 100) / 100,
+    warnKm: settings.warnKm,
+    alarmKm: settings.alarmKm,
+    imperial: !!imperial,
+  };
 }
 
 // ── Engine ─────────────────────────────────────────────────────────────────
@@ -244,6 +310,7 @@ export default function useLightningGuard({ location, allUnits, layout } = {}) {
   const lon = location?.lon;
   const hasDe = Number.isFinite(lat) && Number.isFinite(lon);
   const active = settings.enabled && hasDe;
+  const imperial = allUnits?.dist === 'imperial';
 
   // Refs so the feed subscription survives DE moves (GPS follow) and setting edits
   const deRef = useRef({ lat, lon });
@@ -251,23 +318,19 @@ export default function useLightningGuard({ location, allUnits, layout } = {}) {
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
   const imperialRef = useRef(false);
-  imperialRef.current = allUnits?.dist === 'imperial';
+  imperialRef.current = imperial;
   const layoutRef = useRef(layout);
   layoutRef.current = layout;
 
-  const strikesRef = useRef([]);
-  const levelRef = useRef('clear');
-  const sinceRef = useRef(null);
+  const runnerRef = useRef(null);
+  if (!runnerRef.current) runnerRef.current = new GuardRunner(settings);
   const demandRef = useRef(null);
 
-  const evaluate = useCallback(() => {
+  const evaluate = useCallback((batch = []) => {
     const s = settingsRef.current;
-    const now = Date.now();
-    strikesRef.current = addStrikes(strikesRef.current, [], deRef.current, s, now);
-    const st = evaluateGuard(levelRef.current, strikesRef.current, s, now);
-    const prev = levelRef.current;
-    if (st.level !== prev || sinceRef.current == null) sinceRef.current = now;
-    levelRef.current = st.level;
+    const runner = runnerRef.current;
+    runner.setSettings(s);
+    const { status: st, transition, closer } = runner.step(batch, deRef.current, Date.now());
 
     let override = getRelayOverride();
     const lapsed = nextOverride(override, st.level);
@@ -282,7 +345,6 @@ export default function useLightningGuard({ location, allUnits, layout } = {}) {
     publish({
       enabled: true,
       ...st,
-      since: sinceRef.current,
       relay: demand,
       relayReport: relayReportFor(demand),
       override,
@@ -290,17 +352,10 @@ export default function useLightningGuard({ location, allUnits, layout } = {}) {
       settings: s,
     });
 
-    if (st.level !== prev) {
-      fireAlerts({
-        prev,
-        st,
-        settings: s,
-        demand,
-        prevDemand,
-        imperial: imperialRef.current,
-        layout: layoutRef.current,
-      });
-    } else if (demand !== prevDemand && prevDemand !== null && demand !== null && layoutRef.current === 'emcomm') {
+    const common = { st, settings: s, demand, prevDemand, imperial: imperialRef.current, layout: layoutRef.current };
+    if (transition) fireAlerts({ kind: transition, ...common });
+    else if (closer) fireAlerts({ kind: 'closer', ...common });
+    else if (demand !== prevDemand && prevDemand !== null && demand !== null && layoutRef.current === 'emcomm') {
       // Relay moved without a level change (manual override) — log it
       recordEvent('lightning', {
         summary: demand ? 'Antenna relay engaged (manual)' : 'Antenna relay released (manual)',
@@ -310,9 +365,7 @@ export default function useLightningGuard({ location, allUnits, layout } = {}) {
 
   useEffect(() => {
     if (!active) {
-      strikesRef.current = [];
-      levelRef.current = 'clear';
-      sinceRef.current = null;
+      runnerRef.current.reset();
       demandRef.current = null;
       engineReevaluate = null;
       publish({
@@ -324,24 +377,34 @@ export default function useLightningGuard({ location, allUnits, layout } = {}) {
       });
       return undefined;
     }
-    engineReevaluate = evaluate;
-    evaluate();
-    const unsubscribe = subscribeStrikes((batch) => {
-      strikesRef.current = addStrikes(strikesRef.current, batch, deRef.current, settingsRef.current, Date.now());
-      evaluate();
-    });
-    const id = setInterval(evaluate, TICK_MS);
+    engineReevaluate = () => evaluate([]);
+    evaluate([]);
+    const unsubscribe = subscribeStrikes((batch) => evaluate(batch));
+    const id = setInterval(() => evaluate([]), TICK_MS);
     return () => {
       unsubscribe();
       clearInterval(id);
-      if (engineReevaluate === evaluate) engineReevaluate = null;
+      engineReevaluate = null;
     };
   }, [active, evaluate]);
 
   // Settings edits (radii, timer, relay) take effect immediately
   useEffect(() => {
-    if (active) evaluate();
+    if (active) evaluate([]);
   }, [settings, active, evaluate]);
+
+  // Web Push opt-in: keep the server's copy of location + radii in step
+  const pushPrefs = lightningPushPrefsFor({ active, settings, lat, lon, imperial });
+  const pushPrefsJson = pushPrefs ? JSON.stringify(pushPrefs) : '';
+  useEffect(() => {
+    const stored = lsGet(PUSH_PREFS_KEY) || '';
+    if (stored === pushPrefsJson) return undefined;
+    const id = setTimeout(async () => {
+      const r = await setLightningPushPrefs(pushPrefsJson ? JSON.parse(pushPrefsJson) : null);
+      if (r.ok) lsSet(PUSH_PREFS_KEY, pushPrefsJson || null);
+    }, PUSH_PREFS_DEBOUNCE_MS);
+    return () => clearTimeout(id);
+  }, [pushPrefsJson]);
 
   // Synthetic strikes relative to DE (works for the map layer too)
   useEffect(() => {
@@ -361,5 +424,10 @@ export default function useLightningGuard({ location, allUnits, layout } = {}) {
   }, []);
 
   const live = useLightningGuardStatus();
-  return { level: live.level, relay: live.relayReport };
+  return {
+    level: live.level,
+    relay: live.relayReport,
+    allClearMin: live.settings?.allClearMin ?? settings.allClearMin,
+    override: live.override,
+  };
 }
