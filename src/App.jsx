@@ -20,14 +20,8 @@ import ClockLayout from './layouts/ClockLayout';
 import FocusLayout, { FOCUS_LAYOUT_IDS } from './layouts/FocusLayout.jsx';
 import MobileLayout from './layouts/MobileLayout.jsx';
 import MobileLayoutSuggestion from './components/MobileLayoutSuggestion.jsx';
-import {
-  MOBILE_LAYOUT_ID,
-  shouldSuggestMobileLayout,
-  readSuggestionDone,
-  markSuggestionDone,
-  hasSavedLayout,
-  PREVIOUS_LAYOUT_KEY,
-} from './utils/mobileLayout.js';
+import { MOBILE_LAYOUT_ID, readSuggestionDone, markSuggestionDone, PREVIOUS_LAYOUT_KEY } from './utils/mobileLayout.js';
+import { firstVisitPlan } from './utils/firstVisit.js';
 
 import { resetActiveLayout } from './store/layoutStore.js';
 import { RigProvider } from './contexts/RigContext.jsx';
@@ -164,39 +158,31 @@ const App = () => {
     return () => window.removeEventListener(HELP_EVENT, onOpenHelp);
   }, []);
 
+  // First visit: open Settings and pick a layout for touch devices, or offer
+  // the Mobile layout — never more than one prompt. "First visit" means no
+  // saved layout yet, not a missing key: the theme module writes a
+  // theme-only openhamclock_config before this runs (utils/firstVisit.js).
   useEffect(() => {
     if (!configLoaded) return;
-    const hasLocalStorage = localStorage.getItem('openhamclock_config');
-    // Phone-sized first visit with no saved layout: offer the Mobile layout
-    // once (shown after the first-run Settings dialog closes). Larger
-    // screens keep the existing auto-detection below untouched.
-    if (
-      shouldSuggestMobileLayout({
-        width: window.innerWidth,
-        height: window.innerHeight,
-        layout: config.layout,
-        firstVisit: !hasSavedLayout(hasLocalStorage),
-        alreadySuggested: readSuggestionDone(localStorage),
-      })
-    ) {
-      setMobileSuggest(true);
+    let raw = null;
+    try {
+      raw = localStorage.getItem('openhamclock_config');
+    } catch {
+      /* private mode */
     }
-    if (!hasLocalStorage && config.callsign === 'N0CALL') {
-      setShowSettings(true);
-
-      // Auto-detect mobile/tablet on first visit and set appropriate layout
-      const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
-      const isSmallScreen = window.innerWidth <= 768;
-      const isTabletSize = window.innerWidth > 768 && window.innerWidth <= 1200;
-
-      if (isTouchDevice && isSmallScreen) {
-        // Phone → compact layout
-        handleSaveConfig({ ...config, layout: 'compact' });
-      } else if (isTouchDevice && isTabletSize) {
-        // Tablet → tablet layout
-        handleSaveConfig({ ...config, layout: 'tablet' });
-      }
-    }
+    const plan = firstVisitPlan({
+      savedConfigRaw: raw,
+      callsign: config.callsign,
+      layout: config.layout,
+      width: window.innerWidth,
+      height: window.innerHeight,
+      isTouch: 'ontouchstart' in window || navigator.maxTouchPoints > 0,
+      alreadySuggested: readSuggestionDone(localStorage),
+    });
+    if (plan.markSuggested) markSuggestionDone(localStorage);
+    if (plan.openSettings) setShowSettings(true);
+    if (plan.layout) handleSaveConfig({ ...config, layout: plan.layout });
+    if (plan.suggestMobile) setMobileSuggest(true);
   }, [configLoaded, config.callsign]);
 
   // Remember the layout before the current one (the Mobile layout's card
