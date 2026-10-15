@@ -1096,7 +1096,7 @@ function buildSetupHtml(version, firstRunToken = null) {
         { id: 'http.interval', label: 'HTTP poll interval (s)', type: 'number', default: 60 },
         { id: 'verbose', label: 'Verbose logging', type: 'checkbox', default: false },
       ]},
-      { key: 'gpio', name: 'Raspberry Pi GPIO', maturity: 'alpha', desc: 'ON-AIR / alarm / countdown / satellite / lightning-relay lines and PTT, countdown-restart and alarm-silence buttons — HamClock header pinout, no native modules (gpiod CLI or sysfs)', fields: [
+      { key: 'gpio', name: 'Raspberry Pi GPIO', maturity: 'alpha', desc: 'ON-AIR / alarm / countdown / satellite / lightning-relay lines and PTT, countdown-restart and alarm-silence buttons — classic shack-display header pinout, no native modules (gpiod CLI or sysfs)', fields: [
         { id: 'backend', label: 'Backend', type: 'select', options: ['auto', 'gpiod', 'sysfs', 'mock'], default: 'auto' },
         { id: 'chip', label: 'gpiochip', type: 'text', default: 'gpiochip0' },
         { id: 'pins.pttIn', label: 'PTT / ON-AIR input (BCM)', type: 'number', default: 16 },
