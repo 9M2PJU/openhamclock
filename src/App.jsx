@@ -1148,7 +1148,14 @@ const App = () => {
           {/* App-level "log from spot" modal — opens only when no LogbookPanel
               is mounted (and never in the contest layout). Inside RigProvider
               so the form's rig prefill works. */}
-          <LogQsoPopupController layout={config.layout} userCallsign={config.callsign} myGrid={gpsLiveGrid || deGrid} />
+          <LogQsoPopupController
+            layout={config.layout}
+            userCallsign={config.callsign}
+            myGrid={gpsLiveGrid || deGrid}
+            onDXChange={handleDXChange}
+            dxLocation={dxLocation}
+            dxCallsign={dxCallsign}
+          />
         </RigProvider>
       </CallsignPopupProvider>
 

@@ -52,7 +52,7 @@ const readMapLayerOn = () => {
   }
 };
 
-export const LogbookPanel = ({ userCallsign, myGrid }) => {
+export const LogbookPanel = ({ userCallsign, myGrid, onDXChange, dxLocation, dxCallsign }) => {
   const { t } = useTranslation();
   const { showPopup } = useCallsignPopup();
   const { qsos, add, update, remove, importAdif, exportAdif, stats } = useLogbook();
@@ -433,6 +433,9 @@ export const LogbookPanel = ({ userCallsign, myGrid }) => {
             prefill={formInit.prefill || undefined}
             editQso={formInit.qso || undefined}
             myGrid={myGrid}
+            onDXChange={onDXChange}
+            dxLocation={dxLocation}
+            dxCallsign={dxCallsign}
             onSaved={handleFormSaved}
             onCancel={() => {
               setShowForm(false);

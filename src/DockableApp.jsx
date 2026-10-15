@@ -1232,7 +1232,15 @@ export const DockableApp = ({
           break;
 
         case 'logbook':
-          content = <LogbookPanel userCallsign={config.callsign} myGrid={liveGrid || deGrid} />;
+          content = (
+            <LogbookPanel
+              userCallsign={config.callsign}
+              myGrid={liveGrid || deGrid}
+              onDXChange={handleDXChange}
+              dxLocation={dxLocation}
+              dxCallsign={dxCallsign}
+            />
+          );
           break;
 
         case 'awards':
@@ -1763,6 +1771,7 @@ export const DockableApp = ({
       liveGrid,
       dxGrid,
       dxLocation,
+      dxCallsign,
       deSunTimes,
       dxSunTimes,
       showDxWeather,

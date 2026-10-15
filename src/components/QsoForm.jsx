@@ -26,11 +26,15 @@
  *   onDelete — optional; shows the Delete button (edit mode)
  *   myGrid   — operator grid stamped into record.my_gridsquare
  *   autoFocusCall — focus the callsign input on mount (popup host)
+ *   onDXChange, dxLocation, dxCallsign — optional; when given, the DX marker
+ *     follows the typed call (country) or grid, and goes back where it was if
+ *     the form closes without saving (hooks/useQsoDxFollow.js)
  */
 import { useRef, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { getBandFromFreq } from '../utils/callsign.js';
 import { useRig } from '../contexts/RigContext.jsx';
+import useQsoDxFollow from '../hooks/useQsoDxFollow.js';
 import { tunedSpotForRig } from '../services/logbookStore.js';
 
 export const BANDS = [
@@ -149,7 +153,18 @@ const formFromPrefill = (prefill, rigFreqMHz, rigMode) => {
   return merged;
 };
 
-export const QsoForm = ({ prefill, editQso, onSaved, onCancel, onDelete, myGrid, autoFocusCall = false }) => {
+export const QsoForm = ({
+  prefill,
+  editQso,
+  onSaved,
+  onCancel,
+  onDelete,
+  myGrid,
+  autoFocusCall = false,
+  onDXChange,
+  dxLocation,
+  dxCallsign,
+}) => {
   const { t } = useTranslation();
 
   // Rig state is optional — the form renders inside RigProvider in the app,
@@ -168,6 +183,8 @@ export const QsoForm = ({ prefill, editQso, onSaved, onCancel, onDelete, myGrid,
   const [form, setForm] = useState(() =>
     editQso ? formFromQso(editQso) : formFromPrefill(prefill, rigFreqMHz, rigMode),
   );
+
+  const dxFollow = useQsoDxFollow({ call: form.call, grid: form.gridsquare, onDXChange, dxLocation, dxCallsign });
 
   const callInputRef = useRef(null);
   useEffect(() => {
@@ -197,6 +214,7 @@ export const QsoForm = ({ prefill, editQso, onSaved, onCancel, onDelete, myGrid,
     const call = form.call.trim().toUpperCase();
     if (!call) return;
     const freqNum = parseFloat(form.freq);
+    dxFollow.markSaved(); // logged: the DX marker stays on this station
     onSaved({
       call,
       qso_date: form.qso_date.trim(),
@@ -360,7 +378,14 @@ export const QsoForm = ({ prefill, editQso, onSaved, onCancel, onDelete, myGrid,
             ? t('logbook.form.save', { defaultValue: 'Save' })
             : t('logbook.form.log', { defaultValue: 'Log QSO' })}
         </button>
-        <button type="button" onClick={onCancel} style={smallBtnStyle(false)}>
+        <button
+          type="button"
+          onClick={() => {
+            dxFollow.restore();
+            onCancel?.();
+          }}
+          style={smallBtnStyle(false)}
+        >
           {t('logbook.form.cancel', { defaultValue: 'Cancel' })}
         </button>
         {rigFreqMHz && (
