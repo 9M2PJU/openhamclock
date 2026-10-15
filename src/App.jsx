@@ -1169,6 +1169,8 @@ const App = () => {
         mapLayers={mapLayers}
         onToggleDeDxMarkers={toggleDeDxMarkers}
         onToggleDXNews={toggleDXNews}
+        onToggleAPRS={toggleAPRS}
+        onToggleAPRSLabels={toggleAPRSLabels}
         onSetSpotLabelMode={setSpotLabelMode}
         onSetSpotLabelMinKm={setSpotLabelMinKm}
         wakeLockStatus={wakeLockStatus}
