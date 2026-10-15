@@ -97,6 +97,9 @@ describe('KiwiConnection against a mock KiwiSDR', () => {
     conn.connect();
 
     await until(() => conn.connected);
+    // The setup commands follow the sample_rate reply, which can land a tick
+    // after `connected` flips — wait for the tune command before asserting.
+    await until(() => mock.commands.some((c) => c.startsWith('SET mod=cw')));
     expect(conn.sampleRate).toBeCloseTo(12001.123);
     expect(mock.paths[0]).toMatch(/^\/kiwi\/\d+\/SND$/);
     expect(mock.commands[0]).toBe('SET auth t=kiwi p=');
