@@ -1004,6 +1004,13 @@ export const LiBalloon = glyph(
     <path d="M12 18.8c-.8 1 .8 1.6 0 2.7" />
   </>,
 );
+export const LiHeadphones = glyph(
+  <>
+    <path d="M4.5 15.5V12a7.5 7.5 0 0 1 15 0v3.5" />
+    <rect x="3.5" y="14" width="4" height="6.5" rx="1.5" />
+    <rect x="16.5" y="14" width="4" height="6.5" rx="1.5" />
+  </>,
+);
 
 export const PANEL_ICONS = {
   'world-map': LiMapFold,
@@ -1057,6 +1064,7 @@ export const PANEL_ICONS = {
   meshtastic: LiNodes,
   meshcom: LiLink,
   'digital-modes': LiActivity,
+  decoder: LiHeadphones,
   winlink: LiMail,
   'sat-passes': LiSatPass,
   'amsat-status': LiSatCheck,

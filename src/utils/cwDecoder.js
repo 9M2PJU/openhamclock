@@ -325,7 +325,8 @@ export function twoMeans(values, minRatio = 1.6) {
  * @property {number} [initialWpm=20]             starting dit estimate
  * @property {number} [minWpm=5]
  * @property {number} [maxWpm=45]
- * @property {number} [minSnrDb=7]                squelch: below this peak-to-noise ratio nothing is keyed
+ * @property {number} [minSnrDb=6]                squelch: below this peak-to-noise ratio nothing is keyed
+ * @property {number} [squelchDevs=5]             squelch: noise deviations a real element must clear
  * @property {number} [smoothDits=0.4]            post-detection integration, in dits
  */
 export class CWDecoder {
@@ -650,6 +651,16 @@ export class CWDecoder {
 
 // ── CWPipeline: everything from PCM to text in one object ─────────────────
 
+/**
+ * Squelch presets: peak-to-noise ratio and noise-deviation multiple needed
+ * to open. 'normal' is what the accuracy tests were tuned on.
+ */
+export const CW_SQUELCH_LEVELS = {
+  low: { minSnrDb: 4, devs: 4 },
+  normal: { minSnrDb: 6, devs: 5 },
+  high: { minSnrDb: 9, devs: 6.5 },
+};
+
 /** Auto filter width for a dit length: the window spans ≈ ½ dit. */
 export function autoBandwidthForDit(ditMs) {
   const bw = 3000 / ditMs; // ENBW of a Hann window of ditMs/2
@@ -670,12 +681,13 @@ export class CWPipeline {
     bandwidth = 'auto',
     onText,
     initialWpm = 20,
-    minSnrDb,
+    squelch = 'normal',
     findTone = false,
   } = {}) {
     this.sampleRate = sampleRate;
     this.autoBandwidth = bandwidth === 'auto';
-    this.decoder = new CWDecoder({ onText, initialWpm, minSnrDb });
+    this.decoder = new CWDecoder({ onText, initialWpm });
+    this.setSquelch(squelch);
     const bw = this.autoBandwidth ? autoBandwidthForDit(this.decoder.dit) : bandwidth;
     this.detector = new ToneDetector({ sampleRate, tone, bandwidth: bw });
     this.finder = findTone ? new ToneFinder({ sampleRate }) : null;
@@ -699,8 +711,12 @@ export class CWPipeline {
     this.detector.setBandwidth(this.autoBandwidth ? autoBandwidthForDit(this.decoder.dit) : bw);
   }
 
-  setSquelch(minSnrDb) {
-    if (Number.isFinite(minSnrDb)) this.decoder.minSnrDb = minSnrDb;
+  /** Squelch preset: 'low' (weak signals, may print noise) | 'normal' | 'high' (strong signals only). */
+  setSquelch(level) {
+    const p = CW_SQUELCH_LEVELS[level];
+    if (!p) return;
+    this.decoder.minSnrDb = p.minSnrDb;
+    this.decoder.squelchDevs = p.devs;
   }
 
   enableToneFinder(on) {

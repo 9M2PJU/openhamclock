@@ -73,6 +73,7 @@ export function buildPanelDefs({ isLocalInstall = false } = {}) {
     meshtastic: { name: 'Meshtastic', icon: '📡' },
     meshcom: { name: 'MeshCom', icon: '🔗' },
     'digital-modes': { name: 'Digital Modes', icon: '📻', group: 'Rig Bridge' },
+    decoder: { name: 'Decoder (CW)', icon: '🎧' },
     winlink: { name: 'Winlink', icon: '📬', group: 'Rig Bridge' },
     'sat-passes': { name: 'Satellite Passes', icon: '🛰️' },
     'amsat-status': { name: 'AMSAT Status', icon: '🛰️' },
