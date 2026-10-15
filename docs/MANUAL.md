@@ -172,7 +172,7 @@ _The DE and DX panels: grid, coordinates, sun times, weather, and the DX bearing
 
 ### Cursor readout and nearest city
 
-Move the mouse over the map and a small strip in the bottom-left corner shows the cursor's latitude/longitude, Maidenhead square, distance and bearing from DE, and — when one is within about 100 km — the nearest city with its population ("Boston (650k) 12 km"). The city list is bundled (around 2,000 cities over 300,000 people, from GeoNames), so it works offline. The azimuthal projection shows the same information in its cursor tooltip. The readout hides with the rest of the map UI.
+Move the mouse over the map and a small strip in the top-right corner of the map shows the cursor's latitude/longitude, Maidenhead square, distance and bearing from DE, and — when one is within about 100 km — the nearest city with its population ("Boston (650k) 12 km"). The city list is bundled (around 2,000 cities over 300,000 people, from GeoNames), so it works offline. The azimuthal projection shows the same information in its cursor tooltip. The readout hides with the rest of the map UI.
 
 ### Map Data text view (accessibility)
 

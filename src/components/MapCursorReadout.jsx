@@ -2,8 +2,9 @@
  * MapCursorReadout — the flat map's cursor info strip: lat/lon, Maidenhead
  * grid, distance/bearing from DE, and the nearest city (population) when one
  * is within ~100 km. Listens to Leaflet mousemove on the given map and sits
- * in the map's bottom-left corner (the azimuthal projection has its own
- * cursor tooltip, which carries the same city text).
+ * in the map's top-right corner, under the projection/style toggles and clear
+ * of the band legend and news ticker along the bottom (the azimuthal
+ * projection has its own cursor tooltip, which carries the same city text).
  */
 import { useEffect, useState } from 'react';
 import { latLonToMaidenhead, calculateDistance, calculateBearing, formatDistance } from '../utils/geo.js';
@@ -68,8 +69,8 @@ export const MapCursorReadout = ({ map, deLocation = null, units = 'metric', hid
       aria-live="off"
       style={{
         position: 'absolute',
-        left: '8px',
-        bottom: '22px',
+        top: '46px',
+        right: '10px',
         zIndex: 1000,
         pointerEvents: 'none',
         background: 'rgba(0, 0, 0, 0.72)',
