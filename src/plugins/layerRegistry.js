@@ -39,6 +39,7 @@ import * as DRAPPlugin from './layers/useDRAP.js';
 import * as ZonesPlugin from './layers/useZones.js';
 import * as HistoryPlaybackPlugin from './layers/useHistoryPlayback.js';
 import * as TimeShiftPlugin from './layers/useTimeShift.js';
+import * as LaunchSitesPlugin from './layers/useLaunchSites.js';
 
 // Auto-discover local/custom plugins (gitignored — survive updates)
 const localPluginModules = import.meta.glob('./local/*.js', { eager: true });
@@ -91,6 +92,7 @@ const layerPlugins = [
   ZonesPlugin,
   HistoryPlaybackPlugin,
   TimeShiftPlugin,
+  LaunchSitesPlugin,
   ...localPlugins,
 ];
 

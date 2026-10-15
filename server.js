@@ -317,6 +317,10 @@ require('./server/routes/control')(app, ctx); // Remote-control API + phone remo
 require('./server/routes/solar-outlook')(app, ctx); // SWPC 27-day outlook (Contests pills + Solar Outlook panel)
 require('./server/routes/benchmark')(app, ctx); // Station benchmark — taps the RBN stream via ctx.onRbnSpot
 require('./server/routes/mqtt-publish')(app, ctx); // Outbound MQTT + Home Assistant discovery (dormant without MQTT_PUBLISH_URL)
+require('./server/routes/noaa-scales')(app, ctx); // NOAA R/S/G scales + 3-day forecast (NOAA Scales panel)
+require('./server/routes/dst')(app, ctx); // Kyoto Dst index with SWPC fallback (Dst panel)
+require('./server/routes/space-wx-activity')(app, ctx); // aurora peak + D-RAP max for the auto space-weather layer
+require('./server/routes/space-launches')(app, ctx); // Launch Library 2 upcoming launches (Space Launches panel + layer)
 
 // Subsystem health background refresher (read by /api/health).
 const health = require('./server/health');

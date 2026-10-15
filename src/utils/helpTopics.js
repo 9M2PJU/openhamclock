@@ -124,6 +124,11 @@ export const PANEL_HELP = {
   opportunities: 'spots-activity',
   'solar-outlook': 'propagation-panels',
   benchmark: 'propagation-panels',
+  'noaa-scales': 'propagation-panels',
+  dst: 'propagation-panels',
+  eclipse: 'propagation-panels',
+  planets: 'propagation-panels',
+  'space-launches': 'utility',
 };
 
 /**
@@ -148,6 +153,7 @@ export const LAYER_HELP = {
   'worked-grids': 'logbook',
   'active-users': 'map-layers',
   'time-shift': 'time-shift',
+  'launch-sites': 'map-layers',
 };
 
 /** Settings tab id → topic key */

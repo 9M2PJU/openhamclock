@@ -73,3 +73,8 @@ export { default as SatPlannerPanel } from './SatPlannerPanel.jsx';
 export { default as OpportunityPanel } from './OpportunityPanel.jsx';
 export { default as SolarOutlookPanel } from './SolarOutlookPanel.jsx';
 export { default as BenchmarkPanel } from './BenchmarkPanel.jsx';
+export { default as NOAAScalesPanel } from './NOAAScalesPanel.jsx';
+export { default as DstPanel } from './DstPanel.jsx';
+export { default as EclipsePanel } from './EclipsePanel.jsx';
+export { default as PlanetsPanel } from './PlanetsPanel.jsx';
+export { default as SpaceLaunchesPanel } from './SpaceLaunchesPanel.jsx';

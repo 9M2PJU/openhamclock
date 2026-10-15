@@ -95,6 +95,11 @@ export function buildPanelDefs({ isLocalInstall = false } = {}) {
     opportunities: { name: 'Opportunities', icon: '🎯' },
     'solar-outlook': { name: '27-Day Solar Outlook', icon: '📅', group: 'Solar' },
     benchmark: { name: 'Station Benchmark', icon: '📶', group: 'Propagation' },
+    'noaa-scales': { name: 'NOAA Scales', icon: '📶', group: 'Solar' },
+    dst: { name: 'Dst Index', icon: '🧲', group: 'Solar' },
+    eclipse: { name: 'Eclipses', icon: '🌘', group: 'Solar' },
+    planets: { name: 'Planets', icon: '🪐', group: 'Solar' },
+    'space-launches': { name: 'Space Launches', icon: '🚀' },
   };
 
   // Append auto-discovered panel plugins (src/plugins/local/panels/*.jsx).
