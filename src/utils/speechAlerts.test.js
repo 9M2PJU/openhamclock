@@ -40,7 +40,10 @@ describe('formatSpeechText', () => {
     expect(formatSpeechText('swpc', { scale: { band: 'G', level: 3 }, title: 'Geomagnetic storm' })).toBe(
       'Space weather: G 3 Geomagnetic storm',
     );
-    expect(formatSpeechText('lightning', { distance: 12.4 })).toBe('Lightning 12 kilometres away');
+    expect(formatSpeechText('lightning', { distance: 12.4 })).toBe(''); // folded into the lightning guard
+    expect(formatSpeechText('lightning-guard', { level: 'alarm', closer: true, distanceKm: 6, bearing: 'north' })).toBe(
+      'Lightning closer. Strike 6 kilometres north.',
+    );
     expect(
       formatSpeechText('lightning-guard', { level: 'alarm', distanceKm: 12.4, bearing: 'north-east', relay: true }),
     ).toBe('Lightning alarm. Strike 12 kilometres north-east. Antenna relay engaged.');

@@ -8,7 +8,6 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { lgT } from '../utils/lightningGuardStrings.js';
 import { useLightningGuardStatus, setRelayOverride } from '../hooks/useLightningGuard.js';
 import { useBridgeEvent } from '../hooks/useBridgeEvent.js';
 import { useAlarmState } from '../hooks/app/useAlarmClock.js';
@@ -17,6 +16,20 @@ import { describeStrike, formatDistance } from '../utils/lightningGuard.js';
 const RED = '#ff4d4d';
 const AMBER = '#f59e0b';
 const GREEN = '#4ade80';
+
+// Explicit keys (no computed key names) so every string is findable in en.json
+const levelLabel = (t, level) =>
+  level === 'alarm'
+    ? t('lightningGuard.level.alarm', { defaultValue: 'LIGHTNING ALARM' })
+    : level === 'warn'
+      ? t('lightningGuard.level.warn', { defaultValue: 'Lightning warning' })
+      : t('lightningGuard.level.clear', { defaultValue: 'All clear' });
+const overrideLabel = (t, v) =>
+  v === 'on'
+    ? t('lightningGuard.override.on', { defaultValue: 'Force protect' })
+    : v === 'off'
+      ? t('lightningGuard.override.off', { defaultValue: 'Hold connected' })
+      : t('lightningGuard.override.auto', { defaultValue: 'Auto' });
 
 const levelColor = (level) => (level === 'alarm' ? RED : level === 'warn' ? AMBER : 'var(--text-muted)');
 
@@ -77,18 +90,20 @@ export function LightningGuardDetails({ status, showOverride = true }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '12px', lineHeight: 1.5 }}>
-      <div style={{ fontWeight: 700, color: levelColor(status.level) }}>
-        {lgT(t, `lightningGuard.level.${status.level === 'off' ? 'clear' : status.level}`)}
-      </div>
+      <div style={{ fontWeight: 700, color: levelColor(status.level) }}>{levelLabel(t, status.level)}</div>
       {status.nearest ? (
         <>
           <div>
-            {lgT(t, 'lightningGuard.nearest', { distance: describeStrike(status.nearest, imperial) })}
-            {status.nearest.simulated ? ` (${lgT(t, 'lightningGuard.simulated')})` : ''}
+            {t('lightningGuard.nearest', {
+              defaultValue: 'Nearest strike {{distance}}',
+              distance: describeStrike(status.nearest, imperial),
+            })}
+            {status.nearest.simulated ? ` (${t('lightningGuard.simulated', { defaultValue: 'simulated' })})` : ''}
           </div>
           {status.last && (
             <div>
-              {lgT(t, 'lightningGuard.lastStrike', {
+              {t('lightningGuard.lastStrike', {
+                defaultValue: 'Last strike {{time}} ({{age}} ago, {{distance}})',
                 time: clock(status.last.timestamp),
                 age: formatAge(now - status.last.timestamp),
                 distance: describeStrike(status.last, imperial),
@@ -96,33 +111,51 @@ export function LightningGuardDetails({ status, showOverride = true }) {
             </div>
           )}
           <div style={{ color: 'var(--text-muted)' }}>
-            {lgT(t, 'lightningGuard.rate', { count: status.warnCount, radius: `${warnR.value} ${warnR.unit}` })}
+            {t('lightningGuard.rate', {
+              defaultValue: '{{count}} strike(s) within {{radius}} in {{window}} min',
+              count: status.warnCount,
+              radius: `${warnR.value} ${warnR.unit}`,
+              window: status.windowMin ?? 10,
+            })}
           </div>
         </>
       ) : (
         <div style={{ color: 'var(--text-muted)' }}>
-          {lgT(t, 'lightningGuard.noStrikes', { radius: `${warnR.value} ${warnR.unit}` })}
+          {t('lightningGuard.noStrikes', {
+            defaultValue: 'No strikes within {{radius}}',
+            radius: `${warnR.value} ${warnR.unit}`,
+          })}
         </div>
       )}
       {status.clearAt && (status.level === 'warn' || status.level === 'alarm') && (
-        <div>{lgT(t, 'lightningGuard.allClearIn', { countdown: formatCountdown(status.clearAt - now) })}</div>
+        <div>
+          {t('lightningGuard.allClearIn', {
+            defaultValue: 'All-clear in {{countdown}}',
+            countdown: formatCountdown(status.clearAt - now),
+          })}
+        </div>
       )}
       {status.relay !== null && (
         <>
           <div style={{ color: status.relay ? RED : GREEN, fontWeight: 600, marginTop: '4px' }}>
-            {status.relay ? lgT(t, 'lightningGuard.relay.engaged') : lgT(t, 'lightningGuard.relay.released')}
+            {status.relay
+              ? t('lightningGuard.relay.engaged', { defaultValue: 'Antenna relay ENGAGED (antenna disconnected)' })
+              : t('lightningGuard.relay.released', { defaultValue: 'Antenna relay released' })}
           </div>
           {bridgeRelay !== null && (
             <div style={{ color: 'var(--text-muted)' }}>
-              {lgT(t, 'lightningGuard.relay.bridge', {
-                state: bridgeRelay ? lgT(t, 'lightningGuard.relay.bridgeOn') : lgT(t, 'lightningGuard.relay.bridgeOff'),
+              {t('lightningGuard.relay.bridge', {
+                defaultValue: 'Rig Bridge line: {{state}}',
+                state: bridgeRelay
+                  ? t('lightningGuard.relay.bridgeOn', { defaultValue: 'engaged' })
+                  : t('lightningGuard.relay.bridgeOff', { defaultValue: 'released' }),
               })}
             </div>
           )}
           {showOverride && (
             <div style={{ display: 'flex', gap: '4px', alignItems: 'center', flexWrap: 'wrap', marginTop: '2px' }}>
               <span style={{ color: 'var(--text-muted)', fontSize: '11px' }}>
-                {lgT(t, 'lightningGuard.override.label')}
+                {t('lightningGuard.override.label', { defaultValue: 'Relay' })}
               </span>
               {['auto', 'on', 'off'].map((v) => (
                 <button
@@ -132,13 +165,17 @@ export function LightningGuardDetails({ status, showOverride = true }) {
                   aria-pressed={status.override === v}
                   style={btn(status.override === v)}
                 >
-                  {lgT(t, `lightningGuard.override.${v}`)}
+                  {overrideLabel(t, v)}
                 </button>
               ))}
             </div>
           )}
           {status.override === 'off' && (
-            <div style={{ color: AMBER, fontSize: '11px' }}>{lgT(t, 'lightningGuard.override.offHint')}</div>
+            <div style={{ color: AMBER, fontSize: '11px' }}>
+              {t('lightningGuard.override.offHint', {
+                defaultValue: '"Hold connected" ends by itself at the next all-clear.',
+              })}
+            </div>
           )}
         </>
       )}
@@ -169,7 +206,7 @@ export function LightningGuardIndicator({ size = 'small' }) {
   }, [open]);
 
   if (!status.enabled) return null;
-  const label = `${lgT(t, 'lightningGuard.title')} — ${lgT(t, `lightningGuard.level.${status.level}`)}`;
+  const label = `${t('lightningGuard.title', { defaultValue: 'Lightning guard' })} — ${levelLabel(t, status.level)}`;
   const px = size === 'large' ? '1em' : '14px';
 
   return (
@@ -202,7 +239,7 @@ export function LightningGuardIndicator({ size = 'small' }) {
       {open && (
         <div
           role="dialog"
-          aria-label={lgT(t, 'lightningGuard.title')}
+          aria-label={t('lightningGuard.title', { defaultValue: 'Lightning guard' })}
           style={{
             position: 'absolute',
             top: '100%',
@@ -221,7 +258,7 @@ export function LightningGuardIndicator({ size = 'small' }) {
           }}
         >
           <div style={{ fontWeight: 700, color: 'var(--accent-cyan)', marginBottom: '6px', fontSize: '11px' }}>
-            ⚡ {lgT(t, 'lightningGuard.title')}
+            ⚡ {t('lightningGuard.title', { defaultValue: 'Lightning guard' })}
           </div>
           <LightningGuardDetails status={status} />
         </div>
@@ -246,11 +283,25 @@ export function LightningGuardBanner() {
   const bg = status.level === 'alarm' ? RED : AMBER;
   const parts = [];
   if (status.nearest)
-    parts.push(lgT(t, 'lightningGuard.nearest', { distance: describeStrike(status.nearest, status.imperial) }));
-  if (status.last) parts.push(lgT(t, 'lightningGuard.bannerLast', { time: clock(status.last.timestamp) }));
+    parts.push(
+      t('lightningGuard.nearest', {
+        defaultValue: 'Nearest strike {{distance}}',
+        distance: describeStrike(status.nearest, status.imperial),
+      }),
+    );
+  if (status.last)
+    parts.push(
+      t('lightningGuard.bannerLast', { defaultValue: 'last strike {{time}}', time: clock(status.last.timestamp) }),
+    );
   if (status.clearAt)
-    parts.push(lgT(t, 'lightningGuard.allClearIn', { countdown: formatCountdown(status.clearAt - now) }));
-  if (status.relay === true) parts.push(lgT(t, 'lightningGuard.relay.engagedShort'));
+    parts.push(
+      t('lightningGuard.allClearIn', {
+        defaultValue: 'All-clear in {{countdown}}',
+        countdown: formatCountdown(status.clearAt - now),
+      }),
+    );
+  if (status.relay === true)
+    parts.push(t('lightningGuard.relay.engagedShort', { defaultValue: 'antenna relay engaged' }));
 
   return (
     <div
@@ -276,12 +327,12 @@ export function LightningGuardBanner() {
       }}
     >
       <span style={{ animation: status.level === 'alarm' ? 'pulse 1s infinite' : 'none' }}>⚡</span>
-      <span>{lgT(t, `lightningGuard.level.${status.level}`)}</span>
+      <span>{levelLabel(t, status.level)}</span>
       {parts.length > 0 && <span style={{ fontWeight: 400 }}>{parts.join(' · ')}</span>}
       <button
         type="button"
         onClick={() => setHiddenFor(episode)}
-        aria-label={lgT(t, 'lightningGuard.hide')}
+        aria-label={t('lightningGuard.hide', { defaultValue: 'Hide' })}
         style={{
           background: 'rgba(0,0,0,0.25)',
           color: 'inherit',
@@ -293,7 +344,7 @@ export function LightningGuardBanner() {
           fontFamily: 'inherit',
         }}
       >
-        {lgT(t, 'lightningGuard.hide')}
+        {t('lightningGuard.hide', { defaultValue: 'Hide' })}
       </button>
     </div>
   );

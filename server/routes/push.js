@@ -24,12 +24,20 @@
  *   POST /api/push/unsubscribe  { endpoint }     → drop it
  *   POST /api/push/test         { subscription } → send a test push to the
  *                               caller's own subscription only
- *   POST /api/push/lightning    { level, distanceKm, bearingDeg, imperial, relay }
- *                               → broadcast a lightning guard transition to
- *                               every subscription. Opt-in per server with
- *                               PUSH_LIGHTNING_BROADCAST=true (403 otherwise):
- *                               it is meant for a station's own server, where
- *                               the subscribers are the operator's devices.
+ *   POST /api/push/lightning/prefs { endpoint, lightning: { lat, lon, warnKm, alarmKm, imperial } | null }
+ *                               → opt this subscription in/out of lightning
+ *                               pushes for a location (rounded to 0.01°)
+ *   POST /api/push/lightning    { endpoint, strike: { lat, lon, timestamp }, level,
+ *                                 closer, simulated, relay, imperial }
+ *                               → targeted: every opted-in subscription whose
+ *                               own radius the strike falls inside gets a push
+ *                               computed for ITS location, throttled per
+ *                               subscription; all-clear and simulated strikes
+ *                               go to the caller's subscription only. The
+ *                               caller must itself be opted in. Rate-limited
+ *                               per client. PUSH_LIGHTNING_BROADCAST=true
+ *                               (override) instead broadcasts the caller's
+ *                               report to every subscriber, as before.
  */
 
 const fs = require('fs');
@@ -71,6 +79,7 @@ module.exports = function (app, ctx) {
     app.post('/api/push/unsubscribe', dormant);
     app.post('/api/push/test', dormant);
     app.post('/api/push/lightning', dormant);
+    app.post('/api/push/lightning/prefs', dormant);
     return {};
   }
 
@@ -99,8 +108,10 @@ module.exports = function (app, ctx) {
     const raw = JSON.parse(fs.readFileSync(PUSH_STORE_FILE, 'utf8'));
     if (raw && typeof raw === 'object') {
       for (const entry of Object.values(raw.subscriptions || {})) {
-        if (entry?.subscription)
+        if (entry?.subscription) {
           helpers.addSubscription(store, entry.subscription, helpers.MAX_SUBSCRIPTIONS, entry.addedAt ?? Date.now());
+          if (entry.lightning) helpers.setLightningPrefs(store, entry.subscription.endpoint, entry.lightning);
+        }
       }
       for (const [k, ts] of Object.entries(raw.pushedAlerts || {})) {
         if (Number.isFinite(ts)) store.pushedAlerts[k] = ts;
@@ -205,7 +216,9 @@ module.exports = function (app, ctx) {
 
   // ── Endpoints ────────────────────────────────────────────────────────────
   app.get('/api/push/vapid-key', (req, res) => {
-    res.json({ configured: true, publicKey: VAPID_PUBLIC_KEY, lightning: LIGHTNING_PUSH });
+    // lightning: targeted lightning pushes are available (always, when configured);
+    // lightningBroadcast: the PUSH_LIGHTNING_BROADCAST override is on
+    res.json({ configured: true, publicKey: VAPID_PUBLIC_KEY, lightning: true, lightningBroadcast: LIGHTNING_PUSH });
   });
 
   app.post('/api/push/subscribe', (req, res) => {
@@ -250,25 +263,96 @@ module.exports = function (app, ctx) {
       .json({ ok: false, error: `Push service rejected the request (${result.statusCode || 'network error'})` });
   });
 
-  // Lightning guard transition from a browser → every subscriber (opt-in).
-  let lastLightningPush = null;
+  // ── Lightning guard ──────────────────────────────────────────────────────
+  const lightningLimiter = helpers.makeKeyedLimiter(30, 60 * 1000); // strike reports per client per minute
+  const prefsLimiter = helpers.makeKeyedLimiter(20, 60 * 1000);
+  const lightningSent = new Map(); // endpoint → { at, level, km } (memory only)
+  let lastLightningBroadcast = null; // override mode
+  const clientKey = (req) => req.ip || req.socket?.remoteAddress || 'unknown';
+
+  function pruneLightningSent(now) {
+    for (const [endpoint, v] of lightningSent) {
+      if (now - v.at > 60 * 60 * 1000 || !store.subscriptions[endpoint]) lightningSent.delete(endpoint);
+    }
+  }
+
+  async function sendLightning(endpoint, payload) {
+    const entry = store.subscriptions[endpoint];
+    if (!entry) return { ok: false };
+    const r = await sendTo(entry.subscription, JSON.stringify(payload));
+    if (r.gone && helpers.removeSubscription(store, endpoint)) saveStore();
+    return r;
+  }
+
+  app.post('/api/push/lightning/prefs', (req, res) => {
+    if (!prefsLimiter(clientKey(req))) return res.status(429).json({ ok: false, error: 'Too many requests' });
+    const { endpoint, lightning } = req.body || {};
+    const r = helpers.setLightningPrefs(store, endpoint, lightning === null ? null : lightning);
+    if (!r.ok) return res.status(r.reason === 'unknown-subscription' ? 404 : 400).json(r);
+    saveStore();
+    res.json(r);
+  });
+
   app.post('/api/push/lightning', async (req, res) => {
-    if (!LIGHTNING_PUSH) {
-      return res.status(403).json({
-        ok: false,
-        enabled: false,
-        error: 'Lightning push is not enabled on this server (set PUSH_LIGHTNING_BROADCAST=true).',
-      });
+    if (!lightningLimiter(clientKey(req))) return res.status(429).json({ ok: false, error: 'Too many requests' });
+    const body = req.body || {};
+    const level = body.level;
+    if (!['warn', 'alarm', 'clear'].includes(level)) {
+      return res.status(400).json({ ok: false, error: 'Invalid lightning report' });
     }
-    const payload = helpers.buildLightningPushPayload(req.body);
-    if (!payload) return res.status(400).json({ ok: false, error: 'Invalid lightning report' });
     const now = Date.now();
-    if (!helpers.shouldPushLightning(lastLightningPush, req.body.level, now)) {
-      return res.json({ ok: true, skipped: true });
+
+    // Override: the original station-wide broadcast (single-operator servers)
+    if (LIGHTNING_PUSH) {
+      const payload = helpers.buildLightningPushPayload(body);
+      if (!helpers.shouldPushLightning(lastLightningBroadcast, level, now))
+        return res.json({ ok: true, skipped: true });
+      lastLightningBroadcast = { at: now, level };
+      const result = await broadcast(payload);
+      return res.json({ ok: true, mode: 'broadcast', ...result });
     }
-    lastLightningPush = { at: now, level: req.body.level };
-    const result = await broadcast(payload);
-    res.json({ ok: true, ...result });
+
+    const caller = typeof body.endpoint === 'string' ? store.subscriptions[body.endpoint] : null;
+    if (!caller || !caller.lightning) {
+      return res.status(403).json({ ok: false, error: 'This browser is not subscribed to lightning pushes' });
+    }
+    pruneLightningSent(now);
+
+    // All-clear and simulated strikes: the caller's own subscription only
+    if (level === 'clear' || body.simulated === true) {
+      let report = { level: 'clear', relay: body.relay };
+      if (level !== 'clear') {
+        const strike = helpers.sanitizeStrike(body.strike, now);
+        if (!strike) return res.status(400).json({ ok: false, error: 'Invalid strike' });
+        const hit = helpers.lightningForPrefs(caller.lightning, strike);
+        report = { ...hit, level: hit.level || level, relay: body.relay, closer: body.closer, simulated: true };
+      }
+      const payload = helpers.buildLightningPushPayload({ ...report, imperial: caller.lightning.imperial });
+      const r = await sendLightning(body.endpoint, payload);
+      return res.json({ ok: true, mode: 'self', sent: r.ok ? 1 : 0 });
+    }
+
+    const strike = helpers.sanitizeStrike(body.strike, now);
+    if (!strike) return res.status(400).json({ ok: false, error: 'Invalid strike' });
+    const targets = helpers.lightningTargets(store, strike);
+    let sent = 0;
+    let skipped = 0;
+    for (const t of targets) {
+      const last = lightningSent.get(t.endpoint);
+      if (!helpers.shouldPushLightningTo(last, t.level, t.distanceKm, now)) {
+        skipped++;
+        continue;
+      }
+      const closer = !!last && t.level === 'alarm' && last.level === 'alarm' && t.distanceKm <= last.km / 2;
+      lightningSent.set(t.endpoint, { at: now, level: t.level, km: t.distanceKm });
+      // The caller's relay state only describes the caller's own station
+      const relay = t.endpoint === body.endpoint ? body.relay : undefined;
+      const payload = helpers.buildLightningPushPayload({ ...t, closer, relay });
+      const r = await sendLightning(t.endpoint, payload);
+      if (r.ok) sent++;
+    }
+    logDebug(`[Push] Lightning strike → ${targets.length} in range, ${sent} pushed, ${skipped} throttled`);
+    res.json({ ok: true, mode: 'targeted', inRange: targets.length, sent, skipped });
   });
 
   return { _pushStore: store, _broadcast: broadcast, _handleSwpcAlerts: handleSwpcAlerts };

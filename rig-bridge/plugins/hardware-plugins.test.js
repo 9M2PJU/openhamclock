@@ -22,6 +22,11 @@ const services = () => {
     onStateChange: (fn) => listeners.push(fn),
     removeStateChangeListener: (fn) => listeners.splice(listeners.indexOf(fn), 1),
     fireState: (k, v) => listeners.forEach((fn) => fn(k, v)),
+    // The headless lightning guard must not open a real Blitzortung socket in tests
+    lightningWebSocket: class {
+      send() {}
+      close() {}
+    },
   };
 };
 
@@ -215,12 +220,12 @@ describe('gpio plugin (mock backend)', () => {
     const st = inst.getStatus();
     expect(st.pins.outputs.lightningOut).toBeUndefined();
     expect(st.lightning.pin).toBeNull();
-    expect(st.lightning.requested).toBe(true);
+    expect(st.lightning.engaged).toBe(true); // decided, but no line to drive
     expect(st.mockLevels[25]).toBeUndefined();
     inst.disconnect();
   });
 
-  it('lightningOut follows the browser relay request; other displays cannot release it', async () => {
+  it('lightningOut is engaged while any display wants it and released when none do', async () => {
     const svc = services();
     const inst = gpio.create({ gpio: { enabled: true, backend: 'mock', pins: { lightningOut: 25 } } }, svc);
     inst.connect();
@@ -228,40 +233,60 @@ describe('gpio plugin (mock backend)', () => {
     expect(inst.getStatus().outputs.lightningOut).toBe(false);
     expect(inst.getStatus().mockLevels[25]).toBe(0);
 
-    svc.pluginBus.emit('indicators', { lightning: 'alarm', lightningRelay: true });
+    svc.pluginBus.emit('indicators', { displayId: 'shack', lightning: 'alarm', lightningRelay: true });
     await flush(1000);
     let st = inst.getStatus();
     expect(st.outputs.lightningOut).toBe(true);
     expect(st.mockLevels[25]).toBe(1);
-    expect(st.lightning).toMatchObject({ pin: 25, relay: true, level: 'alarm', failSafe: false });
+    expect(st.lightning).toMatchObject({ pin: 25, relay: true, engaged: true, reason: 'requested', failSafe: false });
 
-    // A second display without the guard posts its satellite/countdown state
+    // A display without the guard posts its satellite/countdown state: no effect on the relay
     svc.pluginBus.emit('indicators', { countdown: 'running' });
     await flush(1000);
     expect(inst.getStatus().outputs.lightningOut).toBe(true);
     expect(inst.getStatus().outputs.countdownGreenOut).toBe(true);
+    // A second guard display says all clear: the first still wants protection
+    svc.pluginBus.emit('indicators', { displayId: 'kitchen', lightning: 'clear', lightningRelay: false });
+    await flush(1000);
+    expect(inst.getStatus().outputs.lightningOut).toBe(true);
+    expect(
+      inst
+        .getStatus()
+        .lightning.reporters.map((r) => r.id)
+        .sort(),
+    ).toEqual(['display:kitchen', 'display:shack']);
 
-    // All-clear from the guard releases it
-    svc.pluginBus.emit('indicators', { lightning: 'clear', lightningRelay: false });
+    // The first display reaches all-clear too → released
+    svc.pluginBus.emit('indicators', { displayId: 'shack', lightning: 'clear', lightningRelay: false });
     await flush(1000);
     expect(inst.getStatus().outputs.lightningOut).toBe(false);
     expect(inst.getStatus().mockLevels[25]).toBe(0);
     inst.disconnect();
   });
 
-  it('lightningOut holds through a quiet browser, and releases when hold is off', async () => {
+  it('lightningOut: a quiet display keeps its claim for its all-clear time; hold off releases sooner', async () => {
     const svc = services();
     const inst = gpio.create({ gpio: { enabled: true, backend: 'mock', pins: { lightningOut: 25 } } }, svc);
     inst.connect();
     await flush(1000);
-    svc.pluginBus.emit('indicators', { lightning: 'alarm', lightningRelay: true, countdown: 'running' });
+    svc.pluginBus.emit('indicators', {
+      displayId: 'shack',
+      lightning: 'alarm',
+      lightningRelay: true,
+      lightningAllClearMin: 5,
+      countdown: 'running',
+    });
     await flush(1000);
     expect(inst.getStatus().outputs.lightningOut).toBe(true);
-    vi.advanceTimersByTime(95000); // > 90 s without a report
+    vi.advanceTimersByTime(3 * 60000); // tab closed: 3 min of silence
     await flush(1000);
-    const st = inst.getStatus();
+    let st = inst.getStatus();
     expect(st.outputs.countdownGreenOut).toBe(false); // ordinary indicators go dark
-    expect(st.outputs.lightningOut).toBe(true); // the relay holds
+    expect(st.outputs.lightningOut).toBe(true); // the relay holds…
+    expect(st.lightning.reason).toBe('hold');
+    vi.advanceTimersByTime(2 * 60000 + 1000); // …until 5 min after the last engage report
+    await flush(1000);
+    expect(inst.getStatus().outputs.lightningOut).toBe(false);
     inst.disconnect();
 
     const svc2 = services();
@@ -271,13 +296,70 @@ describe('gpio plugin (mock backend)', () => {
     );
     inst2.connect();
     await flush(1000);
-    svc2.pluginBus.emit('indicators', { lightning: 'alarm', lightningRelay: true });
+    svc2.pluginBus.emit('indicators', { lightning: 'alarm', lightningRelay: true, lightningAllClearMin: 30 });
     await flush(1000);
     expect(inst2.getStatus().outputs.lightningOut).toBe(true);
     vi.advanceTimersByTime(95000);
     await flush(1000);
     expect(inst2.getStatus().outputs.lightningOut).toBe(false);
     inst2.disconnect();
+  });
+
+  it('lightningOut: "hold connected" from a live display overrides other claims', async () => {
+    const svc = services();
+    const inst = gpio.create({ gpio: { enabled: true, backend: 'mock', pins: { lightningOut: 25 } } }, svc);
+    inst.connect();
+    await flush(1000);
+    svc.pluginBus.emit('indicators', { displayId: 'a', lightning: 'alarm', lightningRelay: true });
+    svc.pluginBus.emit('indicators', {
+      displayId: 'b',
+      lightning: 'alarm',
+      lightningRelay: false,
+      lightningOverride: 'off',
+    });
+    await flush(1000);
+    expect(inst.getStatus().outputs.lightningOut).toBe(false);
+    expect(inst.getStatus().lightning.reason).toBe('override-off');
+    inst.disconnect();
+  });
+
+  it('headless guard engages the relay with no browser, via the test route', async () => {
+    const svc = services();
+    const inst = gpio.create(
+      {
+        gpio: {
+          enabled: true,
+          backend: 'mock',
+          pins: { lightningOut: 25 },
+          lightningHeadless: { enabled: true, lat: '45.0', lon: '7.0', allClearMin: 2 },
+        },
+      },
+      svc,
+    );
+    inst.connect();
+    await flush(1000);
+    let st = inst.getStatus();
+    expect(st.lightning.headless).toMatchObject({ running: true, watching: true, level: 'clear' });
+    expect(inst.injectLightning({ distanceKm: 8, bearingDeg: 90 }).success).toBe(true);
+    await flush(1000);
+    st = inst.getStatus();
+    expect(st.lightning.headless.level).toBe('alarm');
+    expect(st.lightning.headless.nearest).toMatch(/^8\.0 km E$/);
+    expect(st.outputs.lightningOut).toBe(true);
+    expect(st.lightning.reporters.find((r) => r.id === 'bridge')).toMatchObject({ live: true, claim: true });
+    // All-clear after 2 quiet minutes (re-evaluated every 15 s)
+    vi.advanceTimersByTime(2 * 60000 + 16000);
+    await flush(1000);
+    st = inst.getStatus();
+    expect(st.lightning.headless.level).toBe('clear');
+    expect(st.outputs.lightningOut).toBe(false);
+    inst.disconnect();
+
+    const off = gpio.create({ gpio: { enabled: true, backend: 'mock' } }, services());
+    off.connect();
+    await flush(250);
+    expect(off.injectLightning({ distanceKm: 5 }).error).toMatch(/not enabled/);
+    off.disconnect();
   });
 
   it('lightningFailSafe energises the line while the antenna may stay connected', async () => {
