@@ -26,7 +26,7 @@
  * helpers to derive rows, CSV and the print document.
  */
 import { esc } from './escapeHtml.js';
-import { EVENT_TYPE_META, csvEscape } from './emcommEventLog.js';
+import { EVENT_TYPE_META, csvEscape, messageNumbers } from './emcommEventLog.js';
 
 export const ICS_DRAFTS_KEY = 'openhamclock_icsForms';
 /** Maximum APRS message text length (bytes after the addressee field). */
@@ -113,12 +113,19 @@ export function defaultDrafts(now = Date.now()) {
       periodTo: toInputDateTime(now),
       preparedBy: '',
       preparedCall: '',
+      // 'en' prints the FEMA wording; 'ui' prints labels in the interface language
+      printLang: 'en',
     },
     ics309: {
       netName: '',
       operatorName: '',
       operatorCall: '',
       types: [...ICS309_DEFAULT_TYPES],
+      // First message number for this operational period ('' = the station's running numbers)
+      startNumber: '',
+      edits: {}, // event row id → changed fields
+      removed: [], // event row ids hidden from the log
+      manual: [], // rows typed by the operator
     },
     ics214: {
       name: '',
@@ -139,6 +146,7 @@ export function defaultDrafts(now = Date.now()) {
       reply: '',
       repliedBy: '',
       repliedDateTime: '',
+      sendState: null, // per-part APRS send tracking (newSendState)
     },
     ics205: {
       rows: [],
@@ -160,6 +168,11 @@ export function mergeDrafts(stored, now = Date.now()) {
   if (!Array.isArray(out.ics214.rows)) out.ics214.rows = [];
   if (!Array.isArray(out.ics205.rows)) out.ics205.rows = [];
   if (!Array.isArray(out.ics309.types)) out.ics309.types = [...ICS309_DEFAULT_TYPES];
+  if (!Array.isArray(out.ics309.manual)) out.ics309.manual = [];
+  if (!Array.isArray(out.ics309.removed)) out.ics309.removed = [];
+  if (!out.ics309.edits || typeof out.ics309.edits !== 'object' || Array.isArray(out.ics309.edits))
+    out.ics309.edits = {};
+  if (out.header.printLang !== 'ui') out.header.printLang = 'en';
   return out;
 }
 
@@ -201,6 +214,21 @@ export function headerRange(header) {
   return { from: fromInputDateTime(header?.periodFrom), to: to == null ? null : to + 59999 };
 }
 
+// ── Print-label translation ─────────────────────────────────────────────────
+/**
+ * Every label on a printed form goes through a translate function
+ * `tr(key, { defaultValue, ...vars })` (i18next's `t` signature). Keys live
+ * under `icsForms.print.*`; the English defaultValue is the FEMA wording.
+ * The pure default below just interpolates the English text, so the
+ * builders work (and test) without i18next.
+ */
+export function defaultTr(_key, opts = {}) {
+  const text = opts.defaultValue != null ? String(opts.defaultValue) : '';
+  return text.replace(/\{\{(\w+)\}\}/g, (_, k) => (opts[k] != null ? String(opts[k]) : ''));
+}
+
+const L = (tr, key, def, vars = {}) => (tr || defaultTr)(`icsForms.print.${key}`, { defaultValue: def, ...vars });
+
 // ── ICS 309 Communications Log ──────────────────────────────────────────────
 /**
  * Event types that are message traffic and belong on a Comm Log by default.
@@ -217,7 +245,19 @@ export const ICS309_DEFAULT_TYPES = [
   'field_report',
 ];
 
+/** Message types we originate — their number goes in the FROM Msg # column. */
+const SENT_TYPES = new Set(['aprs_msg_sent', 'ics213_sent']);
+
 const MSG_TO_RE = /\bto\s+(\S+)\s*$/i;
+
+/** Editable fields of a 309 row (also the CSV/print columns). */
+export const ICS309_FIELDS = ['dateTime', 'from', 'fromMsg', 'to', 'toMsg', 'message'];
+
+/** Add the printed date / time columns derived from `dateTime`. */
+function withPrintTime(row) {
+  const ms = fromInputDateTime(row.dateTime);
+  return { ...row, date: ms == null ? '' : utcDate(ms), time: ms == null ? '' : utcTime(ms) };
+}
 
 /**
  * One ICS 309 row per event. The log's FROM/TO columns are filled from what
@@ -228,10 +268,22 @@ const MSG_TO_RE = /\bto\s+(\S+)\s*$/i;
  *                  from = the station, to = our call (operatorCall)
  *   nws_alert      from = "NWS", to = our call
  * `message` is the summary plus details so nothing in the log is lost.
+ *
+ * Message-type events carry the station message number from the event log
+ * (`messageNumbers`, derived for older events): in FROM Msg # for traffic we
+ * originated, in TO Msg # for traffic we received. `startNumber` (a positive
+ * integer) renumbers the period's messages from that number instead.
  */
-export function ics309RowsFromEvents(events, { from = null, to = null, operatorCall = '', types = null } = {}) {
+export function ics309RowsFromEvents(
+  events,
+  { from = null, to = null, operatorCall = '', types = null, startNumber = null } = {},
+) {
   const me = String(operatorCall || '').toUpperCase();
   const allow = Array.isArray(types) ? new Set(types) : null;
+  const numbers = messageNumbers(events);
+  const start = Number(startNumber);
+  const renumber = Number.isInteger(start) && start > 0;
+  let seq = renumber ? start : 0;
   return eventsInRange(events, { from, to })
     .filter((ev) => !allow || allow.has(ev.type))
     .map((ev) => {
@@ -260,41 +312,114 @@ export function ics309RowsFromEvents(events, { from = null, to = null, operatorC
       } else {
         message = `${ev.summary || label}${details ? ` — ${details}` : ''}`;
       }
-      return {
-        id: ev.id,
+      let no = numbers.get(ev.id);
+      if (no != null && renumber) no = seq++;
+      const msgNo = no == null ? '' : String(no);
+      const sent = SENT_TYPES.has(ev.type);
+      return withPrintTime({
+        id: `ev-${ev.id}`,
+        eventId: ev.id,
         ts: ev.ts,
-        date: utcDate(ev.ts),
-        time: utcTime(ev.ts),
+        dateTime: toInputDateTime(ev.ts),
         from: rowFrom,
-        fromMsg: '',
+        fromMsg: sent ? msgNo : '',
         to: rowTo,
-        toMsg: '',
+        toMsg: sent ? '' : msgNo,
         message,
         type: ev.type,
-      };
+        source: 'event',
+      });
     });
 }
 
+/** Blank manual 309 row, stamped now. */
+export function newIcs309Row(now = Date.now(), partial = {}) {
+  return {
+    id: newRowId(),
+    dateTime: toInputDateTime(now),
+    from: '',
+    fromMsg: '',
+    to: '',
+    toMsg: '',
+    message: '',
+    source: 'manual',
+    ...partial,
+  };
+}
+
+/**
+ * The 309 as the operator will print it: event rows for the period (with
+ * the operator's edits applied and removed rows dropped) plus the rows they
+ * added by hand, sorted by time. Edits are stored per row id in the draft
+ * (`ics309.edits`), so the log keeps updating live underneath them.
+ */
+export function ics309Rows(drafts, events) {
+  const f = drafts?.ics309 || {};
+  const removed = new Set(Array.isArray(f.removed) ? f.removed : []);
+  const edits = f.edits && typeof f.edits === 'object' ? f.edits : {};
+  const auto = ics309RowsFromEvents(events, {
+    ...headerRange(drafts?.header),
+    operatorCall: f.operatorCall,
+    types: f.types,
+    startNumber: f.startNumber,
+  })
+    .filter((r) => !removed.has(r.id))
+    .map((r) => (edits[r.id] ? withPrintTime({ ...r, ...edits[r.id], edited: true }) : r));
+  const manual = (Array.isArray(f.manual) ? f.manual : []).map((r) => withPrintTime(r));
+  return sortRowsByDateTime([...auto, ...manual]);
+}
+
+/**
+ * Apply an edit to a 309 row in the draft: manual rows are edited in place,
+ * event rows get an entry in `edits` (only the changed fields).
+ * @returns the new ics309 draft section
+ */
+export function editIcs309Row(section, row, changes) {
+  const f = section || {};
+  if (row.source === 'manual') {
+    return { ...f, manual: (f.manual || []).map((r) => (r.id === row.id ? { ...r, ...changes } : r)) };
+  }
+  const prev = (f.edits || {})[row.id] || {};
+  return { ...f, edits: { ...(f.edits || {}), [row.id]: { ...prev, ...changes } } };
+}
+
+/** Remove a 309 row: drop a manual row, hide an event row. */
+export function removeIcs309Row(section, row) {
+  const f = section || {};
+  if (row.source === 'manual') return { ...f, manual: (f.manual || []).filter((r) => r.id !== row.id) };
+  const removed = new Set(f.removed || []);
+  removed.add(row.id);
+  return { ...f, removed: [...removed] };
+}
+
 /** CSV for the ICS 309: a short identification block, then the log table. */
-export function ics309Csv(drafts, rows) {
+export function ics309Csv(drafts, rows, { now = Date.now(), tr = defaultTr } = {}) {
   const h = drafts.header || {};
   const f = drafts.ics309 || {};
+  const line = (cells) => cells.map(csvEscape).join(',');
   const lines = [
-    ['Form', 'ICS 309 Communications Log'].map(csvEscape).join(','),
-    ['1. Incident Name', h.incidentName || ''].map(csvEscape).join(','),
-    ['2. Operational Period (UTC)', `${inputToPrintDateTime(h.periodFrom)} to ${inputToPrintDateTime(h.periodTo)}`]
-      .map(csvEscape)
-      .join(','),
-    ['3. Radio Net Name / Position', f.netName || ''].map(csvEscape).join(','),
-    ['4. Radio Operator', [f.operatorName, f.operatorCall].filter(Boolean).join(' ')].map(csvEscape).join(','),
-    ['6. Prepared By', [h.preparedBy, h.preparedCall].filter(Boolean).join(' ')].map(csvEscape).join(','),
-    ['7. Date & Time Prepared (UTC)', utcDateTime(Date.now())].map(csvEscape).join(','),
+    line([L(tr, 'form', 'Form'), L(tr, '309.title', 'ICS 309 Communications Log')]),
+    line([L(tr, '309.b1', '1. Incident Name and Activation Number'), h.incidentName || '']),
+    line([
+      L(tr, '309.b2csv', '2. Operational Period (UTC)'),
+      `${inputToPrintDateTime(h.periodFrom)} – ${inputToPrintDateTime(h.periodTo)}`,
+    ]),
+    line([L(tr, '309.b3', '3. Radio Net Name (for NCS) or Position/Tactical Call'), f.netName || '']),
+    line([L(tr, '309.b4', '4. Radio Operator (Name, Call Sign)'), nameCall(f.operatorName, f.operatorCall)]),
+    line([L(tr, '309.b6', '6. Prepared By (Name, Call Sign)'), nameCall(h.preparedBy, h.preparedCall)]),
+    line([L(tr, '309.b7', '7. Date & Time Prepared (UTC)'), utcDateTime(now)]),
     '',
-    'Date (UTC),Time (24:00),From Call Sign/ID,From Msg #,To Call Sign/ID,To Msg #,Message',
+    line([
+      L(tr, 'dateUtc', 'Date (UTC)'),
+      L(tr, '309.time', 'Time (24:00)'),
+      L(tr, '309.fromCall', 'From Call Sign/ID'),
+      L(tr, '309.fromMsg', 'From Msg #'),
+      L(tr, '309.toCall', 'To Call Sign/ID'),
+      L(tr, '309.toMsg', 'To Msg #'),
+      L(tr, '309.message', 'Message'),
+    ]),
   ];
-  for (const r of rows || []) {
-    lines.push([r.date, r.time, r.from, r.fromMsg, r.to, r.toMsg, r.message].map(csvEscape).join(','));
-  }
+  for (const r of rows || []) lines.push(line([r.date, r.time, r.from, r.fromMsg, r.to, r.toMsg, r.message]));
   return lines.join('\r\n') + '\r\n';
 }
 
@@ -331,10 +456,12 @@ export function mergeIcs214Rows(existing, imported) {
   return sortRowsByDateTime(out);
 }
 
+/** Stable sort by `dateTime` (rows without a valid time go last). */
 export function sortRowsByDateTime(rows) {
   return (rows || [])
-    .slice()
-    .sort((a, b) => (fromInputDateTime(a.dateTime) ?? Infinity) - (fromInputDateTime(b.dateTime) ?? Infinity));
+    .map((r, i) => ({ r, i, t: fromInputDateTime(r.dateTime) ?? Infinity }))
+    .sort((a, b) => a.t - b.t || a.i - b.i)
+    .map(({ r }) => r);
 }
 
 export function newIcs214Resource() {
@@ -397,6 +524,53 @@ export function splitForAprs(text, max = APRS_MSG_MAX) {
   return parts.map((p, i) => `${i + 1}/${parts.length} ${p}`);
 }
 
+/**
+ * Per-part send tracking for an ICS 213 going out over APRS. Each part is
+ * 'pending', 'sent' or 'failed'. Kept in the draft so a partial send can be
+ * resumed after a reload.
+ */
+export function newSendState(to, parts, now = Date.now()) {
+  return {
+    to: String(to || '').toUpperCase(),
+    startedAt: now,
+    parts: (parts || []).map((text) => ({ text, state: 'pending' })),
+  };
+}
+
+/** Index of the first part not yet sent, or -1 when everything went out. */
+export function firstUnsentPart(state) {
+  if (!state?.parts?.length) return -1;
+  return state.parts.findIndex((p) => p.state !== 'sent');
+}
+
+/**
+ * Record the outcome of sending parts[start..] — `result` is sendAprsParts'
+ * { sent, total, error }: the first `sent` parts went out; on error the next
+ * one is marked failed and the rest stay pending.
+ */
+export function applySendResult(state, start, result) {
+  const parts = state.parts.map((p) => ({ ...p }));
+  const sent = Math.max(0, Number(result?.sent) || 0);
+  for (let i = start; i < Math.min(parts.length, start + sent); i++) {
+    parts[i].state = 'sent';
+    delete parts[i].error;
+  }
+  const failIdx = start + sent;
+  if (result?.error && failIdx < parts.length) {
+    parts[failIdx].state = 'failed';
+    parts[failIdx].error = String(result.error);
+  }
+  return { ...state, parts };
+}
+
+/** True when the tracked send is for this addressee and exactly these parts. */
+export function sendStateMatches(state, to, parts) {
+  if (!state?.parts) return false;
+  if (state.to !== String(to || '').toUpperCase()) return false;
+  if (state.parts.length !== (parts || []).length) return false;
+  return state.parts.every((p, i) => p.text === parts[i]);
+}
+
 // ── ICS 205 Incident Radio Communications Plan ──────────────────────────────
 /** Mode code for block 4: A = analog, D = digital, M = mixed. */
 export function ics205ModeCode(mode) {
@@ -409,7 +583,10 @@ export function ics205ModeCode(mode) {
     (m.includes('/') && /FM|ANALOG/.test(m) && /DMR|D-?STAR|YSF|C4FM|P25|NXDN|DIGITAL/.test(m))
   )
     return 'M';
-  if (/DMR|D-?STAR|YSF|FUSION|C4FM|P25|NXDN|DIGITAL|DATA|FT8|FT4|JS8|PACKET|APRS|M17|TETRA/.test(m)) return 'D';
+  if (
+    /DMR|D-?STAR|\bDV\b|\bDN\b|YSF|FUSION|C4FM|P25|NXDN|DIGITAL|\bDIG\b|DATA|FT8|FT4|JS8|PACKET|APRS|M17|TETRA/.test(m)
+  )
+    return 'D';
   return 'A';
 }
 
@@ -421,7 +598,11 @@ export function formatPlanFreq(mhz) {
   return s.endsWith('0') ? s.slice(0, -1) : s;
 }
 
-/** Blank editable channel row (block 4). */
+/**
+ * Blank editable channel row (block 4). Bandwidth defaults to W: amateur FM
+ * (±5 kHz deviation, 25 kHz channels) is "wide" in ICS 205 terms; N is the
+ * 12.5 kHz narrowband used by most public-safety systems.
+ */
 export function newIcs205Row(partial = {}) {
   return {
     id: newRowId(),
@@ -431,12 +612,13 @@ export function newIcs205Row(partial = {}) {
     name: '',
     assignment: '',
     rxFreq: '',
-    rxNW: 'N',
+    rxNW: 'W',
     rxTone: '',
     txFreq: '',
-    txNW: 'N',
+    txNW: 'W',
     txTone: '',
     mode: 'A',
+    modeName: '',
     remarks: '',
     source: 'manual',
     ...partial,
@@ -459,6 +641,7 @@ export function ics205RowFromRepeater(r) {
     txFreq: formatPlanFreq(out + offset),
     txTone: String(r?.tone || ''),
     mode: ics205ModeCode(r?.mode),
+    modeName: String(r?.mode || ''),
     remarks: [r?.city, r?.group].filter(Boolean).join(' · '),
     source: 'repeater',
   });
@@ -478,6 +661,7 @@ export function ics205RowFromNet(net) {
     rxFreq: freq,
     txFreq: freq,
     mode: ics205ModeCode(net?.mode),
+    modeName: String(net?.mode || ''),
     remarks: [when, net?.mode || '', net?.notes || ''].filter(Boolean).join(' · '),
     source: 'net',
   });
@@ -492,6 +676,32 @@ export function newSimplexRow({ name = '', mhz = '', func = 'Simplex' } = {}) {
 /** Fill blank "Ch #" cells with their 1-based position (operator entries win). */
 export function numberChannels(rows) {
   return (rows || []).map((r, i) => (String(r.ch || '').trim() ? r : { ...r, ch: String(i + 1) }));
+}
+
+/** Distinct zone/group names in row order (blank excluded). */
+export function zonesOf(rows) {
+  const seen = [];
+  for (const r of rows || []) {
+    const z = String(r.zone || '').trim();
+    if (z && !seen.includes(z)) seen.push(z);
+  }
+  return seen;
+}
+
+/**
+ * Rows grouped by zone/group: zones in order of first appearance, rows
+ * inside a zone keep their order, rows without a zone go last.
+ */
+export function groupRowsByZone(rows) {
+  const zones = zonesOf(rows);
+  const rank = (r) => {
+    const z = String(r.zone || '').trim();
+    return z ? zones.indexOf(z) : zones.length;
+  };
+  return (rows || [])
+    .map((r, i) => ({ r, i, k: rank(r) }))
+    .sort((a, b) => a.k - b.k || a.i - b.i)
+    .map(({ r }) => r);
 }
 
 // ── Print HTML ──────────────────────────────────────────────────────────────
@@ -511,14 +721,25 @@ const cell = (label, value, extra = '') =>
 
 const nameCall = (name, call) => [name, call].filter(Boolean).join(' ');
 
+const pageOf = (tr, n, total) => L(tr, 'pageOf', 'Page {{page}} of {{total}}', { page: n, total });
+
+const periodText = (tr, h) =>
+  L(tr, 'periodFromTo', 'Date/Time From: {{from}}  Date/Time To: {{to}}', {
+    from: inputToPrintDateTime(h.periodFrom),
+    to: inputToPrintDateTime(h.periodTo),
+  });
+
 /**
  * ICS 309 Communications Log. One printed page per ICS309_ROWS_PER_PAGE rows,
  * header repeated, "Page n of N" in block 8.
  */
-export function buildIcs309Html(drafts, rows, { now = Date.now() } = {}) {
+export function buildIcs309Html(drafts, rows, { now = Date.now(), tr = defaultTr } = {}) {
   const h = drafts.header || {};
   const f = drafts.ics309 || {};
-  const period = `From: ${inputToPrintDateTime(h.periodFrom)}  To: ${inputToPrintDateTime(h.periodTo)}`;
+  const period = L(tr, '309.period', 'From: {{from}}  To: {{to}}', {
+    from: inputToPrintDateTime(h.periodFrom),
+    to: inputToPrintDateTime(h.periodTo),
+  });
   const pageList = pages(rows, ICS309_ROWS_PER_PAGE);
   return pageList
     .map((pageRows, pi) => {
@@ -531,26 +752,26 @@ export function buildIcs309Html(drafts, rows, { now = Date.now() } = {}) {
       const fill = pi === pageList.length - 1 ? blankRows(Math.max(0, ICS309_ROWS_PER_PAGE - pageRows.length), 6) : '';
       return `<section class="ics-form ics-309">
 <header class="ics-head">
-  <div class="ics-title"><strong>COMM Log</strong><br>ICS 309</div>
-  ${cell('1. Incident Name and Activation Number', h.incidentName, 'grow')}
-  ${cell('2. Operational Period (Date/Time, UTC)', period, 'grow')}
+  <div class="ics-title"><strong>${esc(L(tr, '309.name', 'COMM Log'))}</strong><br>ICS 309</div>
+  ${cell(L(tr, '309.b1', '1. Incident Name and Activation Number'), h.incidentName, 'grow')}
+  ${cell(L(tr, '309.b2', '2. Operational Period (Date/Time, UTC)'), period, 'grow')}
 </header>
 <div class="ics-row">
-  ${cell('3. Radio Net Name (for NCS) or Position/Tactical Call', f.netName, 'grow')}
-  ${cell('4. Radio Operator (Name, Call Sign)', nameCall(f.operatorName, f.operatorCall), 'grow')}
+  ${cell(L(tr, '309.b3', '3. Radio Net Name (for NCS) or Position/Tactical Call'), f.netName, 'grow')}
+  ${cell(L(tr, '309.b4', '4. Radio Operator (Name, Call Sign)'), nameCall(f.operatorName, f.operatorCall), 'grow')}
 </div>
-<div class="ics-section">5. COMMUNICATIONS LOG</div>
+<div class="ics-section">${esc(L(tr, '309.b5', '5. COMMUNICATIONS LOG'))}</div>
 <table class="ics-table">
 <thead>
-  <tr><th rowspan="2" class="w-time">Time<br>(24:00)</th><th colspan="2">FROM</th><th colspan="2">TO</th><th rowspan="2">Message</th></tr>
-  <tr><th class="w-call">Call Sign/ID</th><th class="w-msg">Msg #</th><th class="w-call">Call Sign/ID</th><th class="w-msg">Msg #</th></tr>
+  <tr><th rowspan="2" class="w-time">${esc(L(tr, '309.timeHead', 'Time'))}<br>(24:00)</th><th colspan="2">${esc(L(tr, '309.from', 'FROM'))}</th><th colspan="2">${esc(L(tr, '309.to', 'TO'))}</th><th rowspan="2">${esc(L(tr, '309.message', 'Message'))}</th></tr>
+  <tr><th class="w-call">${esc(L(tr, '309.callSign', 'Call Sign/ID'))}</th><th class="w-msg">${esc(L(tr, '309.msgNo', 'Msg #'))}</th><th class="w-call">${esc(L(tr, '309.callSign', 'Call Sign/ID'))}</th><th class="w-msg">${esc(L(tr, '309.msgNo', 'Msg #'))}</th></tr>
 </thead>
 <tbody>${body}${fill}</tbody>
 </table>
 <footer class="ics-row">
-  ${cell('6. Prepared By (Name, Call Sign)', nameCall(h.preparedBy, h.preparedCall), 'grow')}
-  ${cell('7. Date & Time Prepared (UTC)', utcDateTime(now), 'grow')}
-  ${cell('8.', `Page ${pi + 1} of ${pageList.length}`)}
+  ${cell(L(tr, '309.b6', '6. Prepared By (Name, Call Sign)'), nameCall(h.preparedBy, h.preparedCall), 'grow')}
+  ${cell(L(tr, '309.b7', '7. Date & Time Prepared (UTC)'), utcDateTime(now), 'grow')}
+  ${cell('8.', pageOf(tr, pi + 1, pageList.length))}
 </footer>
 </section>`;
     })
@@ -558,7 +779,7 @@ export function buildIcs309Html(drafts, rows, { now = Date.now() } = {}) {
 }
 
 /** ICS 214 Activity Log (FEMA blocks 1–8), paged on block 7. */
-export function buildIcs214Html(drafts, { now = Date.now() } = {}) {
+export function buildIcs214Html(drafts, { now = Date.now(), tr = defaultTr } = {}) {
   const h = drafts.header || {};
   const f = drafts.ics214 || {};
   const rows = sortRowsByDateTime(f.rows || []);
@@ -568,6 +789,8 @@ export function buildIcs214Html(drafts, { now = Date.now() } = {}) {
     resources
       .map((r) => `<tr><td>${esc(r.name)}</td><td>${esc(r.position)}</td><td>${esc(r.agency)}</td></tr>`)
       .join('') + blankRows(Math.max(0, 3 - resources.length), 3);
+  const icsPosition = L(tr, '214.icsPosition', 'ICS Position');
+  const homeAgency = L(tr, '214.homeAgency', 'Home Agency (and Unit)');
   return pageList
     .map((pageRows, pi) => {
       const body = pageRows
@@ -576,39 +799,39 @@ export function buildIcs214Html(drafts, { now = Date.now() } = {}) {
       const fill = pi === pageList.length - 1 ? blankRows(Math.max(0, ICS214_ROWS_PER_PAGE - pageRows.length), 2) : '';
       return `<section class="ics-form ics-214">
 <header class="ics-head">
-  <div class="ics-title"><strong>ACTIVITY LOG</strong><br>(ICS 214)</div>
-  ${cell('1. Incident Name', h.incidentName, 'grow')}
-  ${cell('2. Operational Period (UTC)', `Date/Time From: ${inputToPrintDateTime(h.periodFrom)}  Date/Time To: ${inputToPrintDateTime(h.periodTo)}`, 'grow')}
+  <div class="ics-title"><strong>${esc(L(tr, '214.name', 'ACTIVITY LOG'))}</strong><br>(ICS 214)</div>
+  ${cell(L(tr, '214.b1', '1. Incident Name'), h.incidentName, 'grow')}
+  ${cell(L(tr, '214.b2', '2. Operational Period (UTC)'), periodText(tr, h), 'grow')}
 </header>
 <div class="ics-row">
-  ${cell('3. Name', f.name, 'grow')}
-  ${cell('4. ICS Position', f.icsPosition, 'grow')}
-  ${cell('5. Home Agency (and Unit)', f.homeAgency, 'grow')}
+  ${cell(L(tr, '214.b3', '3. Name'), f.name, 'grow')}
+  ${cell(`4. ${icsPosition}`, f.icsPosition, 'grow')}
+  ${cell(`5. ${homeAgency}`, f.homeAgency, 'grow')}
 </div>
-<div class="ics-section">6. Resources Assigned</div>
+<div class="ics-section">${esc(L(tr, '214.b6', '6. Resources Assigned'))}</div>
 <table class="ics-table">
-<thead><tr><th>Name</th><th>ICS Position</th><th>Home Agency (and Unit)</th></tr></thead>
+<thead><tr><th>${esc(L(tr, '214.resName', 'Name'))}</th><th>${esc(icsPosition)}</th><th>${esc(homeAgency)}</th></tr></thead>
 <tbody>${resRows}</tbody>
 </table>
-<div class="ics-section">7. Activity Log</div>
+<div class="ics-section">${esc(L(tr, '214.b7', '7. Activity Log'))}</div>
 <table class="ics-table">
-<thead><tr><th class="w-datetime">Date/Time (UTC)</th><th>Notable Activities</th></tr></thead>
+<thead><tr><th class="w-datetime">${esc(L(tr, 'dateTimeUtc', 'Date/Time (UTC)'))}</th><th>${esc(L(tr, '214.notable', 'Notable Activities'))}</th></tr></thead>
 <tbody>${body}${fill}</tbody>
 </table>
 <footer class="ics-row">
-  ${cell('8. Prepared by: Name/Position/Title', nameCall(h.preparedBy, h.preparedCall), 'grow')}
-  ${cell('Signature', '', 'grow sig')}
-  ${cell('Date/Time (UTC)', utcDateTime(now))}
-  ${cell('', `Page ${pi + 1} of ${pageList.length}`)}
+  ${cell(L(tr, '214.b8', '8. Prepared by: Name/Position/Title'), nameCall(h.preparedBy, h.preparedCall), 'grow')}
+  ${cell(L(tr, 'signature', 'Signature'), '', 'grow sig')}
+  ${cell(L(tr, 'dateTimeUtc', 'Date/Time (UTC)'), utcDateTime(now))}
+  ${cell('', pageOf(tr, pi + 1, pageList.length))}
 </footer>
-<div class="ics-foot">ICS 214, Page ${pi + 1}</div>
+<div class="ics-foot">ICS 214, ${esc(L(tr, 'page', 'Page {{page}}', { page: pi + 1 }))}</div>
 </section>`;
     })
     .join('');
 }
 
 /** ICS 213 General Message (FEMA blocks 1–10), one page. */
-export function buildIcs213Html(drafts) {
+export function buildIcs213Html(drafts, { tr = defaultTr } = {}) {
   const h = drafts.header || {};
   const f = drafts.ics213 || {};
   const when = fromInputDateTime(f.dateTime);
@@ -616,68 +839,70 @@ export function buildIcs213Html(drafts) {
   const time = when == null ? '' : utcTime(when);
   return `<section class="ics-form ics-213">
 <header class="ics-head">
-  <div class="ics-title"><strong>GENERAL MESSAGE</strong><br>(ICS 213)</div>
-  ${cell('1. Incident Name (Optional)', h.incidentName, 'grow')}
+  <div class="ics-title"><strong>${esc(L(tr, '213.name', 'GENERAL MESSAGE'))}</strong><br>(ICS 213)</div>
+  ${cell(L(tr, '213.b1', '1. Incident Name (Optional)'), h.incidentName, 'grow')}
 </header>
-<div class="ics-row">${cell('2. To (Name and Position)', f.toCall ? `${f.to || ''} (${f.toCall})`.trim() : f.to, 'grow')}</div>
-<div class="ics-row">${cell('3. From (Name and Position)', f.from, 'grow')}</div>
+<div class="ics-row">${cell(L(tr, '213.b2', '2. To (Name and Position)'), f.toCall ? `${f.to || ''} (${f.toCall})`.trim() : f.to, 'grow')}</div>
+<div class="ics-row">${cell(L(tr, '213.b3', '3. From (Name and Position)'), f.from, 'grow')}</div>
 <div class="ics-row">
-  ${cell('4. Subject', f.subject, 'grow')}
-  ${cell('5. Date (UTC)', date)}
-  ${cell('6. Time (UTC)', time)}
+  ${cell(L(tr, '213.b4', '4. Subject'), f.subject, 'grow')}
+  ${cell(L(tr, '213.b5', '5. Date (UTC)'), date)}
+  ${cell(L(tr, '213.b6', '6. Time (UTC)'), time)}
 </div>
-<div class="ics-row"><div class="ics-cell grow tall"><div class="ics-label">7. Message</div><div class="ics-value pre">${esc(f.message || '')}&nbsp;</div></div></div>
+<div class="ics-row"><div class="ics-cell grow tall"><div class="ics-label">${esc(L(tr, '213.b7', '7. Message'))}</div><div class="ics-value pre">${esc(f.message || '')}&nbsp;</div></div></div>
 <div class="ics-row">
-  ${cell('8. Approved by: Name', f.approvedBy, 'grow')}
-  ${cell('Signature', '', 'grow sig')}
-  ${cell('Position/Title', f.approvedPosition, 'grow')}
+  ${cell(L(tr, '213.b8', '8. Approved by: Name'), f.approvedBy, 'grow')}
+  ${cell(L(tr, 'signature', 'Signature'), '', 'grow sig')}
+  ${cell(L(tr, 'positionTitle', 'Position/Title'), f.approvedPosition, 'grow')}
 </div>
-<div class="ics-row"><div class="ics-cell grow tall"><div class="ics-label">9. Reply</div><div class="ics-value pre">${esc(f.reply || '')}&nbsp;</div></div></div>
+<div class="ics-row"><div class="ics-cell grow tall"><div class="ics-label">${esc(L(tr, '213.b9', '9. Reply'))}</div><div class="ics-value pre">${esc(f.reply || '')}&nbsp;</div></div></div>
 <div class="ics-row">
-  ${cell('10. Replied by: Name/Position/Title', f.repliedBy, 'grow')}
-  ${cell('Signature', '', 'grow sig')}
-  ${cell('Date/Time (UTC)', inputToPrintDateTime(f.repliedDateTime))}
+  ${cell(L(tr, '213.b10', '10. Replied by: Name/Position/Title'), f.repliedBy, 'grow')}
+  ${cell(L(tr, 'signature', 'Signature'), '', 'grow sig')}
+  ${cell(L(tr, 'dateTimeUtc', 'Date/Time (UTC)'), inputToPrintDateTime(f.repliedDateTime))}
 </div>
 <div class="ics-foot">ICS 213</div>
 </section>`;
 }
 
 /** ICS 205 Incident Radio Communications Plan (FEMA blocks 1–6), paged on block 4. */
-export function buildIcs205Html(drafts, { now = Date.now() } = {}) {
+export function buildIcs205Html(drafts, { now = Date.now(), tr = defaultTr } = {}) {
   const h = drafts.header || {};
   const f = drafts.ics205 || {};
   const rows = numberChannels(f.rows || []);
   const pageList = pages(rows, ICS205_ROWS_PER_PAGE);
+  const freq = (mhz, nw) => `${esc(mhz)}${mhz ? ` ${esc(nw === 'N' ? 'N' : 'W')}` : ''}`;
+  const th = (key, def) => `<th>${esc(L(tr, `205.${key}`, def))}</th>`;
   return pageList
     .map((pageRows, pi) => {
       const body = pageRows
         .map(
           (r) =>
-            `<tr><td>${esc(r.zone)}</td><td>${esc(r.ch)}</td><td>${esc(r.function)}</td><td>${esc(r.name)}</td><td>${esc(r.assignment)}</td><td class="mono">${esc(r.rxFreq)}${r.rxFreq ? ` ${esc(r.rxNW || 'N')}` : ''}</td><td class="mono">${esc(r.rxTone)}</td><td class="mono">${esc(r.txFreq)}${r.txFreq ? ` ${esc(r.txNW || 'N')}` : ''}</td><td class="mono">${esc(r.txTone)}</td><td>${esc(r.mode)}</td><td>${esc(r.remarks)}</td></tr>`,
+            `<tr><td>${esc(r.zone)}</td><td>${esc(r.ch)}</td><td>${esc(r.function)}</td><td>${esc(r.name)}</td><td>${esc(r.assignment)}</td><td class="mono">${freq(r.rxFreq, r.rxNW)}</td><td class="mono">${esc(r.rxTone)}</td><td class="mono">${freq(r.txFreq, r.txNW)}</td><td class="mono">${esc(r.txTone)}</td><td>${esc(r.mode)}</td><td>${esc(r.remarks)}</td></tr>`,
         )
         .join('');
       const fill = pi === pageList.length - 1 ? blankRows(Math.max(0, ICS205_ROWS_PER_PAGE - pageRows.length), 11) : '';
       return `<section class="ics-form ics-205 landscape">
 <header class="ics-head">
-  <div class="ics-title"><strong>INCIDENT RADIO COMMUNICATIONS PLAN</strong><br>(ICS 205)</div>
-  ${cell('1. Incident Name', h.incidentName, 'grow')}
-  ${cell('2. Date/Time Prepared (UTC)', utcDateTime(now))}
-  ${cell('3. Operational Period (UTC)', `Date/Time From: ${inputToPrintDateTime(h.periodFrom)}  Date/Time To: ${inputToPrintDateTime(h.periodTo)}`, 'grow')}
+  <div class="ics-title"><strong>${esc(L(tr, '205.name', 'INCIDENT RADIO COMMUNICATIONS PLAN'))}</strong><br>(ICS 205)</div>
+  ${cell(L(tr, '205.b1', '1. Incident Name'), h.incidentName, 'grow')}
+  ${cell(L(tr, '205.b2', '2. Date/Time Prepared (UTC)'), utcDateTime(now))}
+  ${cell(L(tr, '205.b3', '3. Operational Period (UTC)'), periodText(tr, h), 'grow')}
 </header>
-<div class="ics-section">4. Basic Radio Channel Use</div>
+<div class="ics-section">${esc(L(tr, '205.b4', '4. Basic Radio Channel Use'))}</div>
 <table class="ics-table ics-205-table">
 <thead><tr>
-  <th>Zone Grp.</th><th>Ch #</th><th>Function</th><th>Channel Name/Trunked Radio System Talkgroup</th><th>Assignment</th>
-  <th>RX Freq N or W</th><th>RX Tone/NAC</th><th>TX Freq N or W</th><th>TX Tone/NAC</th><th>Mode (A, D, or M)</th><th>Remarks</th>
+  ${th('zone', 'Zone Grp.')}${th('ch', 'Ch #')}${th('function', 'Function')}${th('channelName', 'Channel Name/Trunked Radio System Talkgroup')}${th('assignment', 'Assignment')}
+  ${th('rxFreq', 'RX Freq N or W')}${th('rxTone', 'RX Tone/NAC')}${th('txFreq', 'TX Freq N or W')}${th('txTone', 'TX Tone/NAC')}${th('mode', 'Mode (A, D, or M)')}${th('remarks', 'Remarks')}
 </tr></thead>
 <tbody>${body}${fill}</tbody>
 </table>
-<div class="ics-row"><div class="ics-cell grow tall"><div class="ics-label">5. Special Instructions</div><div class="ics-value pre">${esc(f.specialInstructions || '')}&nbsp;</div></div></div>
+<div class="ics-row"><div class="ics-cell grow tall"><div class="ics-label">${esc(L(tr, '205.b5', '5. Special Instructions'))}</div><div class="ics-value pre">${esc(f.specialInstructions || '')}&nbsp;</div></div></div>
 <footer class="ics-row">
-  ${cell('6. Prepared by (Communications Unit Leader): Name', nameCall(h.preparedBy, h.preparedCall), 'grow')}
-  ${cell('Signature', '', 'grow sig')}
-  ${cell('Date/Time (UTC)', utcDateTime(now))}
-  ${cell('', `Page ${pi + 1} of ${pageList.length}`)}
+  ${cell(L(tr, '205.b6', '6. Prepared by (Communications Unit Leader): Name'), nameCall(h.preparedBy, h.preparedCall), 'grow')}
+  ${cell(L(tr, 'signature', 'Signature'), '', 'grow sig')}
+  ${cell(L(tr, 'dateTimeUtc', 'Date/Time (UTC)'), utcDateTime(now))}
+  ${cell('', pageOf(tr, pi + 1, pageList.length))}
 </footer>
 <div class="ics-foot">ICS 205</div>
 </section>`;
@@ -686,22 +911,16 @@ export function buildIcs205Html(drafts, { now = Date.now() } = {}) {
 }
 
 /** Build the print HTML for any form id. */
-export function buildIcsHtml(formId, drafts, { events = [], now = Date.now() } = {}) {
+export function buildIcsHtml(formId, drafts, { events = [], now = Date.now(), tr = defaultTr } = {}) {
   switch (String(formId)) {
-    case '309': {
-      const rows = ics309RowsFromEvents(events, {
-        ...headerRange(drafts.header),
-        operatorCall: drafts.ics309?.operatorCall,
-        types: drafts.ics309?.types,
-      });
-      return buildIcs309Html(drafts, rows, { now });
-    }
+    case '309':
+      return buildIcs309Html(drafts, ics309Rows(drafts, events), { now, tr });
     case '214':
-      return buildIcs214Html(drafts, { now });
+      return buildIcs214Html(drafts, { now, tr });
     case '213':
-      return buildIcs213Html(drafts);
+      return buildIcs213Html(drafts, { tr });
     case '205':
-      return buildIcs205Html(drafts, { now });
+      return buildIcs205Html(drafts, { now, tr });
     default:
       return '';
   }
