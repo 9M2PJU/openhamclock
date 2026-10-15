@@ -1316,7 +1316,13 @@ export default function EmcommLayout(props) {
           </PanelSection>
 
           {/* Disaster Declarations Panel */}
-          <PanelSection title="Disaster Declarations" count={disasters.length} color="#f59e0b" panels={panels}>
+          <PanelSection
+            title="Disaster Declarations"
+            count={disasters.length}
+            color="#f59e0b"
+            panels={panels}
+            extra={dataAsOf?.disasters ? <OfflineAsOf t={t} ts={dataAsOf.disasters} /> : null}
+          >
             {disasters.length === 0 ? (
               <EmptyState text="No recent disaster declarations" />
             ) : (

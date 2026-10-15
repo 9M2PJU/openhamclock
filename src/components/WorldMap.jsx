@@ -120,6 +120,13 @@ import { useHistoryScrubbing } from '../hooks/useHistoryScrubbing.js';
 
 const POPUP_AUTO_CLOSE_MS = 20_000;
 
+// Per-style Leaflet tile options: custom subdomains (operator tile server)
+// and a native zoom ceiling for sources that stop short of the map's zoom.
+const tileSourceOptions = (style) => ({
+  ...(style?.subdomains ? { subdomains: style.subdomains } : {}),
+  ...(Number.isFinite(style?.maxNativeZoom) ? { maxNativeZoom: style.maxNativeZoom } : {}),
+});
+
 export const WorldMap = ({
   config,
   isLocalInstall,
@@ -644,14 +651,22 @@ export const WorldMap = ({
   const [mapRotationConfig, setMapRotationConfig] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem('ohc_main_map_rotator_v1') || '{}');
-      const allStyleIds = Object.keys(MAP_STYLES).filter((id) => MAP_STYLES[id] && !MAP_STYLES[id].legacy);
+      // Regional (national-agency / own-server) basemaps stay out of the default
+      // rotation — they are blank outside their country.
+      const allStyleIds = Object.keys(MAP_STYLES).filter(
+        (id) => MAP_STYLES[id] && !MAP_STYLES[id].legacy && !MAP_STYLES[id].regional,
+      );
       return {
         enabled: saved.enabled === true,
         intervalSeconds: Number(saved.intervalSeconds) || 60,
         selectedIds: Array.isArray(saved.selectedIds) && saved.selectedIds.length ? saved.selectedIds : allStyleIds,
       };
     } catch {
-      const allStyleIds = Object.keys(MAP_STYLES).filter((id) => MAP_STYLES[id] && !MAP_STYLES[id].legacy);
+      // Regional (national-agency / own-server) basemaps stay out of the default
+      // rotation — they are blank outside their country.
+      const allStyleIds = Object.keys(MAP_STYLES).filter(
+        (id) => MAP_STYLES[id] && !MAP_STYLES[id].legacy && !MAP_STYLES[id].regional,
+      );
       return { enabled: false, intervalSeconds: 60, selectedIds: allStyleIds };
     }
   });
@@ -1061,6 +1076,7 @@ export const WorldMap = ({
       attribution: MAP_STYLES[mapStyle].attribution,
       noWrap: false,
       crossOrigin: 'anonymous',
+      ...tileSourceOptions(MAP_STYLES[mapStyle]),
     }).addTo(map);
 
     // Day/night terminator
@@ -1372,6 +1388,7 @@ export const WorldMap = ({
       attribution: MAP_STYLES[mapStyle].attribution,
       noWrap: false,
       crossOrigin: 'anonymous',
+      ...tileSourceOptions(MAP_STYLES[mapStyle]),
       // NASA GIBS tiles only cover -180..180; other tile providers wrap naturally
       ...(mapStyle === 'MODIS'
         ? {
