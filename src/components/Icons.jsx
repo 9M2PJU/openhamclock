@@ -894,6 +894,15 @@ export const LiStopwatch = glyph(
     <line x1="12" y1="3.5" x2="12" y2="6.5" />
   </>,
 );
+// Net Control: a desk microphone
+export const LiMic = glyph(
+  <>
+    <rect x="9" y="3" width="6" height="11" rx="3" />
+    <path d="M6 11a6 6 0 0 0 12 0" />
+    <line x1="12" y1="17" x2="12" y2="20.5" />
+    <line x1="8.5" y1="20.5" x2="15.5" y2="20.5" />
+  </>,
+);
 // Rover: a car on a grid line
 export const LiRover = glyph(
   <>
@@ -1055,6 +1064,7 @@ export const PANEL_ICONS = {
   'rig-control': LiRadio,
   'freq-memories': LiFreq,
   'net-schedule': LiClock,
+  'net-control': LiMic,
   'callsign-search': LiSearch,
   'dx-news': LiNews,
   'solar-cycle': LiCycle,

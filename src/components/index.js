@@ -48,6 +48,7 @@ export { default as RoverPanel } from './RoverPanel.jsx';
 export { default as EnvSensorsPanel } from './EnvSensorsPanel.jsx';
 export { default as FrequencyMemoriesPanel } from './FrequencyMemoriesPanel.jsx';
 export { default as NetSchedulePanel } from './NetSchedulePanel.jsx';
+export { default as NetControlPanel } from './NetControlPanel.jsx';
 export { default as CallsignSearchPanel } from './CallsignSearchPanel.jsx';
 export { default as DXNewsPanel } from './DXNewsPanel.jsx';
 export { default as SolarCyclePanel } from './SolarCyclePanel.jsx';

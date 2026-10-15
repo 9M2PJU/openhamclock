@@ -56,6 +56,7 @@ import {
   EnvSensorsPanel,
   FrequencyMemoriesPanel,
   NetSchedulePanel,
+  NetControlPanel,
   CallsignSearchPanel,
   DXNewsPanel,
   SolarCyclePanel,
@@ -1489,6 +1490,10 @@ export const DockableApp = ({
 
         case 'net-schedule':
           content = <NetSchedulePanel />;
+          break;
+
+        case 'net-control':
+          content = <NetControlPanel callsign={config.callsign} />;
           break;
 
         case 'callsign-search':
