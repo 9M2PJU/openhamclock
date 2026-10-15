@@ -445,9 +445,11 @@ const descriptor = {
     }
 
     // NBEMS commands from the browser: run against the local fldigi plugin
-    // routes with the browser's own Rig Bridge API token — not the relay's —
-    // so a hosted page still needs the token to key the transmitter. The
-    // outcome goes back as a 'fldigi-cmd-result' plugin event.
+    // routes once authorizeCommand() has accepted the command's signature
+    // (they transmit, so they are never accepted unsigned unless
+    // allowUnsigned is on). The signature, not a token carried through the
+    // server, is the proof that the paired browser sent it. The outcome goes
+    // back as a 'fldigi-cmd-result' plugin event.
     const FLDIGI_ACTIONS = new Set(['send', 'send-ics213', 'mode', 'abort']);
     function runFldigiCommand(p, localMod, localOptions) {
       const requestId = String(p.requestId || '')
@@ -461,7 +463,6 @@ const descriptor = {
       if (!FLDIGI_ACTIONS.has(p.action)) return done({ ok: false, status: 400, error: 'Unknown fldigi action' });
       const body = JSON.stringify(p.body && typeof p.body === 'object' ? p.body : {});
       const opts = localOptions(`/api/fldigi/${p.action}`);
-      opts.headers = { ...opts.headers, 'X-RigBridge-Token': typeof p.token === 'string' ? p.token : '' };
       const req = localMod.request(opts, (res) => {
         let data = '';
         res.on('data', (c) => (data += c));

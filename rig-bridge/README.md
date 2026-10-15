@@ -774,7 +774,7 @@ Leave **Your Callsign** blank and the plugin uses the callsign set in flmsg.
 
 4. Switch OpenHamClock to the EmComm layout. The **NBEMS** panel shows fldigi's state within a second, and forms received in the last 72 hours appear in Field Reports.
 
-Sending (text, ICS-213, mode change, Stop TX) needs your Rig Bridge API token when one is set (Settings → Rig Bridge). On the same network the browser sends straight to Rig Bridge, like click-to-tune; with the Cloud Relay the command travels through your OpenHamClock server — see [Cloud Relay](#nbems-over-the-cloud-relay) below.
+Sending (text, ICS-213, mode change, Stop TX) on the same network goes from the browser straight to Rig Bridge, like click-to-tune, with your Rig Bridge API token when one is set (Settings → Rig Bridge). With the Cloud Relay the command travels through your OpenHamClock server, signed with the relay's command key — see [NBEMS over the Cloud Relay](#nbems-over-the-cloud-relay) below.
 
 #### Config reference
 
@@ -833,7 +833,7 @@ A form carries no record of the sender's date setting, so a net whose stations u
 
 #### NBEMS over the Cloud Relay
 
-With the [Cloud Relay](#cloud-relay-plugin) running, the NBEMS panel works on a hosted OpenHamClock too: fldigi's status and receive text, and received forms, travel up with the relay's regular pushes, and the server replays the latest status and receive text to a browser that opens the page later. Send, ICS-213, mode change and Stop TX travel down the relay's command channel. The command carries your Rig Bridge API token from OpenHamClock's settings, and Rig Bridge checks it exactly as for a local request — the relay's own credentials cannot key the transmitter. The panel waits for Rig Bridge's answer (typically about a second) and shows any refusal. To keep NBEMS off the relay, set `"relayFldigi": false` in the `cloudRelay` section.
+With the [Cloud Relay](#cloud-relay-plugin) running, the NBEMS panel works on a hosted OpenHamClock too: fldigi's status and receive text, and received forms, travel up with the relay's regular pushes, and the server replays the latest status and receive text to a browser that opens the page later. Send, ICS-213, mode change and Stop TX travel down the relay's command channel. Like every relay command they are signed with the command key that Connect Cloud Relay shared between your browser and Rig Bridge; Rig Bridge refuses them unsigned (they transmit, so the grace period for old pairings does not apply), and no API token passes through the server. The panel waits for Rig Bridge's answer (typically about a second) and shows any refusal. To keep NBEMS off the relay, set `"relayFldigi": false` in the `cloudRelay` section.
 
 #### API
 
@@ -935,7 +935,7 @@ The rig-bridge holds a persistent long-poll connection to the server. The moment
 
 `GET /api/cloud-relay/status` shows `commandAuth` (`hmac-sha256`, `legacy` or `unsigned-allowed`) and how many commands were refused.
 
-The relay also carries the NBEMS panel (fldigi status, receive text, received flmsg forms, and send / mode / Stop TX commands, which still need your Rig Bridge API token) — see [NBEMS over the Cloud Relay](#nbems-over-the-cloud-relay). Set `"relayFldigi": false` in `cloudRelay` to leave it out.
+The relay also carries the NBEMS panel (fldigi status, receive text, received flmsg forms, and signed send / mode / Stop TX commands) — see [NBEMS over the Cloud Relay](#nbems-over-the-cloud-relay). Set `"relayFldigi": false` in `cloudRelay` to leave it out.
 
 ### MQTT Publish Plugin _(Beta)_
 

@@ -1107,6 +1107,7 @@
   "nbems.errGeneric": "Send failed",
   "nbems.errRelay": "Cloud relay is not connected to Rig Bridge",
   "nbems.errRelayTimeout": "No answer from Rig Bridge through the cloud relay",
+  "nbems.errRelayUnsigned": "Rig Bridge refused an unsigned command — reconnect the Cloud Relay in Settings → Rig Bridge",
   "nbems.errToken": "Rig Bridge rejected the API token (Settings → Rig Bridge)",
   "nbems.errUnreachable": "Rig Bridge not reachable",
   "nbems.icsButton": "ICS-213",

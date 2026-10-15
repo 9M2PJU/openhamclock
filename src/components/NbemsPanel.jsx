@@ -60,6 +60,10 @@ export default function NbemsPanel({ apiToken = '' }) {
   const describeError = (r) => {
     if (r.error === 'relay' || r.error === 'relay-inactive')
       return t('nbems.errRelay', { defaultValue: 'Cloud relay is not connected to Rig Bridge' });
+    if (r.error === 'relay-unsigned' || (r.status === 401 && viaRelay))
+      return t('nbems.errRelayUnsigned', {
+        defaultValue: 'Rig Bridge refused an unsigned command — reconnect the Cloud Relay in Settings → Rig Bridge',
+      });
     if (r.error === 'relay-timeout')
       return t('nbems.errRelayTimeout', { defaultValue: 'No answer from Rig Bridge through the cloud relay' });
     if (r.status === 401)
