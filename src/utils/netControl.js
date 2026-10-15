@@ -1271,7 +1271,18 @@ export function bandPlanRegion(location) {
 export const REPEATER_OFFSETS = {
   R2: [
     [29.5, 29.7, 0.1, false], // 10 m FM: 29.62–29.68 out, −100 kHz
-    [51, 54, 1, true], // 6 m: −1 MHz is the common US pairing; some areas use 500 kHz
+    // 6 m, ARRL band plan (https://www.arrl.org/band-plan, checked 2026-10-15):
+    // each repeater-output segment pairs with inputs 500 kHz below it —
+    //   51.62–51.98 out / 51.12–51.48 in (19 channels)
+    //   52.5–52.98 out  / 52.0–52.48 in  ("except as noted"; test pair 52.7/52.2)
+    //   53.5–53.98 out  / 53.0–53.48 in  ("except as noted")
+    // The two upper segments allow local exceptions, so they say "check
+    // locally". Frequencies outside an output segment (simplex, inputs, a
+    // locally coordinated pairing) have no standard and show "offset?".
+    // The plan is the US one; it is applied to the whole of Region 2.
+    [51.62, 51.98, 0.5, false],
+    [52.5, 52.98, 0.5, true],
+    [53.5, 53.98, 0.5, true],
     [144, 148, 0.6, false],
     [222, 225, 1.6, false],
     [420, 450, 5, false],
