@@ -138,6 +138,12 @@ export const PropagationPanel = ({
     }
   }, [timeZone]);
 
+  // The chart's "now" column follows the display time when shifted (Time Shift
+  // scrubber); otherwise the server's hour so marker and data agree. Called
+  // here, before the loading early-return below: a hook after that return made
+  // the hook count grow once data arrived (React error #310, blank dashboard).
+  const { offsetMs: timeOffsetMs } = useDisplayTime();
+
   const getBandStyle = (condition) =>
     ({
       GOOD: { bg: 'rgba(0,255,136,0.2)', color: '#00ff88', border: 'rgba(0,255,136,0.4)' },
@@ -157,9 +163,6 @@ export const PropagationPanel = ({
   }
 
   const { solarData, distance, currentBands, hourlyPredictions, muf, luf, dataSource } = propagation;
-  // The chart's "now" column follows the display time when shifted (Time Shift
-  // scrubber); otherwise the server's hour so marker and data agree.
-  const { offsetMs: timeOffsetMs } = useDisplayTime();
   const currentHour =
     timeOffsetMs !== 0 ? displayNow().getUTCHours() : (propagation.currentHour ?? new Date().getUTCHours());
   const currentLocalMin = function () {
