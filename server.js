@@ -321,6 +321,10 @@ require('./server/routes/noaa-scales')(app, ctx); // NOAA R/S/G scales + 3-day f
 require('./server/routes/dst')(app, ctx); // Kyoto Dst index with SWPC fallback (Dst panel)
 require('./server/routes/space-wx-activity')(app, ctx); // aurora peak + D-RAP max for the auto space-weather layer
 require('./server/routes/space-launches')(app, ctx); // Launch Library 2 upcoming launches (Space Launches panel + layer)
+require('./server/routes/tropical')(app, ctx); // NHC + JTWC tropical cyclones (Tropical panel + layer)
+require('./server/routes/fire-weather')(app, ctx); // NWS Red Flag / Fire Weather Watch alerts
+require('./server/routes/ndbc')(app, ctx); // NDBC buoy observations (Marine panel + layer)
+require('./server/routes/wefax')(app, ctx); // NWS radiofax chart catalogue + GIF proxy (WEFAX panel)
 
 // Subsystem health background refresher (read by /api/health).
 const health = require('./server/health');

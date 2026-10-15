@@ -40,6 +40,10 @@ import * as ZonesPlugin from './layers/useZones.js';
 import * as HistoryPlaybackPlugin from './layers/useHistoryPlayback.js';
 import * as TimeShiftPlugin from './layers/useTimeShift.js';
 import * as LaunchSitesPlugin from './layers/useLaunchSites.js';
+import * as TropicalCyclonesPlugin from './layers/useTropicalCyclones.js';
+import * as FireWeatherAlertsPlugin from './layers/useFireWeatherAlerts.js';
+import * as BuoysPlugin from './layers/useBuoys.js';
+import * as BoundariesPlugin from './layers/useBoundaries.js';
 
 // Auto-discover local/custom plugins (gitignored — survive updates)
 const localPluginModules = import.meta.glob('./local/*.js', { eager: true });
@@ -93,6 +97,10 @@ const layerPlugins = [
   HistoryPlaybackPlugin,
   TimeShiftPlugin,
   LaunchSitesPlugin,
+  TropicalCyclonesPlugin,
+  FireWeatherAlertsPlugin,
+  BuoysPlugin,
+  BoundariesPlugin,
   ...localPlugins,
 ];
 

@@ -5311,6 +5311,66 @@ export const SettingsPanel = ({
                               />
                             </div>
                           )}
+                          {layer.id === 'boundaries' && (
+                            <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                              {[
+                                ['nationalColor', t('station.settings.layers.boundaryNational'), '#f2cc60'],
+                                ['stateColor', t('station.settings.layers.boundaryState'), '#7fc8f8'],
+                              ].map(([key, label, fallback]) => (
+                                <label
+                                  key={key}
+                                  style={{
+                                    display: 'flex',
+                                    justifyContent: 'space-between',
+                                    alignItems: 'center',
+                                    fontSize: '11px',
+                                    color: 'var(--text-muted)',
+                                    textTransform: 'uppercase',
+                                    letterSpacing: '0.5px',
+                                    gap: '8px',
+                                  }}
+                                >
+                                  <span>{label}</span>
+                                  <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                    <span style={{ fontFamily: 'var(--font-mono)', textTransform: 'none' }}>
+                                      {layer.config?.[key] || fallback}
+                                    </span>
+                                    <input
+                                      type="color"
+                                      value={layer.config?.[key] || fallback}
+                                      aria-label={label}
+                                      onChange={(e) => handleUpdateLayerConfig(layer.id, { [key]: e.target.value })}
+                                      style={{
+                                        width: '32px',
+                                        height: '22px',
+                                        padding: 0,
+                                        border: '1px solid var(--border-color)',
+                                        background: 'transparent',
+                                        cursor: 'pointer',
+                                      }}
+                                    />
+                                  </span>
+                                </label>
+                              ))}
+                              <label
+                                style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '8px',
+                                  fontSize: '11px',
+                                  color: 'var(--text-muted)',
+                                  cursor: 'pointer',
+                                }}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={layer.config?.showStates !== false}
+                                  onChange={(e) => handleUpdateLayerConfig(layer.id, { showStates: e.target.checked })}
+                                />
+                                {t('station.settings.layers.boundaryShowStates')}
+                              </label>
+                            </div>
+                          )}
                           {ctrlPressed &&
                             ['lightning', 'wspr', 'rbn', 'grayline', 'n3fjp_logged_qsos', 'voacap-heatmap'].includes(
                               layer.id,

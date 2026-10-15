@@ -100,6 +100,11 @@ export function buildPanelDefs({ isLocalInstall = false } = {}) {
     eclipse: { name: 'Eclipses', icon: '🌘', group: 'Solar' },
     planets: { name: 'Planets', icon: '🪐', group: 'Solar' },
     'space-launches': { name: 'Space Launches', icon: '🚀' },
+    tropical: { name: 'Tropical Cyclones', icon: '🌀', group: 'Weather' },
+    'fire-weather': { name: 'Fire Weather', icon: '🚩', group: 'Weather' },
+    marine: { name: 'Marine Wx (Buoys)', icon: '🛟', group: 'Weather' },
+    windy: { name: 'Windy', icon: '🌬️', group: 'Weather' },
+    wefax: { name: 'WEFAX Charts', icon: '📠', group: 'Weather' },
   };
 
   // Append auto-discovered panel plugins (src/plugins/local/panels/*.jsx).

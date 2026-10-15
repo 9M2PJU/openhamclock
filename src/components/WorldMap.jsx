@@ -33,6 +33,7 @@ import { countryColor, fetchCountriesGeojson } from '../utils/countriesBasemap.j
 import PluginLayer from './PluginLayer.jsx';
 import TimeShiftControl from './TimeShiftControl.jsx';
 import { displayNow, subscribeDisplayTime } from '../utils/displayTime.js';
+import MapCursorReadout from './MapCursorReadout.jsx';
 import AzimuthalMap from './AzimuthalMap.jsx';
 import { MAP_FOCUS_EVENT, MAP_FOCUS_PULSE_MS, nearestWrappedLon, isInView } from '../utils/mapFocus.js';
 // three.js is ~600 kB — load it only when the operator actually opens 3D mode.
@@ -2871,6 +2872,16 @@ export const WorldMap = ({
             />
           );
         })}
+
+      {/* Cursor readout: lat/lon, grid, DE distance/bearing, nearest city (flat map) */}
+      {!isLeafletHidden && leafletReady && (
+        <MapCursorReadout
+          map={mapInstanceRef.current}
+          deLocation={deLocation}
+          units={allUnits?.dist}
+          hidden={mapUiHidden || hideOverlays}
+        />
+      )}
 
       {/* Unified map control dock */}
       {!isLeafletHidden && (
