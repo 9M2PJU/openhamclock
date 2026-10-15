@@ -20,8 +20,16 @@ import { IcsFormsOverlay } from '../components/IcsFormsPanel.jsx';
 import NetControlPanel from '../components/NetControlPanel.jsx';
 import { getNetControlRoster, mergeRosters, NET_CONTROL_ROSTER_EVENT } from '../utils/netControl.js';
 import { useSharedIncident } from '../hooks/useSharedIncident.js';
-import EmcommIncidentPanel, { IncidentStatusPill } from '../components/EmcommIncidentPanel.jsx';
-import { mergeDisplayedRoster, mergeFieldReports, mergeShelterReports } from '../utils/incidentSync.js';
+import EmcommIncidentPanel, { IncidentStatusPill, IncidentAdminButtons } from '../components/EmcommIncidentPanel.jsx';
+import {
+  mergeDisplayedRoster,
+  mergeFieldReports,
+  mergeShelterReports,
+  messageHistoryFromEvents,
+  mergeMessageHistory,
+  annotateSharedEvents,
+  sharedMsgLabel,
+} from '../utils/incidentSync.js';
 
 // Sidebar panel collapse state (#1188). Mode decides what a fresh visit to
 // the layout starts with: 'remember' restores each section's last state,
@@ -89,6 +97,7 @@ import {
   eventsToCSV,
   buildPrintHtml,
   diffAdded,
+  activeEvents,
   EVENT_TYPE_META,
 } from '../utils/emcommEventLog.js';
 
@@ -275,6 +284,7 @@ export default function EmcommLayout(props) {
   const [aprsSource, setAprsSource] = useState('all');
   // Net operations
   const [netRoster, setNetRoster] = useState([]);
+  const [rosterBootId, setRosterBootId] = useState(null);
   // Voice-net check-ins from the Net Control panel, in the same roster entry
   // shape. Merged into the roster for display and the EmComm-only map filter
   // only — the event-log diff below keeps watching the APRS roster alone,
@@ -355,6 +365,7 @@ export default function EmcommLayout(props) {
   const incident = useSharedIncident({
     callsign: config.callsign,
     localRoster,
+    rosterBootId,
     fieldReports,
     shelterReports: aprsShelterReports,
   });
@@ -372,7 +383,52 @@ export default function EmcommLayout(props) {
     () => (incidentJoined ? mergeShelterReports(aprsShelterReports, incidentState) : aprsShelterReports),
     [incidentJoined, aprsShelterReports, incidentState],
   );
-  const displayEventLog = incidentJoined ? incident.events : eventLog;
+  // The shared log, each entry marked as this station's own or another site's
+  // (message numbers are per station: another site's read "SITE:n").
+  const rawIncidentEvents = incident.events;
+  const incidentEvents = useMemo(
+    () => (incidentJoined ? annotateSharedEvents(rawIncidentEvents, new Set(eventLog.map((e) => e.id))) : []),
+    [incidentJoined, rawIncidentEvents, eventLog],
+  );
+  // Joined: a withdrawal logged at any site hides its entry here too.
+  const sharedActiveEvents = useMemo(() => activeEvents(incidentEvents), [incidentEvents]);
+  const displayEventLog = incidentJoined ? sharedActiveEvents : eventLog;
+  // Admin (holder of the incident's admin key): correct or remove shared records.
+  const incidentEditRecord = incident.editRecord;
+  const incidentDeleteRecord = incident.deleteRecord;
+  const editSharedRecord = useCallback(
+    async (kind, id, field, current) => {
+      const next = window.prompt(
+        t('emcomm.incident.editPrompt', { defaultValue: 'Correct this entry for every station:' }),
+        current || '',
+      );
+      if (next == null || next === current) return;
+      try {
+        await incidentEditRecord(kind, id, { [field]: next });
+      } catch (err) {
+        window.alert(err?.message || String(err));
+      }
+    },
+    [incidentEditRecord, t],
+  );
+  const deleteSharedRecord = useCallback(
+    async (kind, id) => {
+      if (
+        !window.confirm(
+          t('emcomm.incident.deleteConfirm', {
+            defaultValue: 'Delete this entry from the shared incident for everyone?',
+          }),
+        )
+      )
+        return;
+      try {
+        await incidentDeleteRecord(kind, id);
+      } catch (err) {
+        window.alert(err?.message || String(err));
+      }
+    },
+    [incidentDeleteRecord, t],
+  );
   // High-water mark for received-APRS-message polling (only log traffic from this session on)
   const sessionStartRef = useRef(Date.now());
   const msgSinceRef = useRef(sessionStartRef.current);
@@ -406,7 +462,7 @@ export default function EmcommLayout(props) {
     };
   }, []);
 
-  // Poll net roster
+  // Poll net roster (the boot id tells a server restart from a real roster clear)
   useEffect(() => {
     const fetchRoster = async () => {
       try {
@@ -414,6 +470,7 @@ export default function EmcommLayout(props) {
         if (res.ok) {
           const data = await res.json();
           setNetRoster(data.roster || []);
+          setRosterBootId(data.bootId || null);
         }
       } catch (e) {}
     };
@@ -984,14 +1041,16 @@ export default function EmcommLayout(props) {
           if (!seen.has(k)) merged.push(m);
         }
         merged.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
-        setHistoryMsgs(merged);
+        // Joined to a shared incident: messages other sites sent or received too.
+        const shared = incidentJoined ? messageHistoryFromEvents(sharedActiveEvents, key) : [];
+        setHistoryMsgs(shared.length ? mergeMessageHistory(merged, shared) : merged);
       } catch {
         setHistoryMsgs([]);
       } finally {
         setHistoryLoading(false);
       }
     },
-    [eventLog],
+    [eventLog, incidentJoined, sharedActiveEvents],
   );
   const scheduleHistoryHover = useCallback(
     (call) => {
@@ -1821,6 +1880,14 @@ export default function EmcommLayout(props) {
                     <span style={{ color: '#888', fontSize: '10px', flexShrink: 0 }}>
                       {r.age < 1 ? 'now' : r.age < 60 ? `${r.age}m ago` : `${Math.floor(r.age / 60)}h ago`}
                     </span>
+                    {incident.isAdmin && incidentState.reports?.[r.fromIncident ? r.id : `field-${r.id}`] && (
+                      <IncidentAdminButtons
+                        onEdit={() =>
+                          editSharedRecord('report', r.fromIncident ? r.id : `field-${r.id}`, 'text', r.text)
+                        }
+                        onDelete={() => deleteSharedRecord('report', r.fromIncident ? r.id : `field-${r.id}`)}
+                      />
+                    )}
                   </div>
                   {r.text && (
                     <div style={{ color: '#aaa', fontSize: '10px', marginTop: '2px' }}>
@@ -1862,6 +1929,8 @@ export default function EmcommLayout(props) {
                 return (
                   <div
                     key={op.call}
+                    data-testid="roster-row"
+                    data-call={op.call}
                     onClick={hasPos ? () => panToTarget(op) : undefined}
                     onMouseEnter={() => scheduleHistoryHover(op.call)}
                     onMouseLeave={cancelHistoryHover}
@@ -2016,6 +2085,7 @@ export default function EmcommLayout(props) {
                 .map((ev) => (
                   <div
                     key={ev.id}
+                    data-testid="event-row"
                     style={{
                       padding: '3px 8px',
                       fontSize: '10px',
@@ -2043,7 +2113,16 @@ export default function EmcommLayout(props) {
                       {ev.callsign ? <span style={{ color: '#ddd' }}>{ev.callsign} — </span> : null}
                       {ev.summary}
                       {incidentJoined && ev.site ? <span style={{ color: '#38bdf8' }}> @{ev.site}</span> : null}
+                      {incidentJoined && sharedMsgLabel(ev) ? (
+                        <span style={{ color: '#666', fontFamily: 'var(--font-mono)' }}> #{sharedMsgLabel(ev)}</span>
+                      ) : null}
                     </span>
+                    {incident.isAdmin && incidentState.events?.[ev.id] && (
+                      <IncidentAdminButtons
+                        onEdit={() => editSharedRecord('event', ev.id, 'summary', ev.summary)}
+                        onDelete={() => deleteSharedRecord('event', ev.id)}
+                      />
+                    )}
                   </div>
                 ))
             )}
@@ -2231,7 +2310,14 @@ export default function EmcommLayout(props) {
           )}
         </div>
       </div>
-      {icsForm && <IcsFormsOverlay config={config} initialForm={icsForm} onClose={() => setIcsForm(null)} />}
+      {icsForm && (
+        <IcsFormsOverlay
+          config={config}
+          initialForm={icsForm}
+          onClose={() => setIcsForm(null)}
+          sharedEvents={incidentJoined ? incidentEvents : undefined}
+        />
+      )}
     </div>
   );
 }
@@ -2409,7 +2495,9 @@ function PanelSection({ title, panelKey, count, color, extra, panels, bodyMaxHei
   const collapsed = panels ? panels.collapsedFor(key) : localCollapsed;
   const setCollapsed = panels ? () => panels.toggle(key) : setLocalCollapsed;
   return (
-    <div style={{ background: '#0d0d0d', borderRadius: '6px', overflow: 'hidden' }}>
+    // flexShrink 0: the rail is a scrolling flex column; without it, once the
+    // panels outgrow the rail every section is squashed and its content clipped.
+    <div style={{ background: '#0d0d0d', borderRadius: '6px', overflow: 'hidden', flexShrink: 0 }}>
       <div
         style={{
           display: 'flex',

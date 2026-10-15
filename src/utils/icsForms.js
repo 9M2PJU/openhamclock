@@ -298,6 +298,10 @@ function withPrintTime(row) {
  * (`messageNumbers`, derived for older events): in FROM Msg # for traffic we
  * originated, in TO Msg # for traffic we received. `startNumber` (a positive
  * integer) renumbers the period's messages from that number instead.
+ *
+ * In a shared incident the log also holds other sites' traffic (`foreign`):
+ * those rows show the other station's "SITE:n" number and are never counted
+ * or renumbered as this station's messages.
  */
 export function ics309RowsFromEvents(
   events,
@@ -339,7 +343,8 @@ export function ics309RowsFromEvents(
       }
       let no = numbers.get(ev.id);
       if (no != null && renumber) no = seq++;
-      const msgNo = no == null ? '' : String(no);
+      // Another site's traffic in a shared incident keeps its own "SITE:n" label.
+      const msgNo = ev.foreign ? ev.msgLabel || '' : no == null ? '' : String(no);
       const sent = SENT_TYPES.has(ev.type);
       return withPrintTime({
         id: `ev-${ev.id}`,

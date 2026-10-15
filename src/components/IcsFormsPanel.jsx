@@ -20,6 +20,7 @@ import {
   peekNextMsgNo,
   resetMessageNumbers,
 } from '../utils/emcommEventLog.js';
+import { loadDoc, saveDoc, subscribeDocs } from '../utils/incidentDocs.js';
 import { loadNetSchedule } from '../utils/netSchedule.js';
 import { getNetControlRoster } from '../utils/netControl.js';
 import { apiFetch } from '../utils/apiFetch.js';
@@ -29,8 +30,6 @@ import {
   ICS_FORM_IDS,
   ICS_FORM_TITLES,
   ICS309_DEFAULT_TYPES,
-  loadDrafts,
-  saveDrafts,
   defaultDrafts,
   headerRange,
   ics309Rows,
@@ -153,7 +152,8 @@ function readTab() {
 
 /** Fill blank call-sign fields from the station callsign on first load. */
 function initialDrafts(callsign) {
-  const d = loadDrafts();
+  // The shared incident's drafts while joined, this browser's own otherwise.
+  const d = loadDoc('ics-drafts');
   const call = String(callsign || '').toUpperCase();
   if (call && call !== 'N0CALL') {
     if (!d.header.preparedCall) d.header = { ...d.header, preparedCall: call };
@@ -162,11 +162,16 @@ function initialDrafts(callsign) {
   return d;
 }
 
-export default function IcsFormsPanel({ config, initialForm, onClose }) {
+/**
+ * @param {Array} [sharedEvents]  the shared incident's event log while joined —
+ *   used in place of this browser's own log for the 309 and 214 imports.
+ */
+export default function IcsFormsPanel({ config, initialForm, onClose, sharedEvents }) {
   const { t, i18n } = useTranslation();
   const [form, setForm] = useState(() => (ICS_FORM_IDS.includes(initialForm) ? initialForm : readTab()));
   const [drafts, setDrafts] = useState(() => initialDrafts(config?.callsign));
-  const [events, setEvents] = useState(() => getEvents());
+  const [localEvents, setEvents] = useState(() => getEvents());
+  const events = sharedEvents || localEvents;
   const [showPreview, setShowPreview] = useState(true);
 
   // Follow the rail's form buttons when the overlay is re-opened on another form
@@ -182,17 +187,27 @@ export default function IcsFormsPanel({ config, initialForm, onClose }) {
 
   useEffect(() => subscribeEvents(setEvents), []);
 
+  // Joined / left a shared incident, or another station saved the drafts.
+  const callsignForDrafts = config?.callsign;
+  useEffect(
+    () =>
+      subscribeDocs((id) => {
+        if (id === 'ics-drafts') setDrafts(initialDrafts(callsignForDrafts));
+      }),
+    [callsignForDrafts],
+  );
+
   // Persist drafts (debounced — typing in the message box shouldn't hammer storage)
   const saveTimer = useRef(null);
   useEffect(() => {
     clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => saveDrafts(drafts), 300);
+    saveTimer.current = setTimeout(() => saveDoc('ics-drafts', drafts), 300);
     return () => clearTimeout(saveTimer.current);
   }, [drafts]);
   // Flush on unmount so closing the overlay never loses the last keystrokes
   const latestDrafts = useRef(drafts);
   latestDrafts.current = drafts;
-  useEffect(() => () => saveDrafts(latestDrafts.current), []);
+  useEffect(() => () => saveDoc('ics-drafts', latestDrafts.current), []);
 
   const patch = useCallback((section, changes) => {
     setDrafts((d) => ({ ...d, [section]: { ...d[section], ...changes } }));
@@ -215,11 +230,11 @@ export default function IcsFormsPanel({ config, initialForm, onClose }) {
   }, [form, drafts.header.incidentName]);
 
   const handlePrint = useCallback(() => {
-    printIcsHtml(buildIcsHtml(form, drafts, { events: getEvents(), now: Date.now(), tr }), {
+    printIcsHtml(buildIcsHtml(form, drafts, { events: sharedEvents || getEvents(), now: Date.now(), tr }), {
       title: fileStem,
       landscape: form === '205',
     });
-  }, [form, drafts, fileStem, tr]);
+  }, [form, drafts, fileStem, tr, sharedEvents]);
 
   const handleCsv = useCallback(() => {
     downloadCsv(ics309Csv(drafts, rows309, { tr }), `${fileStem}.csv`);
@@ -400,7 +415,7 @@ export default function IcsFormsPanel({ config, initialForm, onClose }) {
  * to edit a form in, so its ICS Forms buttons open this over the map.
  * Escape or a click on the backdrop closes it; drafts are saved on close.
  */
-export function IcsFormsOverlay({ config, initialForm, onClose }) {
+export function IcsFormsOverlay({ config, initialForm, onClose, sharedEvents }) {
   const { t } = useTranslation();
   useEffect(() => {
     const onKey = (e) => {
@@ -440,7 +455,7 @@ export function IcsFormsOverlay({ config, initialForm, onClose }) {
           color: 'var(--text-primary, #ddd)',
         }}
       >
-        <IcsFormsPanel config={config} initialForm={initialForm} onClose={onClose} />
+        <IcsFormsPanel config={config} initialForm={initialForm} onClose={onClose} sharedEvents={sharedEvents} />
       </div>
     </div>
   );

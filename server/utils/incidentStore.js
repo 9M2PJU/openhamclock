@@ -12,7 +12,17 @@
  *            `checkedOut: true` update, never a delete, so late joiners see it)
  *   events   keyed by id, and additionally by `type:dedupeKey` when present
  *   reports  keyed by id
- *   board    whole-object, newest `updatedAt` wins
+ *   board    whole-object, newest `updatedAt` wins (admin only)
+ *   docs     shared working documents (ICS form drafts, the running voice
+ *            net, net history) — whole-object, newest `updatedAt` wins
+ *
+ * Two keys open an incident. The join key admits an operator: append roster
+ * entries, events and reports, check stations out, edit the shared documents.
+ * The admin key (handed to the creator only) also edits and deletes events
+ * and reports, edits the board, and rotates the join key. Edits bump a
+ * record's `rev`; deletions leave a tombstone so connected clients drop the
+ * record. A client whose cursor is older than the oldest kept tombstone gets
+ * a full snapshot (`full: true`) instead of a delta.
  *
  * Each accepted change bumps the incident's monotonic `seq` and stamps the
  * record, so `snapshot(id, since)` returns exactly what changed after a
@@ -24,14 +34,47 @@
  * injectable clock) — the route owns persistence and transport.
  */
 
-const { makeIncidentId, makeJoinKey, hashJoinKey, verifyJoinKey, normaliseToken } = require('./incidentAuth');
+const {
+  makeIncidentId,
+  makeJoinKey,
+  hashJoinKey,
+  verifyJoinKey,
+  normaliseToken,
+  isValidCallsign,
+} = require('./incidentAuth');
 
 const DAY = 24 * 60 * 60 * 1000;
 
+const HOUR = 60 * 60 * 1000;
+
 const LIMITS = {
-  local: { maxIncidents: 500, maxRoster: 300, maxEvents: 2000, maxReports: 500, maxParticipants: 100 },
-  hosted: { maxIncidents: 50, maxRoster: 100, maxEvents: 500, maxReports: 200, maxParticipants: 50 },
+  local: {
+    maxIncidents: 500,
+    maxRoster: 300,
+    maxEvents: 2000,
+    maxReports: 500,
+    maxParticipants: 100,
+    maxDocBytes: 256 * 1024,
+    requireCallsign: false, // N0CALL shacks may still create one on their own server
+    maxPerCallsign: 20,
+    createsPerHour: Infinity,
+  },
+  hosted: {
+    maxIncidents: 50,
+    maxRoster: 100,
+    maxEvents: 500,
+    maxReports: 200,
+    maxParticipants: 50,
+    maxDocBytes: 64 * 1024,
+    requireCallsign: true,
+    maxPerCallsign: 2,
+    createsPerHour: 30, // across all addresses
+  },
 };
+
+/** Shared working documents an incident can hold (see src/utils/incidentDocs.js). */
+const DOC_IDS = new Set(['ics-drafts', 'net-running', 'net-history']);
+const MAX_TOMBSTONES = 1000;
 
 const STR_MAX = 80;
 const TEXT_MAX = 500;
@@ -41,7 +84,19 @@ const MAX_TOKENS = 20;
 const MAX_EXTRA_KEYS = 20;
 const MAX_BATCH = 200; // records per collection per apply()
 const PARTICIPANT_TTL = 150 * 1000; // counted as present while heard within this window
-const EVICT_GRACE = 60 * 60 * 1000; // at the cap, an incident idle this long with nobody present may be evicted
+
+/**
+ * How long an unattended incident may sit idle before it is evicted, given
+ * how full the pool is. A quiet pool keeps incidents for the full idle
+ * period; a nearly full one recycles abandoned incidents much sooner so new
+ * activations are not locked out. Attended incidents are never evicted.
+ */
+function idleLimitFor(fill, idleMs) {
+  if (fill >= 1) return 10 * 60 * 1000;
+  if (fill >= 0.8) return HOUR;
+  if (fill >= 0.5) return Math.min(idleMs, 24 * HOUR);
+  return idleMs;
+}
 
 // The EmComm Event Log's types (src/utils/emcommEventLog.js EVENT_TYPE_META) plus incident notes.
 const EVENT_TYPES = new Set([
@@ -149,6 +204,10 @@ function sanitiseEvent(raw, now) {
   };
   if (raw.dedupeKey != null && raw.dedupeKey !== '') ev.dedupeKey = cleanStr(raw.dedupeKey, 120);
   if (raw.ref != null && raw.ref !== '') ev.ref = cleanStr(raw.ref, ID_MAX);
+  // The originating station's own message number. Numbers are per station,
+  // so they are kept as sent and read together with `site` (see docs/API.md).
+  const msgNo = Number(raw.msgNo);
+  if (Number.isInteger(msgNo) && msgNo > 0 && msgNo < 1e7) ev.msgNo = msgNo;
   return ev;
 }
 
@@ -198,6 +257,26 @@ const sameRecord = (a, b, skip) => {
   return strip(a) === strip(b);
 };
 
+/** A shared document's payload: any JSON value up to `maxBytes` when serialised. */
+function sanitiseDoc(raw, now, maxBytes) {
+  if (!raw || typeof raw !== 'object') return null;
+  const id = cleanStr(raw.id, 32);
+  if (!DOC_IDS.has(id)) return null;
+  let json;
+  try {
+    json = JSON.stringify(raw.data === undefined ? null : raw.data);
+  } catch {
+    return null;
+  }
+  if (json.length > maxBytes) throw new IncidentError(413, `Shared document "${id}" is larger than ${maxBytes} bytes`);
+  return {
+    id,
+    data: JSON.parse(json),
+    updatedAt: cleanTs(raw.updatedAt, now),
+    by: cleanStr(raw.by, 20).toUpperCase(),
+  };
+}
+
 /**
  * @param {object} [opts]
  * @param {boolean} [opts.hosted] - tighter caps for the shared multi-user deployment
@@ -213,6 +292,7 @@ function createIncidentStore(opts = {}) {
 
   const incidents = new Map(); // id → incident
   const DUMMY_AUTH = hashJoinKey(makeJoinKey());
+  let createTimes = []; // creation timestamps within the last hour (global create rate)
 
   const touch = (inc) => {
     inc.lastActivity = now();
@@ -238,6 +318,28 @@ function createIncidentStore(opts = {}) {
       .slice(0, inc.roster.size - limits.maxRoster);
     for (const v of victims) inc.roster.delete(v.call);
   };
+
+  const emptyIncident = (fields) => ({
+    roster: new Map(),
+    events: new Map(),
+    reports: new Map(),
+    docs: new Map(),
+    tombstones: [], // [{ kind, id, seq }], oldest first
+    tombFloor: 0, // a cursor below this missed pruned tombstones → full snapshot
+    eventDedupe: new Set(),
+    participants: new Map(),
+    keyGen: 1,
+    ...fields,
+  });
+
+  function addTombstone(inc, kind, id) {
+    inc.tombstones.push({ kind, id, seq: ++inc.seq, deleted: true });
+    if (inc.tombstones.length > MAX_TOMBSTONES) {
+      const dropped = inc.tombstones.splice(0, inc.tombstones.length - MAX_TOMBSTONES);
+      inc.tombFloor = dropped[dropped.length - 1].seq;
+    }
+    return inc.tombstones[inc.tombstones.length - 1];
+  }
 
   function meta(inc) {
     return {
@@ -268,61 +370,96 @@ function createIncidentStore(opts = {}) {
     return inc;
   }
 
-  // ─── Public API ──────────────────────────────────────────────────────────
+  // ─── Lifecycle ───────────────────────────────────────────────────────────
 
   /**
-   * At the cap, make room by dropping the longest-idle incident that nobody
-   * is attending and that has been quiet for EVICT_GRACE — so a burst of
-   * abandoned creates cannot lock real activations out until the 7-day expiry.
+   * Evict unattended incidents that have been idle longer than the pool's
+   * fill level allows (idleLimitFor). Returns the ids dropped.
    */
-  function evictOneIdle() {
-    const cutoff = now() - EVICT_GRACE;
-    let victim = null;
-    for (const inc of incidents.values()) {
-      if (inc.lastActivity >= cutoff || participantCount(inc) > 0) continue;
-      if (!victim || inc.lastActivity < victim.lastActivity) victim = inc;
+  function relievePressure() {
+    const limit = idleLimitFor(incidents.size / limits.maxIncidents, idleMs);
+    if (limit >= idleMs) return [];
+    const cutoff = now() - limit;
+    const victims = [...incidents.values()]
+      .filter((inc) => inc.lastActivity < cutoff && participantCount(inc) === 0)
+      .sort((a, b) => a.lastActivity - b.lastActivity);
+    const dropped = [];
+    for (const inc of victims) {
+      if (idleLimitFor(incidents.size / limits.maxIncidents, idleMs) >= idleMs) break;
+      incidents.delete(inc.id);
+      dropped.push(inc.id);
     }
-    if (victim) incidents.delete(victim.id);
-    return victim ? victim.id : null;
+    return dropped;
   }
 
-  function create(input = {}) {
-    if (incidents.size >= limits.maxIncidents) evictOneIdle();
+  /**
+   * @param {object} input  board fields
+   * @param {object} [who]  { call } — the creating station
+   * @returns {{ incident, joinKey, adminKey }}
+   */
+  function create(input = {}, who = {}) {
+    const call = normCall(who.call);
+    if (limits.requireCallsign && !isValidCallsign(call)) {
+      throw new IncidentError(400, 'Creating an incident here needs your callsign (Settings → Station)');
+    }
+    if (call && [...incidents.values()].filter((i) => i.creatorCall === call).length >= limits.maxPerCallsign) {
+      throw new IncidentError(429, `${call} already has ${limits.maxPerCallsign} open incident(s) on this server`);
+    }
+    const t = now();
+    createTimes = createTimes.filter((x) => x > t - HOUR);
+    if (createTimes.length >= limits.createsPerHour) {
+      throw new IncidentError(429, 'This server is creating incidents too fast, try again in a few minutes');
+    }
+    relievePressure();
     if (incidents.size >= limits.maxIncidents) throw new IncidentError(503, 'Incident limit reached, try again later');
     let id = makeIncidentId();
     for (let i = 0; i < 20 && incidents.has(id); i++) id = makeIncidentId();
     if (incidents.has(id)) throw new IncidentError(500, 'Could not allocate an incident id');
     const joinKey = makeJoinKey();
-    const t = now();
+    let adminKey = makeJoinKey();
+    while (adminKey === joinKey) adminKey = makeJoinKey();
     const board = sanitiseBoard(input, t) || sanitiseBoard({}, t);
-    const inc = {
+    const inc = emptyIncident({
       id,
       createdAt: t,
       lastActivity: t,
+      creatorCall: call,
       seq: 1,
       auth: hashJoinKey(joinKey),
+      adminAuth: hashJoinKey(adminKey),
       board: { ...board, updatedAt: t, seq: 1 },
-      roster: new Map(),
-      events: new Map(),
-      reports: new Map(),
-      eventDedupe: new Set(),
-      participants: new Map(),
-    };
+    });
     incidents.set(id, inc);
-    return { incident: meta(inc), joinKey };
+    createTimes.push(t);
+    return { incident: meta(inc), joinKey, adminKey };
   }
 
-  /** @returns {object|null} the incident when the key matches; null otherwise (404 vs 403 is the caller's call) */
+  /**
+   * Check a key against both hashes (always both, so timing does not say
+   * which one matched or whether the id exists).
+   * @returns {{ incident: object, role: 'admin'|'operator', keyGen: number } | null}
+   */
   function verify(id, key) {
     const inc = incidents.get(normaliseToken(id));
-    if (!inc) {
-      // Same work as a real check, so response time does not reveal whether an id exists.
-      verifyJoinKey(key, DUMMY_AUTH.salt, DUMMY_AUTH.hash);
-      return null;
-    }
-    return verifyJoinKey(key, inc.auth.salt, inc.auth.hash) ? inc : null;
+    const auth = inc?.auth || DUMMY_AUTH;
+    const adminAuth = inc?.adminAuth || DUMMY_AUTH;
+    const isAdmin = verifyJoinKey(key, adminAuth.salt, adminAuth.hash);
+    const isOperator = verifyJoinKey(key, auth.salt, auth.hash);
+    if (!inc || (!isAdmin && !isOperator)) return null;
+    return { incident: inc, role: isAdmin ? 'admin' : 'operator', keyGen: inc.keyGen };
   }
 
+  /** Replace the join key; everyone holding the old one must rejoin. → the new key */
+  function rotateJoinKey(id) {
+    const inc = mustGet(id);
+    const joinKey = makeJoinKey();
+    inc.auth = hashJoinKey(joinKey);
+    inc.keyGen += 1;
+    touch(inc);
+    return { joinKey, keyGen: inc.keyGen };
+  }
+
+  const keyGenOf = (id) => incidents.get(normaliseToken(id))?.keyGen ?? null;
   const has = (id) => incidents.has(normaliseToken(id));
   const get = (id) => incidents.get(normaliseToken(id)) || null;
 
@@ -351,15 +488,19 @@ function createIncidentStore(opts = {}) {
     return participantCount(inc);
   }
 
+  // ─── Writes ──────────────────────────────────────────────────────────────
+
   /**
    * Merge a batch of client records. Returns only what actually changed, each
    * record stamped with its new seq, so the caller can fan it out verbatim.
+   * The board is only taken from an admin (`origin.role === 'admin'`).
    */
   function apply(id, batch = {}, origin = {}) {
     const inc = mustGet(id);
     const t = now();
     const site = cleanStr(origin.site, 40);
-    const changes = { roster: [], events: [], reports: [], board: null };
+    const changes = { roster: [], events: [], reports: [], docs: [], board: null };
+    const denied = [];
     const withSite = (rec) => (site && !rec.site ? { ...rec, site } : rec);
 
     for (const raw of (Array.isArray(batch.roster) ? batch.roster : []).slice(0, MAX_BATCH)) {
@@ -381,9 +522,11 @@ function createIncidentStore(opts = {}) {
     }
     capRoster(inc);
 
+    const deletedIds = (kind) => new Set(inc.tombstones.filter((x) => x.kind === kind).map((x) => x.id));
+    const deletedEvents = deletedIds('event');
     for (const raw of (Array.isArray(batch.events) ? batch.events : []).slice(0, MAX_BATCH)) {
       const ev = sanitiseEvent(raw, t);
-      if (!ev || inc.events.has(ev.id)) continue;
+      if (!ev || inc.events.has(ev.id) || deletedEvents.has(ev.id)) continue; // a deleted record stays deleted
       const dk = ev.dedupeKey ? `${ev.type}:${ev.dedupeKey}` : null;
       if (dk && inc.eventDedupe.has(dk)) continue;
       const rec = { ...withSite(ev), seq: ++inc.seq };
@@ -396,17 +539,29 @@ function createIncidentStore(opts = {}) {
       rebuildDedupe(inc);
     }
 
+    const deletedReports = deletedIds('report');
     for (const raw of (Array.isArray(batch.reports) ? batch.reports : []).slice(0, MAX_BATCH)) {
       const r = sanitiseReport(raw, t);
-      if (!r || inc.reports.has(r.id)) continue;
+      if (!r || inc.reports.has(r.id) || deletedReports.has(r.id)) continue;
       const rec = { ...withSite(r), seq: ++inc.seq };
       inc.reports.set(rec.id, rec);
       changes.reports.push(rec);
     }
     capMap(inc.reports, limits.maxReports, 'timestamp');
 
+    for (const raw of (Array.isArray(batch.docs) ? batch.docs : []).slice(0, DOC_IDS.size)) {
+      const doc = sanitiseDoc(raw, t, limits.maxDocBytes);
+      if (!doc) continue;
+      const existing = inc.docs.get(doc.id);
+      if (existing && doc.updatedAt <= existing.updatedAt) continue;
+      const rec = { ...doc, seq: ++inc.seq };
+      inc.docs.set(doc.id, rec);
+      changes.docs.push(rec);
+    }
+
     const board = sanitiseBoard(batch.board, t);
-    if (board && board.updatedAt > (inc.board.updatedAt || 0)) {
+    if (board && origin.role !== 'admin') denied.push('board');
+    else if (board && board.updatedAt > (inc.board.updatedAt || 0)) {
       if (!sameRecord(inc.board, board, ['seq', 'updatedAt'])) {
         inc.board = { ...board, seq: ++inc.seq };
         changes.board = inc.board;
@@ -415,25 +570,88 @@ function createIncidentStore(opts = {}) {
       }
     }
 
-    const changed = changes.roster.length || changes.events.length || changes.reports.length || changes.board;
+    const changed =
+      changes.roster.length || changes.events.length || changes.reports.length || changes.docs.length || changes.board;
+    if (changed) touch(inc);
+    return { seq: inc.seq, changed: !!changed, changes, denied };
+  }
+
+  /**
+   * Admin: edit existing events / reports in place and/or delete them.
+   * @param {object} ops  { edit: { events:[{id,…fields}], reports:[…] }, delete: { events:[ids], reports:[ids], board: bool } }
+   * @returns {{ seq, changed, changes: { events, reports, board, deleted:[{kind,id,seq}] } }}
+   */
+  function adminChange(id, ops = {}) {
+    const inc = mustGet(id);
+    const t = now();
+    const changes = { events: [], reports: [], board: null, deleted: [] };
+    const edit = ops.edit || {};
+    const del = ops.delete || {};
+
+    for (const raw of (Array.isArray(edit.events) ? edit.events : []).slice(0, MAX_BATCH)) {
+      const cur = inc.events.get(cleanStr(raw?.id, ID_MAX));
+      if (!cur) continue;
+      const next = sanitiseEvent({ ...cur, ...raw, id: cur.id, type: raw.type ?? cur.type }, t);
+      if (!next) continue;
+      const rec = { ...next, site: cur.site, rev: (cur.rev || 0) + 1, editedAt: t, seq: ++inc.seq };
+      inc.events.set(rec.id, rec);
+      changes.events.push(rec);
+    }
+    for (const raw of (Array.isArray(edit.reports) ? edit.reports : []).slice(0, MAX_BATCH)) {
+      const cur = inc.reports.get(cleanStr(raw?.id, ID_MAX));
+      if (!cur) continue;
+      const next = sanitiseReport({ ...cur, ...raw, id: cur.id, kind: cur.kind }, t);
+      if (!next) continue;
+      const rec = { ...next, site: cur.site, rev: (cur.rev || 0) + 1, editedAt: t, seq: ++inc.seq };
+      inc.reports.set(rec.id, rec);
+      changes.reports.push(rec);
+    }
+    for (const raw of (Array.isArray(del.events) ? del.events : []).slice(0, MAX_BATCH)) {
+      const key = cleanStr(raw, ID_MAX);
+      if (!inc.events.delete(key)) continue;
+      changes.deleted.push(addTombstone(inc, 'event', key));
+    }
+    for (const raw of (Array.isArray(del.reports) ? del.reports : []).slice(0, MAX_BATCH)) {
+      const key = cleanStr(raw, ID_MAX);
+      if (!inc.reports.delete(key)) continue;
+      changes.deleted.push(addTombstone(inc, 'report', key));
+    }
+    if (changes.deleted.some((d) => d.kind === 'event')) rebuildDedupe(inc);
+    if (del.board === true) {
+      inc.board = { ...sanitiseBoard({}, t), seq: ++inc.seq };
+      changes.board = inc.board;
+    }
+    const changed = changes.events.length || changes.reports.length || changes.deleted.length || changes.board;
     if (changed) touch(inc);
     return { seq: inc.seq, changed: !!changed, changes };
   }
 
-  /** Full state, or only records stamped after `since`. */
+  // ─── Reads ───────────────────────────────────────────────────────────────
+
+  /**
+   * Full state (`full: true`), or only what changed after `since` — records
+   * with a newer seq and tombstones for anything deleted since then. A cursor
+   * older than the oldest kept tombstone gets the full state.
+   */
   function snapshot(id, since = 0) {
     const inc = mustGet(id);
-    const after = (rec) => rec.seq > since;
+    const full = !(since > 0) || since < inc.tombFloor;
+    const cursor = full ? 0 : since;
+    const after = (rec) => rec.seq > cursor;
     return {
       ...meta(inc),
-      since,
-      board: inc.board.seq > since ? inc.board : null,
+      since: cursor,
+      full,
+      board: inc.board.seq > cursor ? inc.board : null,
       roster: [...inc.roster.values()].filter(after),
       events: [...inc.events.values()].filter(after).sort((a, b) => a.ts - b.ts),
       reports: [...inc.reports.values()].filter(after),
+      docs: [...inc.docs.values()].filter(after),
+      deleted: full ? [] : inc.tombstones.filter(after),
     };
   }
 
+  /** Drop incidents idle past `idleMs`, plus unattended ones under pool pressure. → count */
   function expire(at = now()) {
     const cutoff = at - idleMs;
     let dropped = 0;
@@ -443,25 +661,35 @@ function createIncidentStore(opts = {}) {
         dropped++;
       }
     }
-    return dropped;
+    return dropped + relievePressure().length;
   }
 
   const remove = (id) => incidents.delete(normaliseToken(id));
 
-  /** Plain JSON for the persistence file (participants are ephemeral and skipped). */
+  /** Plain JSON for the persistence file (participants and tombstones are ephemeral). */
   function serialise() {
     return [...incidents.values()].map((inc) => ({
       id: inc.id,
       createdAt: inc.createdAt,
       lastActivity: inc.lastActivity,
+      creatorCall: inc.creatorCall || '',
       seq: inc.seq,
+      keyGen: inc.keyGen,
       auth: inc.auth,
+      adminAuth: inc.adminAuth || null,
       board: inc.board,
       roster: [...inc.roster.values()],
       events: [...inc.events.values()],
       reports: [...inc.reports.values()],
+      docs: [...inc.docs.values()],
     }));
   }
+
+  const keepEditMeta = (src, rec) => ({
+    ...rec,
+    seq: src.seq || 0,
+    ...(Number.isFinite(src.rev) ? { rev: src.rev, editedAt: src.editedAt } : {}),
+  });
 
   /** Load what serialise() wrote; malformed entries are skipped, caps re-applied. */
   function hydrate(data) {
@@ -471,30 +699,42 @@ function createIncidentStore(opts = {}) {
       if (incidents.size >= limits.maxIncidents) break;
       if (!raw || typeof raw.id !== 'string' || !raw.auth?.salt || !raw.auth?.hash) continue;
       const t = now();
-      const inc = {
+      const seq = Number.isFinite(raw.seq) ? raw.seq : 1;
+      const inc = emptyIncident({
         id: raw.id,
         createdAt: cleanTs(raw.createdAt, t),
         lastActivity: cleanTs(raw.lastActivity, t),
-        seq: Number.isFinite(raw.seq) ? raw.seq : 1,
+        creatorCall: normCall(raw.creatorCall),
+        seq,
+        keyGen: Number.isFinite(raw.keyGen) ? raw.keyGen : 1,
+        // Deletions before the restart are not replayed: every client resyncs fully.
+        tombFloor: seq,
         auth: { salt: String(raw.auth.salt), hash: String(raw.auth.hash) },
+        adminAuth:
+          raw.adminAuth?.salt && raw.adminAuth?.hash
+            ? { salt: String(raw.adminAuth.salt), hash: String(raw.adminAuth.hash) }
+            : null,
         board: { ...(sanitiseBoard(raw.board, t) || sanitiseBoard({}, t)), seq: raw.board?.seq || 1 },
-        roster: new Map(),
-        events: new Map(),
-        reports: new Map(),
-        eventDedupe: new Set(),
-        participants: new Map(),
-      };
+      });
       for (const r of Array.isArray(raw.roster) ? raw.roster : []) {
         const e = sanitiseRoster(r, t);
         if (e) inc.roster.set(e.call, { ...e, seq: r.seq || 0 });
       }
       for (const r of Array.isArray(raw.events) ? raw.events : []) {
         const e = sanitiseEvent(r, t);
-        if (e && !inc.events.has(e.id)) inc.events.set(e.id, { ...e, seq: r.seq || 0 });
+        if (e && !inc.events.has(e.id)) inc.events.set(e.id, keepEditMeta(r, e));
       }
       for (const r of Array.isArray(raw.reports) ? raw.reports : []) {
         const e = sanitiseReport(r, t);
-        if (e && !inc.reports.has(e.id)) inc.reports.set(e.id, { ...e, seq: r.seq || 0 });
+        if (e && !inc.reports.has(e.id)) inc.reports.set(e.id, keepEditMeta(r, e));
+      }
+      for (const r of Array.isArray(raw.docs) ? raw.docs : []) {
+        try {
+          const d = sanitiseDoc(r, t, limits.maxDocBytes);
+          if (d) inc.docs.set(d.id, { ...d, seq: r.seq || 0 });
+        } catch {
+          /* over the (possibly lowered) size cap — drop it */
+        }
       }
       capRoster(inc);
       capMap(inc.events, limits.maxEvents, 'ts');
@@ -511,6 +751,8 @@ function createIncidentStore(opts = {}) {
     hosted,
     create,
     verify,
+    rotateJoinKey,
+    keyGenOf,
     has,
     get,
     list,
@@ -518,8 +760,10 @@ function createIncidentStore(opts = {}) {
     touchParticipant,
     removeParticipant,
     apply,
+    adminChange,
     snapshot,
     expire,
+    relievePressure,
     remove,
     serialise,
     hydrate,
@@ -535,9 +779,12 @@ module.exports = {
   LIMITS,
   EVENT_TYPES,
   REPORT_KINDS,
+  DOC_IDS,
   PARTICIPANT_TTL,
+  idleLimitFor,
   sanitiseRoster,
   sanitiseEvent,
   sanitiseReport,
   sanitiseBoard,
+  sanitiseDoc,
 };

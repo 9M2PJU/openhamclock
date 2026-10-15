@@ -99,3 +99,42 @@ describe('APRS telemetry', () => {
     expect(res.payload).toEqual({ error: 'No telemetry for this callsign' });
   });
 });
+
+describe('APRS net roster boot id and generation', () => {
+  const mount = () => {
+    const app = makeApp();
+    const noop = () => {};
+    mountAprs(app, {
+      CONFIG: {},
+      APP_VERSION: 'test',
+      logDebug: noop,
+      logInfo: noop,
+      logWarn: noop,
+      logErrorOnce: noop,
+    });
+    return app;
+  };
+
+  beforeAll(() => vi.useFakeTimers());
+  afterAll(() => vi.useRealTimers());
+
+  it('bumps the generation on check-in and check-out and keeps the boot id', () => {
+    const app = mount();
+    const r0 = call(app.routes['GET /api/aprs/net']).payload;
+    expect(r0.bootId).toMatch(/^[0-9a-f]{16}$/);
+    call(app.routes['POST /api/aprs/net/checkin'], { body: { callsign: 'W1AW', netName: 'ARES' } });
+    const r1 = call(app.routes['GET /api/aprs/net']).payload;
+    expect(r1.generation).toBe(r0.generation + 1);
+    call(app.routes['POST /api/aprs/net/checkout'], { body: { callsign: 'W1AW' } });
+    call(app.routes['POST /api/aprs/net/checkout'], { body: { callsign: 'NOBODY' } }); // no change
+    const r2 = call(app.routes['GET /api/aprs/net']).payload;
+    expect(r2.generation).toBe(r1.generation + 1);
+    expect(r2.bootId).toBe(r0.bootId);
+  });
+
+  it('a restart (new mount) gets a new boot id', () => {
+    const a = call(mount().routes['GET /api/aprs/net']).payload.bootId;
+    const b = call(mount().routes['GET /api/aprs/net']).payload.bootId;
+    expect(a).not.toBe(b);
+  });
+});

@@ -125,12 +125,16 @@ function notify() {
  * time order, a missing number is the previous number + 1. Because the
  * persisted sequence is seeded from this same walk, derived numbers never
  * collide with ones handed out later.
+ *
+ * Events another site logged in a shared incident (`foreign: true`, see
+ * annotateSharedEvents in incidentSync.js) carry that station's own numbers
+ * and are left out: they are never numbered as this station's traffic.
  * @returns {Map<string, number>}
  */
 export function messageNumbers(evts) {
   const out = new Map();
   let last = 0;
-  const ordered = (evts || []).filter((ev) => ev && MESSAGE_EVENT_TYPES.has(ev.type));
+  const ordered = (evts || []).filter((ev) => ev && !ev.foreign && MESSAGE_EVENT_TYPES.has(ev.type));
   ordered.sort((a, b) => (a.ts || 0) - (b.ts || 0));
   for (const ev of ordered) {
     const n = Number(ev.msgNo);
