@@ -11,11 +11,17 @@ const SW_SOURCE = readFileSync(resolve(process.cwd(), 'public/sw.js'), 'utf8');
 const TILE = 'https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/9/193/106';
 const ORIGIN = 'https://openhamclock.com';
 
-function loadWorker({ fetchImpl, packTiles = {}, apiCache = {}, onLine = true }) {
+function loadWorker({ fetchImpl, packTiles = {}, packDocs = {}, apiCache = {}, onLine = true, canvas = null }) {
   const listeners = {};
   const posted = [];
   const stores = {
-    'ohc-offline-packs': new Map(Object.entries(packTiles)),
+    'ohc-offline-packs': new Map([
+      ...Object.entries(packTiles),
+      ...Object.entries(packDocs).map(([k, v]) => [
+        k,
+        new Response(JSON.stringify(v), { headers: { 'Content-Type': 'application/json' } }),
+      ]),
+    ]),
   };
   const caches = {
     open: async (name) => {
@@ -46,10 +52,19 @@ function loadWorker({ fetchImpl, packTiles = {}, apiCache = {}, onLine = true })
     registration: {},
     OHC_SW_POLICY: globalThis.OHC_SW_POLICY,
   };
-  const run = new Function('self', 'importScripts', 'caches', 'fetch', SW_SOURCE);
-  run(self, () => {}, caches, fetchImpl);
+  const run = new Function(
+    'self',
+    'importScripts',
+    'caches',
+    'fetch',
+    'OffscreenCanvas',
+    'createImageBitmap',
+    SW_SOURCE,
+  );
+  run(self, () => {}, caches, fetchImpl, canvas?.OffscreenCanvas, canvas?.createImageBitmap);
 
   const dispatchFetch = async (request) => {
+    await new Promise((r) => setTimeout(r, 0)); // let routing load from the pack cache
     let responded = null;
     const waits = [];
     const event = {
@@ -161,5 +176,143 @@ describe('service worker: install precache', () => {
       '/vendor/leaflet/leaflet.css',
       '/vendor/leaflet/leaflet.js',
     ]);
+  });
+});
+
+const PACK = {
+  id: 'p1',
+  urlTemplate: 'https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}',
+  subdomains: 'abc',
+  minZoom: 6,
+  maxZoom: 12,
+};
+const usgs = (z, x, y) => `https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/${z}/${y}/${x}`;
+
+function fakeCanvas() {
+  const draws = [];
+  class OffscreenCanvas {
+    constructor(w, h) {
+      this.w = w;
+      this.h = h;
+    }
+    getContext() {
+      return { drawImage: (...args) => draws.push(args), set imageSmoothingEnabled(v) {} };
+    }
+    async convertToBlob() {
+      return new TextEncoder().encode('scaled'); // body stand-in (jsdom Blob is not undici's)
+    }
+  }
+  const createImageBitmap = async () => ({ width: 256, height: 256, close() {} });
+  return { OffscreenCanvas, createImageBitmap, draws };
+}
+
+describe('service worker: over-zoom from a pack', () => {
+  const offline = vi.fn(async () => {
+    throw new TypeError('Failed to fetch');
+  });
+
+  it('scales up the saved parent when zoomed past the pack', async () => {
+    const canvas = fakeCanvas();
+    const { dispatchFetch, posted } = loadWorker({
+      fetchImpl: offline,
+      canvas,
+      packTiles: { [usgs(12, 850, 1550)]: img('parent') },
+      packDocs: { '/__ohc-offline-packs/manifest.json': { packs: [PACK] } },
+    });
+    // z14 tile (3401, 6202) sits in z12 parent (850, 1550) at column 1, row 2 of 4
+    const res = await dispatchFetch({ url: usgs(14, 3401, 6202), destination: 'image' });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('x-ohc-overzoom')).toBe('12');
+    expect(await res.text()).toBe('scaled');
+    expect(canvas.draws[0].slice(1)).toEqual([64, 128, 64, 64, 0, 0, 256, 256]);
+    expect(posted[0].type).toBe('OHC_OFFLINE_PACK_TILE');
+  });
+
+  it('gives up beyond the over-zoom limit or without a parent', async () => {
+    const canvas = fakeCanvas();
+    const { dispatchFetch } = loadWorker({
+      fetchImpl: offline,
+      canvas,
+      packTiles: { [usgs(12, 850, 1550)]: img('parent') },
+      packDocs: { '/__ohc-offline-packs/manifest.json': { packs: [PACK] } },
+    });
+    expect((await dispatchFetch({ url: usgs(19, 850 * 128, 1550 * 128) })).status).toBe(504);
+    expect((await dispatchFetch({ url: usgs(14, 0, 0) })).status).toBe(504);
+  });
+
+  it('serves a blank 504 (not a crash) where OffscreenCanvas is missing', async () => {
+    const { dispatchFetch } = loadWorker({
+      fetchImpl: offline,
+      packTiles: { [usgs(12, 850, 1550)]: img('parent') },
+      packDocs: { '/__ohc-offline-packs/manifest.json': { packs: [PACK] } },
+    });
+    expect((await dispatchFetch({ url: usgs(13, 1700, 3100) })).status).toBe(504);
+  });
+});
+
+describe('service worker: operator tile source', () => {
+  const LAN = 'http://192.168.1.5:8080/data/osm/12/850/1550.png';
+
+  it('routes a registered source through the pack cache', async () => {
+    const fetchImpl = vi.fn(async () => {
+      throw new TypeError('Failed to fetch');
+    });
+    const { dispatchFetch } = loadWorker({
+      fetchImpl,
+      packTiles: { [LAN]: img('lan') },
+      packDocs: { '/__ohc-offline-packs/sources.json': { prefixes: ['http://192.168.1.5:8080/data/osm/'] } },
+    });
+    expect(await (await dispatchFetch({ url: LAN, destination: 'image' })).text()).toBe('lan');
+  });
+
+  it('routes the source of a saved area even after the source setting is removed', async () => {
+    const fetchImpl = vi.fn(async () => {
+      throw new TypeError('Failed to fetch');
+    });
+    const { dispatchFetch } = loadWorker({
+      fetchImpl,
+      packTiles: { [LAN]: img('lan') },
+      packDocs: {
+        '/__ohc-offline-packs/manifest.json': {
+          packs: [{ ...PACK, urlTemplate: 'http://192.168.1.5:8080/data/osm/{z}/{x}/{y}.png' }],
+        },
+      },
+    });
+    expect(await (await dispatchFetch({ url: LAN, destination: 'image' })).text()).toBe('lan');
+  });
+
+  it('leaves unregistered hosts alone', async () => {
+    const fetchImpl = vi.fn();
+    const { dispatchFetch } = loadWorker({ fetchImpl });
+    expect(await dispatchFetch({ url: 'http://10.0.0.9/tiles/1/0/0.png', destination: 'image' })).toBeUndefined();
+  });
+});
+
+describe('service worker: /vendor via CDN redirect', () => {
+  it('caches an opaque CDN copy of Leaflet and serves it offline', async () => {
+    let online = true;
+    const opaque = { type: 'opaque', ok: false, status: 0, clone: () => opaque };
+    const fetchImpl = vi.fn(async () => {
+      if (!online) throw new TypeError('Failed to fetch');
+      return opaque;
+    });
+    const { dispatchFetch, stores } = loadWorker({ fetchImpl });
+    const url = `${ORIGIN}/vendor/leaflet/leaflet.js`;
+    expect(await dispatchFetch({ url, mode: 'no-cors', destination: 'script' })).toBe(opaque);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(stores['ohc-test-app'].get(url)).toBe(opaque);
+  });
+
+  it('install falls back to a no-cors fetch when the CDN copy has no CORS headers', async () => {
+    const html = '<script src="/vendor/leaflet/leaflet.js"></script>';
+    const opaque = { type: 'opaque', ok: false, status: 0 };
+    const fetchImpl = vi.fn(async (url, init) => {
+      if (url === '/index.html') return new Response(html, { headers: { 'Content-Type': 'text/html' } });
+      if (init?.mode === 'no-cors') return opaque;
+      throw new TypeError('CORS');
+    });
+    const { dispatchInstall, stores } = loadWorker({ fetchImpl });
+    await dispatchInstall();
+    expect(stores['ohc-test-app'].get('/vendor/leaflet/leaflet.js')).toBe(opaque);
   });
 });

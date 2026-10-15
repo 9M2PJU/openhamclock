@@ -46,7 +46,16 @@
    * `offlinePack: true` styles in src/utils/config.js MAP_STYLES (a unit
    * test enforces it).
    */
-  var OFFLINE_TILE_HOSTS = ['basemap.nationalmap.gov'];
+  var OFFLINE_TILE_HOSTS = [
+    'basemap.nationalmap.gov', // USGS Topo (United States)
+    'data.geopf.fr', // IGN Plan IGN v2 (France)
+    'cyberjapandata.gsi.go.jp', // GSI standard map (Japan)
+    'cache.kartverket.no', // Kartverket topo (Norway)
+    'services.ga.gov.au', // Geoscience Australia National Base Map
+  ];
+
+  /** Deepest over-zoom: a pack tile is scaled up at most 2^6 = 64×. */
+  var MAX_OVERZOOM_LEVELS = 6;
 
   /**
    * How long a tile request may wait on the network before an offline pack
@@ -109,11 +118,12 @@
   /**
    * Classify a fetch-event request into a handling strategy.
    *
-   * @param {{url: string, method: string, mode?: string, origin: string}} req
+   * @param {{url: string, method: string, mode?: string, origin: string, extraTilePrefixes?: string[]}} req
    *   url    - absolute or origin-relative request URL
    *   method - HTTP method
    *   mode   - Request.mode ('navigate' for top-level navigations)
    *   origin - the service worker's own origin (self.location.origin)
+   *   extraTilePrefixes - URL prefixes of operator-supplied tile sources
    * @returns {'navigation'|'asset'|'api'|'tile'|'bypass'}
    *   navigation - network-first with cached-shell fallback
    *   asset      - cache-first, cache-on-fetch
@@ -130,6 +140,10 @@
     } catch (e) {
       return 'bypass';
     }
+    // Operator-supplied tile sources (their own tile server, a LAN mbtiles
+    // server) registered with the worker by URL prefix — see
+    // tileUrlPrefix(). Never matches the app's own /api/ or a navigation.
+    if (req.mode !== 'navigate' && matchesTilePrefix(u, req.extraTilePrefixes, req.origin)) return 'tile';
     if (u.origin !== req.origin) {
       // Cross-origin is left to the browser (CDNs, most tile servers), except
       // tile hosts an offline area pack can stand in for.
@@ -146,6 +160,152 @@
     }
     if (STATIC_ASSET_FILES.indexOf(p) !== -1) return 'asset';
     return 'bypass';
+  }
+
+  function matchesTilePrefix(u, prefixes, origin) {
+    if (!prefixes || !prefixes.length) return false;
+    if (u.origin === origin && u.pathname.indexOf('/api/') === 0) return false;
+    var href = u.href;
+    for (var i = 0; i < prefixes.length; i++) {
+      if (typeof prefixes[i] === 'string' && prefixes[i] && href.indexOf(prefixes[i]) === 0) return true;
+    }
+    return false;
+  }
+
+  /**
+   * The fixed part of a tile URL template, up to its first placeholder —
+   * what the worker matches requests against for a user-supplied source.
+   * Returns '' when the template has no usable fixed scheme+host part.
+   * 'https://tiles.example.net/osm/{z}/{x}/{y}.png' → 'https://tiles.example.net/osm/'
+   */
+  function tileUrlPrefix(template) {
+    var t = String(template || '');
+    var cut = t.indexOf('{');
+    var prefix = cut === -1 ? t : t.slice(0, cut);
+    var m = /^https?:\/\/[^/{}?#]+\//i.exec(prefix);
+    if (!m) return '';
+    return prefix;
+  }
+
+  /**
+   * Turn a Leaflet URL template into a parser for concrete tile URLs:
+   * returns { z, x, y } or null. {s} matches any subdomain, {r} an
+   * optional "@2x", other placeholders (e.g. {lang}) anything up to the
+   * next fixed character.
+   */
+  function parseTileUrl(template, url) {
+    if (!template || !url) return null;
+    var order = [];
+    var re = '';
+    var parts = String(template).split(/(\{ *[\w_-]+ *\})/);
+    for (var i = 0; i < parts.length; i++) {
+      var part = parts[i];
+      var ph = /^\{ *([\w_-]+) *\}$/.exec(part);
+      if (!ph) {
+        re += part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      } else if (ph[1] === 'z' || ph[1] === 'x' || ph[1] === 'y') {
+        order.push(ph[1]);
+        re += '(\\d+)';
+      } else if (ph[1] === 'r') {
+        re += '(?:@2x)?';
+      } else {
+        re += '[^/?&#]*';
+      }
+    }
+    var m;
+    try {
+      m = new RegExp('^' + re + '$').exec(url);
+    } catch (e) {
+      return null;
+    }
+    if (!m || order.length !== 3) return null;
+    var out = {};
+    for (var j = 0; j < order.length; j++) out[order[j]] = parseInt(m[j + 1], 10);
+    return out;
+  }
+
+  /**
+   * Every fixed URL prefix a template can produce: one per subdomain when
+   * the host contains {s} ('https://{s}.t.example/{z}/…' with 'abc' gives
+   * three), otherwise just tileUrlPrefix(template).
+   */
+  function tileUrlPrefixes(template, subdomains) {
+    var t = String(template || '');
+    if (!/\{ *s *\}/.test(t)) {
+      var one = tileUrlPrefix(t);
+      return one ? [one] : [];
+    }
+    var list = subdomains == null ? 'abc' : subdomains;
+    if (typeof list === 'string') list = list.split('');
+    var out = [];
+    for (var i = 0; i < list.length; i++) {
+      var pre = tileUrlPrefix(t.replace(/\{ *s *\}/g, list[i]));
+      if (pre && out.indexOf(pre) === -1) out.push(pre);
+    }
+    return out;
+  }
+
+  /**
+   * Subdomain Leaflet picks for a tile — the same formula as
+   * L.TileLayer._getSubdomain — so pack URLs match the map's requests
+   * byte-for-byte.
+   */
+  function subdomainFor(x, y, subdomains) {
+    var list = subdomains == null ? 'abc' : subdomains;
+    if (typeof list === 'string') list = list.split('');
+    if (!list || list.length === 0) return '';
+    return list[Math.abs(x + y) % list.length];
+  }
+
+  /**
+   * Fill a Leaflet URL template ({s} {z} {x} {y} {r} {lang}) for one tile.
+   * Unknown {placeholders} are left as-is so a mistake shows up in the URL
+   * rather than silently fetching the wrong tile.
+   */
+  function buildTileUrl(template, tile, opts) {
+    if (!template || !tile) return '';
+    var o = opts || {};
+    var values = {
+      s: subdomainFor(tile.x, tile.y, o.subdomains),
+      z: tile.z,
+      x: tile.x,
+      y: tile.y,
+      r: o.retina ? '@2x' : '',
+      lang: o.lang || 'en',
+    };
+    return String(template).replace(/\{ *([\w_-]+) *\}/g, function (m, key) {
+      return Object.prototype.hasOwnProperty.call(values, key) ? String(values[key]) : m;
+    });
+  }
+
+  /**
+   * Over-zoom: where tile z/x/y sits inside its ancestor `dz` levels up.
+   * Returns { tile: {z,x,y}, sx, sy, size } — the source square (in 256 px
+   * tile pixels) of the ancestor to scale up to a full tile — or null.
+   */
+  function overzoomSource(tile, dz, tileSize) {
+    var ts = tileSize || 256;
+    if (!tile || !(dz >= 1) || dz > MAX_OVERZOOM_LEVELS || tile.z - dz < 0) return null;
+    var f = Math.pow(2, dz);
+    var size = ts / f;
+    return {
+      tile: { z: tile.z - dz, x: Math.floor(tile.x / f), y: Math.floor(tile.y / f) },
+      sx: (tile.x % f) * size,
+      sy: (tile.y % f) * size,
+      size: size,
+    };
+  }
+
+  /**
+   * Whether a same-origin /vendor/* response (self-hosted Leaflet, fonts —
+   * or the CDN copy the server redirects to when it has none) may be
+   * cached: a same-origin answer, a CORS answer from the CDN, or an opaque
+   * one (a no-cors <script>/<link> following the redirect). Errors never.
+   */
+  function isCacheableVendorResponse(res) {
+    if (!res) return false;
+    if (res.type === 'opaque') return true;
+    return !!res.ok && res.status === 200 && (res.type === 'basic' || res.type === 'cors' || res.type === 'default');
   }
 
   /**
@@ -177,6 +337,14 @@
     PACK_TILE_NETWORK_TIMEOUT_MS: PACK_TILE_NETWORK_TIMEOUT_MS,
     isPersistentCacheName: isPersistentCacheName,
     isOfflineTileHost: isOfflineTileHost,
+    MAX_OVERZOOM_LEVELS: MAX_OVERZOOM_LEVELS,
+    tileUrlPrefix: tileUrlPrefix,
+    tileUrlPrefixes: tileUrlPrefixes,
+    parseTileUrl: parseTileUrl,
+    subdomainFor: subdomainFor,
+    buildTileUrl: buildTileUrl,
+    overzoomSource: overzoomSource,
+    isCacheableVendorResponse: isCacheableVendorResponse,
     normalizeVersion: normalizeVersion,
     cacheNames: cacheNames,
     staleCacheNames: staleCacheNames,
