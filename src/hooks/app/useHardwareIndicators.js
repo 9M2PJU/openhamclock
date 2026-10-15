@@ -14,7 +14,9 @@
  *
  * Lightning reports carry a stable per-browser `displayId`, so the bridge can
  * hold a claim per display (engaged while ANY display wants protection) and
- * keep a quiet display's claim for its `lightningAllClearMin`.
+ * keep a quiet display's claim for its `lightningAllClearMin`; `lightningGuard`
+ * (radii, all-clear, hysteresis, repeat alerts, relay level, location) keeps
+ * the bridge's headless guard in step with this display's settings.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { buildRigUrl } from '../../contexts/RigContext.jsx';
@@ -89,6 +91,8 @@ export function buildIndicatorPayload(sat, countdown, lightning, displayId) {
     if (Number.isFinite(lightning.allClearMin)) payload.lightningAllClearMin = lightning.allClearMin;
     if (lightning.override === 'on' || lightning.override === 'off') payload.lightningOverride = lightning.override;
     if (displayId) payload.displayId = displayId;
+    // Settings + location for the bridge's headless guard (it applies changes)
+    if (lightning.guard && typeof lightning.guard === 'object') payload.lightningGuard = lightning.guard;
   }
   return payload;
 }
@@ -119,12 +123,19 @@ export default function useHardwareIndicators({ satellites, rigConfig, lightning
   const lightningRelay = lightning?.relay;
   const lightningAllClear = lightning?.allClearMin;
   const lightningOverride = lightning?.override;
+  const lightningGuard = lightning?.guard || null;
   const payload = useMemo(
     () =>
       buildIndicatorPayload(
         sat,
         countdown,
-        { level: lightningLevel, relay: lightningRelay, allClearMin: lightningAllClear, override: lightningOverride },
+        {
+          level: lightningLevel,
+          relay: lightningRelay,
+          allClearMin: lightningAllClear,
+          override: lightningOverride,
+          guard: lightningGuard,
+        },
         displayId,
       ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -137,13 +148,14 @@ export default function useHardwareIndicators({ satellites, rigConfig, lightning
       lightningRelay,
       lightningAllClear,
       lightningOverride,
+      lightningGuard,
       displayId,
     ],
   );
   const ackRef = useRef(onLightningAck);
   ackRef.current = onLightningAck;
   // Coarse key: AOS/LOS seconds change every tick; only re-push on meaningful changes
-  const key = `${payload.satVisible}|${payload.countdown}|${payload.satAosInSec != null && payload.satAosInSec <= 90}|${payload.satLosInSec != null && payload.satLosInSec <= 90}|${payload.lightning ?? ''}|${payload.lightningRelay ?? ''}|${payload.lightningAllClearMin ?? ''}|${payload.lightningOverride ?? ''}`;
+  const key = `${payload.satVisible}|${payload.countdown}|${payload.satAosInSec != null && payload.satAosInSec <= 90}|${payload.satLosInSec != null && payload.satLosInSec <= 90}|${payload.lightning ?? ''}|${payload.lightningRelay ?? ''}|${payload.lightningAllClearMin ?? ''}|${payload.lightningOverride ?? ''}|${payload.lightningGuard ? JSON.stringify(payload.lightningGuard) : ''}`;
 
   useEffect(() => {
     if (!enabled) return undefined;

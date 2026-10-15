@@ -44,7 +44,7 @@ vi.mock('../utils/push.js', () => ({
 
 import useLightningGuard from '../hooks/useLightningGuard.js';
 import { LightningGuardIndicator, LightningGuardBanner } from './LightningGuardIndicator.jsx';
-import { LightningGuardSettings } from './LightningGuardSettings.jsx';
+import { LightningGuardSettings, bridgeNeedsUpdate } from './LightningGuardSettings.jsx';
 import { getAlertSettings, saveAlertSettings } from '../utils/audioAlerts.js';
 
 const DE = { lat: 40.015, lon: -105.2705 };
@@ -161,5 +161,14 @@ describe('lightning guard UI', () => {
     });
     expect(!!getAlertSettings().lightningGuard.channels?.push).toBe(false);
     expect(container.textContent).toContain('Could not subscribe this browser to push (no-permission)');
+  });
+
+  it('recognises a Rig Bridge that predates the multi-display relay rules', () => {
+    expect(bridgeNeedsUpdate(null)).toBe(true); // no GPIO status at all
+    expect(bridgeNeedsUpdate({ enabled: false, running: false })).toBe(true); // first lightning release
+    expect(bridgeNeedsUpdate({ features: ['lightning-relay', 'lightning-arbiter'] })).toBe(true);
+    expect(bridgeNeedsUpdate({ features: ['lightning-relay', 'lightning-arbiter', 'lightning-guard-settings'] })).toBe(
+      false,
+    );
   });
 });

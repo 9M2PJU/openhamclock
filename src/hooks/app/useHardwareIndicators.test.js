@@ -57,6 +57,12 @@ describe('buildIndicatorPayload', () => {
     expect(buildIndicatorPayload(sat, 'off', { level: 'warn', relay: false, override: 'auto' })).not.toHaveProperty(
       'lightningOverride',
     );
+    // Guard settings + location for the bridge's headless guard ride along
+    const guard = { lat: 45, lon: 7, warnKm: 50, alarmKm: 25, allClearMin: 30, relayOn: 'alarm' };
+    expect(buildIndicatorPayload(sat, 'off', { level: 'clear', relay: false, guard }).lightningGuard).toEqual(guard);
+    expect(buildIndicatorPayload(sat, 'off', { level: 'clear', relay: null, guard })).not.toHaveProperty(
+      'lightningGuard',
+    );
     // Relay switched off here: one explicit release, without a level
     expect(buildIndicatorPayload(sat, 'off', { level: 'off', relay: false })).toMatchObject({ lightningRelay: false });
     expect(buildIndicatorPayload(sat, 'off', { level: 'off', relay: false })).not.toHaveProperty('lightning');

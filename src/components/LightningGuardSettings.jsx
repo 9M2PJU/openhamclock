@@ -445,7 +445,18 @@ export function LightningGuardSettings({ alertSettings, updateSettings, imperial
 }
 
 /** Settings → Rig Bridge: GPIO line for the lightning relay. */
-export function LightningRelayPinSettings({ rigEnabled, rigHost, rigPort, rigApiToken, deLat, deLon }) {
+/**
+ * Does this Rig Bridge know the multi-display relay rules and take the guard
+ * settings from the indicators? Older bridges have no `features` list in
+ * /api/gpio/status (or no GPIO plugin at all).
+ */
+export function bridgeNeedsUpdate(gpioStatus) {
+  if (!gpioStatus) return true;
+  const f = Array.isArray(gpioStatus.features) ? gpioStatus.features : [];
+  return !f.includes('lightning-arbiter') || !f.includes('lightning-guard-settings');
+}
+
+export function LightningRelayPinSettings({ rigEnabled, rigHost, rigPort, rigApiToken }) {
   const { t } = useTranslation();
   const [pin, setPin] = useState('');
   const [failSafe, setFailSafe] = useState(false);
@@ -454,15 +465,25 @@ export function LightningRelayPinSettings({ rigEnabled, rigHost, rigPort, rigApi
   const [loadState, setLoadState] = useState(null); // null | 'ok' | 'error'
   const [pushState, setPushState] = useState(null); // null | 'pushing' | 'ok' | 'error'
   const [gpioStatus, setGpioStatus] = useState(null);
+  const [bridgeVersion, setBridgeVersion] = useState(null);
   const bridgeUrl = buildRigUrl({ host: rigHost, port: rigPort });
   const headers = { 'Content-Type': 'application/json', ...(rigApiToken ? { 'X-RigBridge-Token': rigApiToken } : {}) };
 
   const load = async () => {
     try {
-      const [cfgRes, stRes] = await Promise.all([
+      const [cfgRes, stRes, rootRes] = await Promise.all([
         fetch(`${bridgeUrl}/api/config`, { headers, signal: AbortSignal.timeout(4000) }),
         fetch(`${bridgeUrl}/api/gpio/status`, { headers, signal: AbortSignal.timeout(4000) }).catch(() => null),
+        fetch(`${bridgeUrl}/`, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(4000) }).catch(
+          () => null,
+        ),
       ]);
+      try {
+        const root = rootRes && rootRes.ok ? await rootRes.json() : null;
+        setBridgeVersion(typeof root?.version === 'string' ? root.version : null);
+      } catch {
+        setBridgeVersion(null);
+      }
       if (!cfgRes.ok) throw new Error(`HTTP ${cfgRes.status}`);
       const cfg = await cfgRes.json();
       const g = cfg?.gpio || {};
@@ -486,9 +507,6 @@ export function LightningRelayPinSettings({ rigEnabled, rigHost, rigPort, rigApi
     setPushState('pushing');
     const raw = pin.trim();
     const pinValue = raw === '' ? -1 : /^\d+$/.test(raw) ? parseInt(raw, 10) : raw;
-    // The headless guard runs with this display's guard settings and location
-    const guard = normalizeGuardSettings(getAlertSettings().lightningGuard);
-    const hasDe = Number.isFinite(deLat) && Number.isFinite(deLon);
     try {
       const res = await fetch(`${bridgeUrl}/api/config`, {
         method: 'POST',
@@ -498,17 +516,9 @@ export function LightningRelayPinSettings({ rigEnabled, rigHost, rigPort, rigApi
             pins: { lightningOut: pinValue },
             lightningFailSafe: failSafe,
             lightningHoldWhenStale: hold,
-            lightningHeadless: {
-              enabled: headless && hasDe,
-              lat: hasDe ? Math.round(deLat * 1000) / 1000 : '',
-              lon: hasDe ? Math.round(deLon * 1000) / 1000 : '',
-              warnKm: guard.warnKm,
-              alarmKm: guard.alarmKm,
-              allClearMin: guard.allClearMin,
-              minStrikes: guard.minStrikes,
-              hysteresisPct: guard.hysteresisPct,
-              relayOn: guard.relay.on,
-            },
+            // Location and guard settings reach the headless guard with the
+            // indicators every display sends; only the switch is set here.
+            lightningHeadless: { enabled: headless },
           },
         }),
       });
@@ -613,7 +623,7 @@ export function LightningRelayPinSettings({ rigEnabled, rigHost, rigPort, rigApi
           <div style={noteStyle}>
             {t('lightningGuard.pin.headlessHint', {
               defaultValue:
-                "Rig Bridge then watches Blitzortung itself with this station's location and the radii, all-clear time and relay setting from Settings → Alerts → Lightning guard (sent with Push to Rig Bridge — push again after changing them). It counts as one more display: the relay is engaged while it or any open display wants it.",
+                "Rig Bridge then watches Blitzortung itself. Your station's location and the radii, all-clear time, hysteresis, repeat-alert and relay settings from Settings → Alerts → Lightning guard reach it with the indicators this display sends and are kept by the bridge — no need to push again after changing them. It counts as one more display: the relay is engaged while it or any open display wants it.",
             })}
           </div>
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
@@ -634,6 +644,15 @@ export function LightningRelayPinSettings({ rigEnabled, rigHost, rigPort, rigApi
               </span>
             )}
           </div>
+          {loadState === 'ok' && bridgeNeedsUpdate(gpioStatus) && (
+            <div role="status" style={{ ...warnBoxStyle, borderColor: 'var(--accent-amber)' }}>
+              {t('lightningGuard.pin.updateBridge', {
+                defaultValue:
+                  'Update Rig Bridge: this bridge (version {{version}}) does not have the multi-display relay rules \u2014 it follows only the most recent display, does not hold the relay itself when a display goes quiet, and its headless guard does not pick up your guard settings. Download the current Rig Bridge from this tab, or run the updater.',
+                version: bridgeVersion || '?',
+              })}
+            </div>
+          )}
           {loadState === 'ok' && (
             <div style={noteStyle}>
               {running

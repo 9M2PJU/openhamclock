@@ -275,4 +275,31 @@ describe('useLightningGuard', () => {
     });
     expect(spies.setLightningPushPrefs).toHaveBeenLastCalledWith(null);
   });
+
+  it("exposes the guard settings and location for the bridge's headless guard", () => {
+    configure({
+      enabled: true,
+      alarmKm: 15,
+      hysteresisPct: 5,
+      repeatCloser: false,
+      relay: { enabled: true, on: 'warn' },
+    });
+    mount();
+    expect(latest.guard).toEqual({
+      lat: 51.5,
+      lon: -0.12,
+      warnKm: 50,
+      alarmKm: 15,
+      allClearMin: 30,
+      minStrikes: 1,
+      hysteresisPct: 5,
+      repeatCloser: false,
+      relayOn: 'warn',
+    });
+    const first = latest.guard;
+    act(() => vi.advanceTimersByTime(20000));
+    expect(latest.guard).toBe(first); // stable between renders (no needless re-posts)
+    configure({ enabled: false });
+    expect(latest.guard).toBeNull();
+  });
 });

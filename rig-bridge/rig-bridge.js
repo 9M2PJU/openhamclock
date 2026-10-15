@@ -21,7 +21,7 @@
 
 const VERSION = '2.2.2';
 
-const { config, loadConfig, applyCliArgs } = require('./core/config');
+const { config, loadConfig, applyCliArgs, saveConfig } = require('./core/config');
 const {
   updateState,
   state,
@@ -81,6 +81,7 @@ const registry = new PluginRegistry(config, {
   pluginBus,
   onStateChange,
   removeStateChangeListener,
+  saveConfig, // plugins that update their own settings at runtime (GPIO lightning guard)
 });
 registry.registerBuiltins();
 

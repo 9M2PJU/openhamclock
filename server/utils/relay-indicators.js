@@ -26,6 +26,16 @@ function sanitizeRelayIndicators(p) {
   }
   if (['auto', 'on', 'off'].includes(p.lightningOverride)) out.lightningOverride = p.lightningOverride;
   if (typeof p.displayId === 'string' && /^[A-Za-z0-9_-]{1,40}$/.test(p.displayId)) out.displayId = p.displayId;
+  const g = p.lightningGuard;
+  if (g && typeof g === 'object' && !Array.isArray(g)) {
+    const guard = {};
+    for (const k of ['lat', 'lon', 'warnKm', 'alarmKm', 'allClearMin', 'minStrikes', 'hysteresisPct']) {
+      if (Number.isFinite(g[k])) guard[k] = g[k];
+    }
+    if (typeof g.repeatCloser === 'boolean') guard.repeatCloser = g.repeatCloser;
+    if (g.relayOn === 'alarm' || g.relayOn === 'warn') guard.relayOn = g.relayOn;
+    out.lightningGuard = guard;
+  }
   return out;
 }
 

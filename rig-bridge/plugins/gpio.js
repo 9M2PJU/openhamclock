@@ -324,7 +324,7 @@ const descriptor = {
 
   registerRoutes(app) {
     app.get('/api/gpio/status', (req, res) => {
-      if (!_currentInstance) return res.json({ enabled: false, running: false });
+      if (!_currentInstance) return res.json({ enabled: false, running: false, features: logic.GPIO_FEATURES });
       res.json(_currentInstance.getStatus());
     });
     app.post('/api/gpio/mock/input', (req, res) => {
@@ -353,7 +353,7 @@ const descriptor = {
   },
 
   create(config, services = {}) {
-    const { updateState, state, pluginBus, onStateChange, removeStateChangeListener } = services;
+    const { updateState, state, pluginBus, onStateChange, removeStateChangeListener, saveConfig } = services;
     const cfg = () => config.gpio || {};
     const log = (...a) => console.log('[GPIO]', ...a);
     const vlog = (...a) => cfg().verbose && console.log('[GPIO]', ...a);
@@ -481,6 +481,7 @@ const descriptor = {
       const next = logic.sanitizeIndicators(body);
       if (!next.alarm) alarmSilenced = false;
       const now = Date.now();
+      if (next.lightningRelay !== null && next.lightningGuard) applyReportedGuardSettings(next.lightningGuard);
       if (next.lightningRelay !== null) {
         arbiter.report(
           next.displayId ? `display:${next.displayId}` : 'display',
@@ -497,12 +498,31 @@ const descriptor = {
       indicatorsAt = now;
     };
 
+    /**
+     * A display that drives the relay sends its guard settings and location;
+     * the headless guard follows them (the most recent report wins) and they
+     * are saved, so a restart without any browser keeps them. `enabled` stays
+     * a bridge-side choice.
+     */
+    function applyReportedGuardSettings(reported) {
+      const g = config.gpio || (config.gpio = {});
+      const next = logic.applyGuardSettings(g.lightningHeadless, reported);
+      if (!next) return;
+      g.lightningHeadless = next;
+      vlog(`Lightning guard settings from a display: ${JSON.stringify(reported)}`);
+      if (headless) headless.setSettings(next);
+      if (typeof saveConfig === 'function') {
+        try {
+          saveConfig();
+        } catch (e) {}
+      }
+    }
+
     // ── Headless lightning guard (optional; no browser needed) ─────────
     function startHeadless() {
-      const h = cfg().lightningHeadless || {};
-      if (!h.enabled) return;
+      if (!(cfg().lightningHeadless || {}).enabled) return;
       headless = new HeadlessLightningGuard({
-        settings: h,
+        settings: cfg().lightningHeadless,
         log,
         WebSocketImpl: services.lightningWebSocket, // tests inject a fake; default: the ws package
         onStatus: (st) => {
@@ -593,6 +613,7 @@ const descriptor = {
 
     function getStatus() {
       return {
+        features: logic.GPIO_FEATURES,
         enabled: !!cfg().enabled,
         running,
         backend: backend ? backend.name : null,
