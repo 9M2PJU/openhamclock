@@ -304,9 +304,11 @@ const DEFAULT_CONFIG = {
     maxTxSeconds: 600, // transmit watchdog — abort and return to RX after this
     callsign: '', // station call written into the flmsg header of sent forms
     flmsgEnabled: true, // watch the flmsg folders for received forms
-    flmsgDirs: '', // '' = ~/NBEMS.files/ICS/messages and ~/NBEMS.files/WRAP/recv; ';'-separated list otherwise
+    flmsgDirs: '', // '' = ~/NBEMS.files/WRAP/recv and ~/NBEMS.files/ICS/messages; ';'-separated list otherwise
     flmsgPollInterval: 15, // seconds between folder scans (fs.watch also reacts immediately)
     flmsgMaxAgeHours: 72, // on start-up, forms older than this are not reported
+    flmsgIncludeLocal: false, // also forward this station's drafts and sent forms (ICS/messages)
+    flmsgDateFormat: 'auto', // ambiguous form dates: auto (flmsg's setting, else locale) | mdy | dmy | ymd | ydm
     serverForward: true, // POST forms to the OpenHamClock server
     ohcUrl: 'http://localhost:3000', // OpenHamClock server URL
     verbose: false,

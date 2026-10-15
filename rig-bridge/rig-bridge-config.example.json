@@ -92,6 +92,8 @@
     "flmsgDirs": "",
     "flmsgPollInterval": 15,
     "flmsgMaxAgeHours": 72,
+    "flmsgIncludeLocal": false,
+    "flmsgDateFormat": "auto",
     "serverForward": true,
     "ohcUrl": "http://localhost:3000",
     "verbose": false
