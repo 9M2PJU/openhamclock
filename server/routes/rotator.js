@@ -157,6 +157,10 @@ module.exports = function (app, ctx) {
     );
   }
 
+  // Expose the control functions to sibling routes (the remote-control API
+  // forwards POST /api/control/rotator here) without a loopback HTTP hop.
+  ctx.rotatorControl = { setAzimuth, stop: stopRotator, enabled: ROTATOR_PROVIDER !== 'none' };
+
   // --- REST API ---
   // These are now synchronous reads of cached state — zero async work per request.
 

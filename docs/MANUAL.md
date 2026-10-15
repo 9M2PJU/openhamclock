@@ -33,6 +33,12 @@ Features tagged are already merged and will ship in the next monthly drop — yo
 - [Offline mode (PWA)](#offline-mode-pwa)
 - [Layouts, themes, and profiles](#layouts-themes-and-profiles)
 - [Languages](#languages)
+- [Remote control and kiosk](#remote-control-and-kiosk)
+  - [Remote control API and phone remote](#remote-control-api-and-phone-remote)
+  - [Kiosk lock](#kiosk-lock)
+  - [Demo mode](#demo-mode)
+  - [Grayscale display](#grayscale-display)
+  - [Rotating titles](#rotating-titles)
 - [Settings reference](#settings-reference)
 - [Hosted site vs self-hosted](#hosted-site-vs-self-hosted)
 
@@ -696,6 +702,70 @@ The interface ships in **16 languages**: English, Français, Español, Català, 
 Want to add or improve one? See the [translation guide in CONTRIBUTING.md](../CONTRIBUTING.md#translations) — partial translations are welcome.
 
 ---
+
+## Remote control and kiosk
+
+Everything in this chapter is aimed at a display you walk up to rather than
+sit at: a shack monitor, a club-room TV, a hamfest booth.
+
+### Remote control API and phone remote
+
+Turn on **Settings → Station → Remote control** (on by default on self-hosted
+and Pi installs, off on the hosted site) and the display listens for
+commands from the server's `/api/control` API — set DE/DX, switch layout and
+theme, toggle map layers, pick a satellite, shift the clock, drive the
+stopwatch, point the rotator, grab a screenshot. The full command table with
+`curl` examples is in [docs/API.md → Remote control API](API.md#remote-control-api);
+the names mirror HamClock's `set_*` commands.
+
+Each browser has a **display id** (shown in that section, with a **New id**
+button); commands address it with `?target=<id>`. On a local install you can
+leave the target off and every display on that server follows. The section
+also shows a **QR code**: scan it with a phone on the same network to open
+the **phone remote** at `/remote?target=<id>` — big touch buttons for DX by
+callsign or grid, layout, theme, projection and basemap, common layers,
+tracked satellites, docked panels, time shift (±10 min / 1 h / 1 day and
+"Now"), alarm, stopwatch and countdown, and rig tuning through the Rig
+Bridge cloud relay when this display uses one. If the server sets
+`API_WRITE_KEY`, paste it in the remote page (or add `&key=` to the URL).
+
+A screenshot of the display is available at `/api/control/capture.png`. In
+the desktop app it is pixel-perfect; in a browser it is a best-effort
+composite of the map canvases (text panels are not rendered).
+
+### Kiosk lock
+
+**Settings → Station → Kiosk lock** sets a 4–8 digit PIN (stored hashed in
+this browser only). Press **Lock now**, or tap the padlock in the header,
+and the display stops opening Settings, changing layouts (the dockable
+layout lock is forced on) and opening the command palette — each asks for
+the PIN on a touch keypad instead. The padlock in the header shows the state
+and unlocks. Kiosk launch scripts can add `?lock=1` to the URL to start
+locked; `?lockpin=NNNN` sets the PIN first (both are stripped from the
+address bar). `scripts/setup-pi.sh --kiosk --lock-pin=1234` bakes this into
+the Pi kiosk launcher.
+
+### Demo mode
+
+**Settings → Display → Demo mode** makes a random harmless change every
+30 seconds — adds or focuses a panel (dockable layout), toggles a map layer
+such as the gray line or the grid, picks a DX from recent cluster spots, or
+rotates the basemap. A running-man indicator appears in the header. It is
+never saved: reloading the page turns it off, exactly like HamClock.
+
+### Grayscale display
+
+**Settings → Display → Grayscale** desaturates either the map only or the
+whole display (`filter: grayscale(1)`), for monochrome screens, projectors
+or a calmer shack display.
+
+### Rotating titles
+
+**Settings → Station → Callsign box titles** takes up to six titles separated
+by `;` (for example `Field Day 2026; W1AW; Welcome!`). The callsign box in
+the header shows them in turn, ten seconds each; leave the field empty to
+show the callsign. The remote `title` command sets a session-only title (with
+optional colours) without touching the saved setting.
 
 ## Settings reference
 

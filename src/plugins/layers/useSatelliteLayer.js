@@ -47,6 +47,17 @@ export const useLayer = ({ map, enabled, satellites, setSatellites, opacity, con
     sessionStorage.setItem('selected_satellites', JSON.stringify(selectedSats));
   }, [selectedSats]);
 
+  // Remote control: `ohc:select-satellite` {names: string[]} replaces the
+  // selection (POST /api/control/satellite; [] = none).
+  useEffect(() => {
+    const onSelect = (e) => {
+      const names = Array.isArray(e.detail?.names) ? e.detail.names.filter((n) => typeof n === 'string') : [];
+      setSelectedSats(names);
+    };
+    window.addEventListener('ohc:select-satellite', onSelect);
+    return () => window.removeEventListener('ohc:select-satellite', onSelect);
+  }, []);
+
   // Helper to add/remove satellites from the active view
   const toggleSatellite = (name) => {
     setSelectedSats((prev) => (prev.includes(name) ? prev.filter((n) => n !== name) : [...prev, name]));

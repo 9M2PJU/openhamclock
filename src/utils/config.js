@@ -70,6 +70,9 @@ export const DEFAULT_CONFIG = {
   customDxCluster: { enabled: false, host: '', port: 7300 },
   udpDxCluster: { host: '', port: 12060 },
   wsjtxRelayMulticast: { enabled: false, address: '224.0.0.1' },
+  remoteControl: { enabled: null }, // null = auto (on for local installs, off on the hosted site) — docs/API.md
+  callsignTitles: '', // up to six ';'-separated titles rotating in the callsign box (HamClock set_title)
+  grayscale: 'off', // 'off' | 'map' | 'all' — filter: grayscale(1) on the map or the whole display
 };
 
 // Cache for server config

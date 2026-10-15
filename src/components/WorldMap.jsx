@@ -828,6 +828,26 @@ export const WorldMap = ({
     }
   });
 
+  // Remote control / demo mode: `ohc:set-mapview` {projection?, basemap?, night?}
+  // (hooks/app/useRemoteControl.js, useDemoMode.js). Same setters the on-map
+  // buttons use, so persistence and fallbacks behave identically.
+  useEffect(() => {
+    const onSetMapView = (e) => {
+      const d = e.detail || {};
+      if (d.projection && ['mercator', 'azimuthal', 'globe3d'].includes(d.projection)) {
+        projectionPersistBlockedRef.current = false;
+        setMapProjection(d.projection);
+      }
+      if (d.basemap && MAP_STYLES[d.basemap] && !MAP_STYLES[d.basemap].legacy) setMapStyle(d.basemap);
+      if (typeof d.night === 'boolean') {
+        const next = d.night ? parseInt(localStorage.getItem('ohc_nightDarkness')) || 60 : 0;
+        setNightDarkness(next);
+      }
+    };
+    window.addEventListener('ohc:set-mapview', onSetMapView);
+    return () => window.removeEventListener('ohc:set-mapview', onSetMapView);
+  }, []);
+
   const getGibsUrl = (days) => {
     const date = new Date(Date.now() - (days * 24 + 12) * 60 * 60 * 1000);
     const dateStr = date.toISOString().split('T')[0];
@@ -2584,7 +2604,7 @@ export const WorldMap = ({
   );
 
   return (
-    <div style={{ position: 'relative', height: '100%', minHeight: '200px' }}>
+    <div data-map-surface="" style={{ position: 'relative', height: '100%', minHeight: '200px' }}>
       {/* Azimuthal equidistant projection (canvas-based) */}
       {isAzimuthal && (
         <AzimuthalErrorBoundary

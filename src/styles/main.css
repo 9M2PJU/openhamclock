@@ -1832,3 +1832,15 @@ pre,
   animation: none;
   text-shadow: none;
 }
+
+/* Grayscale display (Settings → Display → Grayscale; App.jsx sets the attribute).
+   'all' desaturates the whole app; 'map' only the map surfaces. */
+html[data-grayscale='all'] #main-content {
+  filter: grayscale(1);
+}
+html[data-grayscale='map'] .leaflet-container,
+html[data-grayscale='map'] .globe3d-container,
+html[data-grayscale='map'] canvas.globe3d,
+html[data-grayscale='map'] [data-map-surface] {
+  filter: grayscale(1);
+}

@@ -63,6 +63,8 @@ const SettingsTabIcon = ({ tab }) => {
 import HelpTab from './HelpTab.jsx';
 import HelpLink from './HelpLink.jsx';
 import WeatherSourceCard from './WeatherSourceCard.jsx';
+import RemoteControlSettings from './RemoteControlSettings.jsx';
+import DisplayExtrasSettings from './DisplayExtrasSettings.jsx';
 
 export const SettingsPanel = ({
   isOpen,
@@ -111,6 +113,10 @@ export const SettingsPanel = ({
   const [sceneRotation, setSceneRotation] = useState(
     config?.sceneRotation || { enabled: false, intervalSec: 60, layouts: [] },
   );
+  // Remote control / rotating titles / grayscale (docs/MANUAL.md → Remote control and kiosk)
+  const [remoteEnabled, setRemoteEnabled] = useState(config?.remoteControl?.enabled ?? null);
+  const [callsignTitles, setCallsignTitles] = useState(config?.callsignTitles || '');
+  const [grayscale, setGrayscale] = useState(config?.grayscale || 'off');
   const [distUnits, setDistUnits] = useState(config?.allUnits?.dist || config?.units || 'imperial');
   const [tempUnits, setTempUnits] = useState(config?.allUnits?.temp || config?.units || 'imperial');
   const [pressUnits, setPressUnits] = useState(config?.allUnits?.press || config?.units || 'imperial');
@@ -432,6 +438,9 @@ export const SettingsPanel = ({
       setLayout(config.layout || 'modern');
       setSceneRotation(config.sceneRotation || { enabled: false, intervalSec: 60, layouts: [] });
       setIdleClock(config.idleClock || { enabled: false, minutes: 10 });
+      setRemoteEnabled(config.remoteControl?.enabled ?? null);
+      setCallsignTitles(config.callsignTitles || '');
+      setGrayscale(config.grayscale || 'off');
       setMouseZoom(config.mouseZoom || 50);
       setTimezone(config.timezone || '');
       setDxClusterSource(config.dxClusterSource || 'dxspider-proxy');
@@ -710,6 +719,9 @@ export const SettingsPanel = ({
       displaySchedule,
       sceneRotation,
       idleClock,
+      remoteControl: { ...(config.remoteControl || {}), enabled: remoteEnabled },
+      callsignTitles,
+      grayscale,
       // units,
       allUnits: { dist: distUnits, temp: tempUnits, press: pressUnits },
       // Spread the existing propagation block: this panel only edits mode and
@@ -2830,6 +2842,14 @@ export const SettingsPanel = ({
                   ))}
                 </div>
               </div>
+
+              <RemoteControlSettings
+                remoteEnabled={remoteEnabled}
+                onRemoteEnabledChange={setRemoteEnabled}
+                callsignTitles={callsignTitles}
+                onCallsignTitlesChange={setCallsignTitles}
+                isLocalInstall={isLocalInstall}
+              />
             </>
           )}
         </div>
@@ -4627,6 +4647,8 @@ export const SettingsPanel = ({
                   0 8 O 1 l I — 14.074 MHz — W1AW/0 K8O
                 </div>
               </div>
+
+              <DisplayExtrasSettings grayscale={grayscale} onGrayscaleChange={setGrayscale} />
             </div>
           )}
         </div>

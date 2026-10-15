@@ -151,6 +151,7 @@ echo -e "${NC}"
 KIOSK_MODE=false
 SERVER_MODE=false
 SESSION_TYPE_OVERRIDE=""
+LOCK_PIN=""
 
 while [[ "$#" -gt 0 ]]; do
     case $1 in
@@ -161,6 +162,11 @@ while [[ "$#" -gt 0 ]]; do
             SESSION_TYPE_OVERRIDE="$2"
             shift
             ;;
+        --lock-pin=*) LOCK_PIN="${1#*=}" ;;
+        --lock-pin)
+            LOCK_PIN="$2"
+            shift
+            ;;
         --help)
             echo "Usage: ./setup-pi.sh [OPTIONS]"
             echo ""
@@ -169,6 +175,8 @@ while [[ "$#" -gt 0 ]]; do
             echo "  --server                 Install as headless server only"
             echo "  --session-type=TYPE      Force kiosk display server: auto|x11|wayland"
             echo "                           (default: auto — detected from OS release)"
+            echo "  --lock-pin=NNNN          Kiosk lock: set a 4-8 digit PIN and start locked"
+            echo "                           (Settings, layout and palette then need the PIN)"
             echo "  --help                   Show this help message"
             exit 0
             ;;
@@ -176,6 +184,17 @@ while [[ "$#" -gt 0 ]]; do
     esac
     shift
 done
+
+# Validate --lock-pin argument (4-8 digits). Baked into the kiosk URL as
+# ?lock=1&lockpin=NNNN; the app stores the PIN hashed and strips the params.
+if [ -n "$LOCK_PIN" ] && ! [[ "$LOCK_PIN" =~ ^[0-9]{4,8}$ ]]; then
+    echo "Error: --lock-pin must be 4-8 digits (got: $LOCK_PIN)"
+    exit 1
+fi
+KIOSK_URL_PARAMS=""
+if [ -n "$LOCK_PIN" ]; then
+    KIOSK_URL_PARAMS="?lock=1&lockpin=$LOCK_PIN"
+fi
 
 # Validate --session-type argument
 case "$SESSION_TYPE_OVERRIDE" in
@@ -496,6 +515,8 @@ setup_kiosk() {
 # without re-running setup, edit the line below or set
 # OPENHAMCLOCK_SESSION_TYPE=x11|wayland in /etc/environment.
 SESSION_TYPE="\${OPENHAMCLOCK_SESSION_TYPE:-$resolved_session_type}"
+# Extra URL parameters baked in by setup-pi.sh (--lock-pin → ?lock=1&lockpin=…).
+KIOSK_URL_PARAMS="$KIOSK_URL_PARAMS"
 EOF
     cat >> "$INSTALL_DIR/kiosk.sh" << 'EOF'
 
@@ -586,7 +607,7 @@ $CHROME_CMD \
     --password-store=basic \
     --user-data-dir="$HOME/.config/openhamclock-kiosk" \
     $CHROMIUM_EXTRA_FLAGS \
-    http://localhost:3001 &
+    "http://localhost:3001${KIOSK_URL_PARAMS}" &
 
 CHROME_PID=$!
 
