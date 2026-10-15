@@ -9,7 +9,6 @@ const path = require('path');
 const satellitesTracked = require('./satellites-tracked');
 const { tleToOmm, parseTleBlock } = require('../utils/tle-to-omm');
 const { normalizeJsonTree } = require('../utils/normalize');
-const { MutexCounter } = require('../utils/mutex');
 const { StateMachine } = require('../utils/statemachine');
 const { celestrakFailurePolicy } = require('../utils/celestrakFailurePolicy');
 const csvToJson = require('convert-csv-to-json');
@@ -169,20 +168,6 @@ module.exports = function (app, ctx) {
     if (!lowStr) return highStr;
 
     return lowStr.replace(' MHz', '') + ' - ' + highStr;
-  };
-
-  const uniqueCompactList = (values, maxItems = 4) => {
-    const unique = [];
-
-    values
-      .map((v) => String(v || '').trim())
-      .filter(Boolean)
-      .forEach((v) => {
-        if (!unique.includes(v)) unique.push(v);
-      });
-
-    if (unique.length <= maxItems) return unique.join(', ');
-    return unique.slice(0, maxItems).join(', ') + ' +' + (unique.length - maxItems) + ' more';
   };
 
   const describeSatnogsMode = (tx) => {
@@ -805,7 +790,6 @@ module.exports = function (app, ctx) {
         const text = await textDecoder.decode(bytes);
 
         ommJson = await parseCsvText(text);
-        const count = Object.keys(ommJson).length;
         logDebug(`[Satellites] Space-Track OMM fetch successful`);
       } else if (res.status >= 400 && res.status <= 499) {
         logWarn(`[Satellites] Space-Track OMM fetch failed for NORAD ID '${norad}': ${res.status}`);
@@ -834,7 +818,7 @@ module.exports = function (app, ctx) {
       csvToJson.supportQuotedField(true);
       json = await csvToJson.csvStringToJson(csvText);
     } catch (err) {
-      const msg = ex?.message || String(ex ?? '(unknown error)');
+      const msg = err?.message || String(err ?? '(unknown error)');
       logWarn(`Error reading CSV: ${msg}`);
     }
     normalizeJsonTree(json);
@@ -963,7 +947,6 @@ module.exports = function (app, ctx) {
       switch (nextOmmProvider()) {
         case 'SPACE_TRACK':
           return isSpaceTrackEnabled ? 'SPACE_TRACK_INIT' : 'START'; // return next state
-          break;
         case 'CELESTRAK': {
           const now = Date.now();
           celestrakNumSatNeedDownload = celestrakSatsToDownload(now).length; // record how many satellites with a CelesTrak datasource need data
@@ -1015,9 +998,8 @@ module.exports = function (app, ctx) {
         logWarn(
           `[Satellites] caught unknown exception occurred in CELESTRAK_AMATEUR_GROUP_FETCH handler, advancing to next state: ${msg}`,
         );
-      } finally {
-        return 'CELESTRAK_WEATHER_GROUP_INIT'; // return next state
       }
+      return 'CELESTRAK_WEATHER_GROUP_INIT'; // return next state
     },
 
     CELESTRAK_WEATHER_GROUP_INIT: async () => {
@@ -1061,9 +1043,8 @@ module.exports = function (app, ctx) {
         logWarn(
           `[Satellites] caught unknown exception occurred in CELESTRAK_WEATHER_GROUP_FETCH handler, advancing to next state: ${msg}`,
         );
-      } finally {
-        return 'CELESTRAK_INDIVIDUAL_INIT'; // return next state
       }
+      return 'CELESTRAK_INDIVIDUAL_INIT'; // return next state
     },
 
     CELESTRAK_INDIVIDUAL_INIT: async () => {
@@ -1111,9 +1092,8 @@ module.exports = function (app, ctx) {
         logWarn(
           `[Satellites] caught unknown exception occurred in CELESTRAK_INDIVIDUAL_FETCH handler, advancing to next state: ${msg}`,
         );
-      } finally {
-        return 'CELESTRAK_INDIVIDUAL_INIT'; // return next state, back to INIT
       }
+      return 'CELESTRAK_INDIVIDUAL_INIT'; // return next state, back to INIT
     },
 
     // AMSAT fallback (covers amateur sats when CelesTrak is unreachable)
@@ -1148,9 +1128,8 @@ module.exports = function (app, ctx) {
       } catch (ex) {
         const msg = ex?.message || String(ex ?? '(unknown error)');
         logWarn(`[Satellites] caught unknown exception in AMSAT_FETCH handler: ${msg}`);
-      } finally {
-        return isSatnogsTleEnabled ? 'SATNOGS_INDIVIDUAL_INIT' : 'START'; // return next state
       }
+      return isSatnogsTleEnabled ? 'SATNOGS_INDIVIDUAL_INIT' : 'START'; // return next state
     },
 
     // SatNOGS individual fallback (covers non-amateur stragglers), accuracy of data questionable
@@ -1184,9 +1163,8 @@ module.exports = function (app, ctx) {
       } catch (ex) {
         const msg = ex?.message || String(ex ?? '(unknown error)');
         logWarn(`[Satellites] caught unknown exception in SATNOGS_INDIVIDUAL_FETCH handler: ${msg}`);
-      } finally {
-        return 'SATNOGS_INDIVIDUAL_INIT';
       }
+      return 'SATNOGS_INDIVIDUAL_INIT';
     },
 
     SPACE_TRACK_INIT: async () => {
@@ -1233,9 +1211,8 @@ module.exports = function (app, ctx) {
         logWarn(
           `[Satellites] caught unknown exception occurred in SPACE_TRACK_FETCH handler, advancing to next state: ${msg}`,
         );
-      } finally {
-        return 'START'; // return next state
       }
+      return 'START'; // return next state
     },
   };
 

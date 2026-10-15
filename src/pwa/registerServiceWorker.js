@@ -27,8 +27,8 @@
  * The parameter is one-shot: remove it and reload to re-register.
  */
 
-/* global __OHC_VERSION__, __OHC_BUILD_TS__ */
-
+// __OHC_VERSION__ / __OHC_BUILD_TS__ are injected by vite.config.mjs `define`
+// (declared as globals for src/ in eslint.config.js).
 const VERSION = typeof __OHC_VERSION__ !== 'undefined' ? `${__OHC_VERSION__}-${__OHC_BUILD_TS__}` : 'dev';
 
 let userAcceptedUpdate = false;

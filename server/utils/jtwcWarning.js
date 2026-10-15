@@ -44,7 +44,7 @@ function parseJtwcRss(xml) {
   let item;
   while ((item = itemRe.exec(xml))) {
     const body = item[1];
-    const region = (body.match(/<category>([\s\S]*?)<\/category>/i) || [, ''])[1].trim();
+    const region = (body.match(/<category>([\s\S]*?)<\/category>/i) || ['', ''])[1].trim();
     const descM = body.match(/<description>([\s\S]*?)<\/description>/i);
     if (!descM) continue;
     let desc = descM[1].replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1');
@@ -55,10 +55,10 @@ function parseJtwcRss(xml) {
     let s;
     while ((s = sysRe.exec(desc))) {
       const [, type, designation, name, warningNum, rest] = s;
-      const issued = (rest.match(/Issued at\s*([\d/]+Z)/i) || [, null])[1];
-      const textUrl = (rest.match(/href=['"]([^'"]+web\.txt)['"]/i) || [, null])[1];
-      const kmzUrl = (rest.match(/href=['"]([^'"]+\.kmz)['"]/i) || [, null])[1];
-      const graphicUrl = (rest.match(/href=['"]([^'"]+\.gif)['"]/i) || [, null])[1];
+      const issued = (rest.match(/Issued at\s*([\d/]+Z)/i) || [null, null])[1];
+      const textUrl = (rest.match(/href=['"]([^'"]+web\.txt)['"]/i) || [null, null])[1];
+      const kmzUrl = (rest.match(/href=['"]([^'"]+\.kmz)['"]/i) || [null, null])[1];
+      const graphicUrl = (rest.match(/href=['"]([^'"]+\.gif)['"]/i) || [null, null])[1];
       const idM = (textUrl || kmzUrl || '').match(/\/([a-z]{2}\d{4})(?:web)?\.(?:txt|kmz)$/i);
       const id = idM ? idM[1].toLowerCase() : `${designation.toLowerCase()}`;
       storms.push({
@@ -100,7 +100,7 @@ function parseJtwcWarningText(txt) {
   };
   if (typeof txt !== 'string') return out;
   const t = txt.replace(/\r/g, '');
-  out.header = (t.match(/^\s*1\.\s*(.+?)\s*$/m) || [, null])[1];
+  out.header = (t.match(/^\s*1\.\s*(.+?)\s*$/m) || [null, null])[1];
 
   const warn = t.match(/WARNING POSITION:\s*\n\s*(\d{6}Z)\s*---\s*NEAR\s*([\d.]+[NS]\s*[\d.]+[EW])/i);
   if (warn) {

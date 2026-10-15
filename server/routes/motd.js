@@ -61,7 +61,6 @@ function buildLinks(text, explicit) {
 
 /** Sanitise free text: trim, collapse control characters, cap length. */
 function cleanText(text) {
-  // eslint-disable-next-line no-control-regex
   return String(text ?? '')
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
     .replace(/\r\n?/g, '\n')

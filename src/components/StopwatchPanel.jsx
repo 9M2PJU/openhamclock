@@ -140,7 +140,6 @@ export const StopwatchPanel = () => {
     };
     window.addEventListener('ohc:stopwatch', onRemote);
     return () => window.removeEventListener('ohc:stopwatch', onRemote);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const tabBtn = (id, label) => (
