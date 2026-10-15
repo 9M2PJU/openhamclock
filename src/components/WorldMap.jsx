@@ -36,6 +36,8 @@ import { displayNow, subscribeDisplayTime } from '../utils/displayTime.js';
 import MapCursorReadout from './MapCursorReadout.jsx';
 import AzimuthalMap from './AzimuthalMap.jsx';
 import { MAP_FOCUS_EVENT, MAP_FOCUS_PULSE_MS, nearestWrappedLon, isInView } from '../utils/mapFocus.js';
+import { publishMapViewport } from '../utils/mapViewport.js';
+import OfflineTilesBadge from './OfflineTilesBadge.jsx';
 // three.js is ~600 kB — load it only when the operator actually opens 3D mode.
 // React 18 permanently caches a rejected lazy() import, so a single failed
 // chunk load (stale HTML right after a redeploy is the classic case) would
@@ -1094,6 +1096,8 @@ export const WorldMap = ({
         const center = map.getCenter();
         const zoom = map.getZoom();
         setMapView({ center: [center.lat, center.lng], zoom });
+        // Offline area packs: "download the current map view"
+        publishMapViewport({ bounds: map.getBounds(), zoom });
       } catch {
         // Leaflet may throw if map panes are gone during resize/unmount
       }
@@ -1130,6 +1134,12 @@ export const WorldMap = ({
 
     mapInstanceRef.current = map;
     if (onMapReady) onMapReady(map);
+    try {
+      publishMapViewport({ bounds: map.getBounds(), zoom: map.getZoom() });
+    } catch {
+      // Bounds are unavailable until the container has a size — moveend
+      // publishes them once it does.
+    }
 
     // Apply initial map lock state if saved
     if (mapLocked) {
@@ -1415,6 +1425,12 @@ export const WorldMap = ({
 
     return () => clearInterval(maskInterval);
   }, [mapStyle, gibsOffset]);
+
+  // Offline area packs read the current basemap (which style to download,
+  // and whether the map is on the style a pack was saved for).
+  useEffect(() => {
+    publishMapViewport({ styleId: mapStyle });
+  }, [mapStyle]);
 
   // Live-update night overlay darkness when slider changes
   useEffect(() => {
@@ -2882,6 +2898,9 @@ export const WorldMap = ({
             />
           );
         })}
+
+      {/* Subtle "offline tiles" badge while an offline area pack is drawing the basemap */}
+      {!isLeafletHidden && !mapUiHidden && <OfflineTilesBadge />}
 
       {/* Cursor readout: lat/lon, grid, DE distance/bearing, nearest city (flat map) */}
       {!isLeafletHidden && leafletReady && (

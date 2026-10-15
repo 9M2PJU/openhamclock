@@ -5,7 +5,9 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { APRS_HISTORY_EVENT } from '../utils/aprsSelect.js';
 import { useTranslation } from 'react-i18next';
-import { WorldMap, APRSTelemetryPanel } from '../components';
+import { WorldMap, APRSTelemetryPanel, RepeatersPanel } from '../components';
+import OfflineAreaPacks from '../components/OfflineAreaPacks.jsx';
+import { formatAsOf } from '../utils/offlinePackManifest.js';
 import { useAPRSTelemetry } from '../hooks/useAPRSTelemetry.js';
 import { calculateDistance, formatDistance, maidenheadToLatLon, latLonToMaidenhead } from '../utils/geo.js';
 import { esc } from '../utils/escapeHtml.js';
@@ -408,7 +410,7 @@ export default function EmcommLayout(props) {
     return () => clearInterval(timer);
   }, [logEpoch]);
 
-  const { alerts = [], shelters = [], disasters = [], loading } = emcommData || {};
+  const { alerts = [], shelters = [], disasters = [], loading, asOf: dataAsOf } = emcommData || {};
   const allAprsStations = aprsData?.stations || [];
 
   // Stations for the MAP: the hook's filteredStations (watchlist/group rules
@@ -1176,7 +1178,13 @@ export default function EmcommLayout(props) {
           <ResourceSummary stations={emcommStationsWithDistance} panels={panels} />
 
           {/* NWS Alerts Panel */}
-          <PanelSection title="NWS Alerts" count={sortedAlerts.length} color="#dc2626" panels={panels}>
+          <PanelSection
+            title="NWS Alerts"
+            count={sortedAlerts.length}
+            color="#dc2626"
+            panels={panels}
+            extra={dataAsOf?.alerts ? <OfflineAsOf t={t} ts={dataAsOf.alerts} /> : null}
+          >
             {sortedAlerts.length === 0 ? (
               <EmptyState text="No active alerts for your area" />
             ) : (
@@ -1296,7 +1304,13 @@ export default function EmcommLayout(props) {
           </PanelSection>
 
           {/* Shelters Panel */}
-          <PanelSection title="Nearby Shelters" count={sheltersWithDistance.length} color="#22c55e" panels={panels}>
+          <PanelSection
+            title="Nearby Shelters"
+            count={sheltersWithDistance.length}
+            color="#22c55e"
+            panels={panels}
+            extra={dataAsOf?.shelters ? <OfflineAsOf t={t} ts={dataAsOf.shelters} /> : null}
+          >
             {sheltersWithDistance.length === 0 ? (
               <EmptyState text="No open shelters nearby" />
             ) : (
@@ -1381,6 +1395,14 @@ export default function EmcommLayout(props) {
                 );
               })
             )}
+          </PanelSection>
+
+          {/* Nearby Repeaters — live from the directory, last-known from an
+              offline area pack when the internet is down */}
+          <PanelSection title="Nearby Repeaters" color="#38bdf8" panels={panels}>
+            <div style={{ height: '230px' }}>
+              <RepeatersPanel config={config} />
+            </div>
           </PanelSection>
 
           {/* EmComm Stations Panel (APRS) */}
@@ -1831,6 +1853,14 @@ export default function EmcommLayout(props) {
             )}
           </PanelSection>
 
+          {/* Offline map area: basemap tiles + alerts/shelters/repeaters
+              snapshot so the map and panels still work without internet */}
+          <PanelSection title="Offline Map Area" color="#fbbf24" panels={panels}>
+            <div style={{ padding: '4px 8px' }}>
+              <OfflineAreaPacks deLocation={config.location} compact />
+            </div>
+          </PanelSection>
+
           {/* Message Compose */}
           {historyTarget && (
             <div
@@ -2226,6 +2256,21 @@ function CapacityBar({ current, max }) {
         {current || 0}/{max}
       </span>
     </div>
+  );
+}
+
+/** "Offline · as of 14:32Z" tag for a panel showing last-known data */
+function OfflineAsOf({ t, ts }) {
+  return (
+    <span
+      title={t('offlinePacks.asOfTitle', {
+        defaultValue: 'No connection — showing the last-known data saved at {{time}}',
+        time: formatAsOf(ts),
+      })}
+      style={{ color: '#fbbf24', fontSize: '9px', fontWeight: 400, letterSpacing: 0 }}
+    >
+      {t('offlinePacks.asOfOffline', { defaultValue: 'Offline — as of {{time}}', time: formatAsOf(ts) })}
+    </span>
   );
 }
 
