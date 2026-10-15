@@ -15,6 +15,15 @@
  * every connected display on this server (fine for a local install); on the
  * hosted site (OHC_HOSTED) a target is mandatory.
  *
+ * Authorization (server/utils/controlAuth.js): a targeted command is
+ * accepted with the server's API_WRITE_KEY (master key) OR the target
+ * display's *pairing secret* — a random string the display generates next
+ * to its controlId, registers with its first report/stream (the server keeps
+ * a SHA-256 hash) and embeds in the QR code / phone-remote URL. Broadcast
+ * commands keep the global rule (API_WRITE_KEY when set, open when unset).
+ * Once a display has paired, its stream, reports and frame uploads must
+ * present the same secret, so nobody else can listen to or impersonate it.
+ *
  * Everything here is in-memory and bounded: at most MAX_DISPLAYS known
  * displays, MAX_QUEUE queued commands per display (dropped after QUEUE_TTL_MS
  * when no display is listening), one PNG frame per display, and the usual
@@ -30,6 +39,12 @@ const {
   parseControlCommand,
   sanitizeStateReport,
 } = require('../utils/controlCommands');
+const {
+  extractClientToken,
+  extractDisplaySecret,
+  authorizeControl,
+  authorizeDisplay,
+} = require('../utils/controlAuth');
 
 module.exports = function (app, ctx) {
   const { logDebug, logInfo, logWarn, writeLimiter, requireWriteAuth, API_WRITE_KEY } = ctx;
@@ -49,7 +64,11 @@ module.exports = function (app, ctx) {
   const CAPTURE_WAIT_DEFAULT_MS = 5000;
   const CAPTURE_WAIT_MAX_MS = 15000;
 
-  /** controlId → { state, lastReport, lastSeen, clients:Set<res>, queue:[], frame:{buf,ts}|null, frameWaiters:Set<fn> } */
+  /**
+   * controlId → { secretHash, state, lastReport, lastSeen, clients:Set<res>, queue:[], frame:{buf,ts}|null, frameWaiters:Set<fn> }
+   * `secretHash` is the SHA-256 of the display's pairing secret (null until it
+   * registers one). The secret itself is never stored or logged.
+   */
   const displays = new Map();
   const sseConnectionsByIP = new Map();
 
@@ -63,6 +82,7 @@ module.exports = function (app, ctx) {
         if (displays.size >= MAX_DISPLAYS) return null;
       }
       d = {
+        secretHash: null,
         state: null,
         lastReport: 0,
         lastSeen: nowMs(),
@@ -143,6 +163,51 @@ module.exports = function (app, ctx) {
     return { target: String(raw) };
   }
 
+  /**
+   * Client-side auth (phone, curl): master key OR the target display's
+   * pairing secret. Resolves the target first and leaves it on
+   * `req.controlTarget` (null = broadcast) with `req.controlAuth` = how it
+   * was authorized ('open' | 'master' | 'pairing').
+   */
+  function requireControlAuth(req, res, next) {
+    const t = resolveTarget(req);
+    if (t.error) return res.status(400).json({ error: t.error });
+    const d = t.target ? displays.get(t.target) : null; // plain get: don't touch lastSeen for an unauthenticated probe
+    const verdict = authorizeControl({
+      token: extractClientToken(req),
+      apiWriteKey: API_WRITE_KEY,
+      target: t.target,
+      secretHash: d?.secretHash || null,
+    });
+    if (!verdict.ok) return res.status(verdict.status).json({ error: verdict.error });
+    req.controlTarget = t.target;
+    req.controlAuth = verdict.via;
+    next();
+  }
+
+  /**
+   * Display-side auth (stream / report / capture upload): the display's own
+   * secret. The first valid secret claims the id; from then on it is required.
+   * → the display record, or null after an error response was sent.
+   */
+  function authenticateDisplay(req, res, target) {
+    const d = getDisplay(target, true);
+    if (!d) {
+      res.status(503).json({ error: 'Too many displays registered' });
+      return null;
+    }
+    const verdict = authorizeDisplay({ secret: extractDisplaySecret(req), secretHash: d.secretHash });
+    if (!verdict.ok) {
+      res.status(verdict.status).json({ error: verdict.error, paired: !!d.secretHash });
+      return null;
+    }
+    if (verdict.claim) {
+      d.secretHash = verdict.claim;
+      logDebug?.(`[Control] display ${target} paired`);
+    }
+    return d;
+  }
+
   // Reports arrive from every open display every 30 s and on each change —
   // a looser limiter than writeLimiter (20/min) but still bounded.
   const reportLimiter = rateLimit({
@@ -163,6 +228,7 @@ module.exports = function (app, ctx) {
       commands: COMMAND_TYPES,
       requireTarget: REQUIRE_TARGET,
       writeKeyRequired: !!API_WRITE_KEY,
+      pairing: true, // targeted commands also accept the display's pairing key (QR / Settings → Station)
       displays: displays.size,
       docs: 'https://github.com/accius/openhamclock/blob/main/docs/API.md#remote-control-api',
     });
@@ -196,8 +262,9 @@ module.exports = function (app, ctx) {
     if (current >= MAX_SSE_PER_IP) {
       return res.status(429).json({ error: 'Too many open SSE connections from this IP' });
     }
-    const d = getDisplay(target, true);
-    if (!d) return res.status(503).json({ error: 'Too many displays registered' });
+    // Once a display has paired, only the holder of its secret may listen.
+    const d = authenticateDisplay(req, res, target);
+    if (!d) return;
     sseConnectionsByIP.set(ip, current + 1);
 
     res.writeHead(200, {
@@ -214,7 +281,12 @@ module.exports = function (app, ctx) {
     const cutoff = nowMs() - QUEUE_TTL_MS;
     const pending = d.queue.filter((c) => c.ts >= cutoff);
     d.queue = [];
-    writeEvent(res, 'connected', { target, pending: pending.length, requireTarget: REQUIRE_TARGET });
+    writeEvent(res, 'connected', {
+      target,
+      pending: pending.length,
+      requireTarget: REQUIRE_TARGET,
+      paired: !!d.secretHash,
+    });
     for (const c of pending) writeEvent(res, 'command', c);
 
     const keepalive = setInterval(() => {
@@ -243,11 +315,13 @@ module.exports = function (app, ctx) {
     if (!isValidControlId(target)) return res.status(400).json({ error: 'target must be an 8–64 char display id' });
     const state = sanitizeStateReport(req.body?.state);
     if (!state) return res.status(400).json({ error: 'state must be an object' });
-    const d = getDisplay(target, true);
-    if (!d) return res.status(503).json({ error: 'Too many displays registered' });
+    // `secret` travels beside `state`, never inside it: sanitizeStateReport
+    // copies only known fields, so the readback can never leak it.
+    const d = authenticateDisplay(req, res, target);
+    if (!d) return;
     d.state = state;
     d.lastReport = nowMs();
-    res.json({ ok: true, connected: d.clients.size > 0 });
+    res.json({ ok: true, connected: d.clients.size > 0, paired: !!d.secretHash });
   });
 
   // ── Display → server: screenshot upload ───────────────────────────────
@@ -263,8 +337,8 @@ module.exports = function (app, ctx) {
       if (!buf || buf.length < 8 || buf.readUInt32BE(0) !== 0x89504e47) {
         return res.status(400).json({ error: 'body must be a PNG image' });
       }
-      const d = getDisplay(target, true);
-      if (!d) return res.status(503).json({ error: 'Too many displays registered' });
+      const d = authenticateDisplay(req, res, target);
+      if (!d) return;
       d.frame = { buf, ts: nowMs() };
       for (const resolve of d.frameWaiters) resolve(d.frame);
       d.frameWaiters.clear();
@@ -273,16 +347,17 @@ module.exports = function (app, ctx) {
   );
 
   // ── Client → server: read state ───────────────────────────────────────
-  app.get('/api/control/state', requireWriteAuth, (req, res) => {
+  app.get('/api/control/state', requireControlAuth, (req, res) => {
     noCache(res);
-    const t = resolveTarget(req);
-    if (t.error) return res.status(400).json({ error: t.error });
-    if (t.target) {
-      const d = displays.get(t.target);
+    const target = req.controlTarget;
+    if (target) {
+      const d = displays.get(target);
       if (!d) return res.status(404).json({ error: 'Unknown display (it has not reported yet)' });
       return res.json({
-        target: t.target,
+        target,
         connected: d.clients.size > 0,
+        paired: !!d.secretHash,
+        auth: req.controlAuth,
         lastReport: d.lastReport || null,
         state: d.state,
       });
@@ -295,11 +370,9 @@ module.exports = function (app, ctx) {
   });
 
   // ── Client → server: screenshot ───────────────────────────────────────
-  app.get('/api/control/capture.png', writeLimiter, requireWriteAuth, async (req, res) => {
+  app.get('/api/control/capture.png', writeLimiter, requireControlAuth, async (req, res) => {
     noCache(res);
-    const t = resolveTarget(req);
-    if (t.error) return res.status(400).json({ error: t.error });
-    let target = t.target;
+    let target = req.controlTarget;
     if (!target) {
       // Local fan-out: pick the first connected display.
       for (const [id, d] of displays) {
@@ -346,7 +419,7 @@ module.exports = function (app, ctx) {
   });
 
   // ── Client → server: commands ─────────────────────────────────────────
-  app.post('/api/control/:command', writeLimiter, requireWriteAuth, async (req, res) => {
+  app.post('/api/control/:command', writeLimiter, requireControlAuth, async (req, res) => {
     noCache(res);
     const name = String(req.params.command || '').toLowerCase();
     if (['report', 'capture', 'stream', 'state', 'displays'].includes(name)) {
@@ -354,11 +427,14 @@ module.exports = function (app, ctx) {
     }
     const parsed = parseControlCommand(name, req.body || {});
     if (!parsed.ok) return res.status(400).json({ error: parsed.error });
-    const t = resolveTarget(req);
-    if (t.error) return res.status(400).json({ error: t.error });
+    const t = { target: req.controlTarget };
 
-    // Rotator commands drive hardware on this server, not a display.
+    // Rotator commands drive hardware on this server, not a display — a
+    // display's pairing key is not enough for that; it takes the master key.
     if (parsed.command.type === 'rotator') {
+      if (API_WRITE_KEY && req.controlAuth !== 'master') {
+        return res.status(403).json({ error: 'Rotator commands need the server’s API_WRITE_KEY' });
+      }
       const rc = ctx.rotatorControl;
       if (!rc) return res.status(503).json({ error: 'Rotator is not configured on this server' });
       try {

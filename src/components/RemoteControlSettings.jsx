@@ -7,7 +7,7 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { getControlId, rotateControlId, buildRemoteUrl } from '../utils/remoteControl.js';
+import { getControlId, getControlSecret, rotateControlId, buildRemoteUrl } from '../utils/remoteControl.js';
 import { encodeQR, qrToSvg } from '../utils/qrcode.js';
 import { titlesError } from '../utils/titles.js';
 import { getKioskState, setPin, clearPin, lock, isValidPin, KIOSK_LOCK_EVENT } from '../utils/kioskLock.js';
@@ -71,6 +71,8 @@ export default function RemoteControlSettings({
 }) {
   const { t } = useTranslation();
   const [controlId, setControlId] = useState(() => getControlId());
+  // Pairing secret: travels only in the QR / phone URL (never shown as plain text here).
+  const [controlSecret, setControlSecret] = useState(() => getControlSecret());
   const [copied, setCopied] = useState(false);
   const [serverInfo, setServerInfo] = useState(null);
   const status = useSessionFlag('remoteStatus');
@@ -101,8 +103,13 @@ export default function RemoteControlSettings({
   }, []);
 
   const effectiveEnabled = remoteEnabled === true || remoteEnabled === false ? remoteEnabled : !!isLocalInstall;
-  const remoteUrl = buildRemoteUrl(window.location.origin, controlId);
+  const remoteUrl = buildRemoteUrl(window.location.origin, controlId, controlSecret);
   const titlesErr = titlesError(callsignTitles);
+
+  const rotate = () => {
+    setControlId(rotateControlId());
+    setControlSecret(getControlSecret());
+  };
 
   const copy = async () => {
     try {
@@ -149,7 +156,7 @@ export default function RemoteControlSettings({
               color:
                 status === 'connected'
                   ? 'var(--accent-green)'
-                  : status === 'error'
+                  : status === 'error' || status === 'rejected'
                     ? 'var(--accent-red)'
                     : 'var(--text-muted)',
             }}
@@ -171,8 +178,9 @@ export default function RemoteControlSettings({
                   <button
                     type="button"
                     style={btn}
-                    onClick={() => setControlId(rotateControlId())}
+                    onClick={rotate}
                     aria-label={t('station.settings.remote.newId')}
+                    title={t('station.settings.remote.newIdHint')}
                   >
                     {t('station.settings.remote.newId')}
                   </button>
@@ -202,8 +210,14 @@ export default function RemoteControlSettings({
                 </div>
               </div>
               <div style={describe}>{t('station.settings.remote.qrHint')}</div>
-              {serverInfo?.writeKeyRequired && (
-                <div style={{ ...describe, color: 'var(--accent-amber)' }}>{t('station.settings.remote.keyHint')}</div>
+              <div style={describe} data-testid="pairing-hint">
+                {t('station.settings.remote.pairingHint')}
+                {serverInfo?.writeKeyRequired ? ` ${t('station.settings.remote.pairingHintKeyed')}` : ''}
+              </div>
+              {status === 'rejected' && (
+                <div style={{ ...describe, color: 'var(--accent-red)' }}>
+                  {t('station.settings.remote.rejectedHint')}
+                </div>
               )}
               <a
                 href="https://github.com/accius/openhamclock/blob/main/docs/API.md#remote-control-api"

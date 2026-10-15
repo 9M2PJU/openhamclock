@@ -93,14 +93,16 @@ export async function captureFrame() {
   }
 }
 
-/** Capture and POST to the server for the given display id. → true on success */
-export async function uploadFrame(controlId) {
+/** Capture and POST to the server for the given display id (+ its pairing secret). → true on success */
+export async function uploadFrame(controlId, secret = '') {
   const blob = await captureFrame();
   if (!blob) return false;
   try {
+    const headers = { 'Content-Type': PNG };
+    if (secret) headers['X-Control-Secret'] = secret;
     const res = await fetch(`/api/control/capture?target=${encodeURIComponent(controlId)}`, {
       method: 'POST',
-      headers: { 'Content-Type': PNG },
+      headers,
       body: blob,
     });
     return res.ok;
