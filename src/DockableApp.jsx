@@ -81,6 +81,7 @@ import {
   WefaxPanel,
   HamAlertPanel,
   BalloonsPanel,
+  IcsFormsPanel,
 } from './components';
 import MeshtasticPanel from './components/MeshtasticPanel.jsx';
 import LogbookPanel from './components/LogbookPanel.jsx';
@@ -1732,6 +1733,10 @@ export const DockableApp = ({
               onSpotClick={handleSpotClick}
             />
           );
+          break;
+
+        case 'ics-forms':
+          content = <IcsFormsPanel config={config} />;
           break;
 
         default: {

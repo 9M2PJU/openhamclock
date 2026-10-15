@@ -11,6 +11,8 @@ import { calculateDistance, formatDistance, maidenheadToLatLon, latLonToMaidenhe
 import { esc } from '../utils/escapeHtml.js';
 import { apiFetch } from '../utils/apiFetch.js';
 import { mergeShelters } from '../utils/emcommShelters.js';
+import { sendAprsMessage } from '../utils/aprsMessageSend.js';
+import { IcsFormsOverlay } from '../components/IcsFormsPanel.jsx';
 
 // Sidebar panel collapse state (#1188). Mode decides what a fresh visit to
 // the layout starts with: 'remember' restores each section's last state,
@@ -287,6 +289,8 @@ export default function EmcommLayout(props) {
     });
   }, []);
   const [messageText, setMessageText] = useState('');
+  // ICS Forms overlay: null (closed) or the form id to open ('309' | '214' | '213' | '205')
+  const [icsForm, setIcsForm] = useState(null);
   // Nearby Winlink gateways
   const [winlinkRows, setWinlinkRows] = useState([]);
   const [winlinkServerHasKey, setWinlinkServerHasKey] = useState(true);
@@ -924,14 +928,10 @@ export default function EmcommLayout(props) {
 
   // Send an APRS message to the current target (shared by Enter key + button)
   // and record it in the event log.
-  const sendAprsMessage = useCallback(() => {
+  const sendMessageToTarget = useCallback(() => {
     const text = messageText.trim();
     if (!text || !messageTarget) return;
-    fetch('/api/aprs/message', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ to: messageTarget, message: text }),
-    }).catch(() => {});
+    sendAprsMessage({ to: messageTarget, message: text });
     recordEvent('aprs_msg_sent', {
       callsign: config.callsign || 'N0CALL',
       summary: `Message to ${messageTarget}`,
@@ -1831,6 +1831,27 @@ export default function EmcommLayout(props) {
             )}
           </PanelSection>
 
+          {/* ICS Forms — 309/214/213/205 paperwork built from the event log, roster and channel lists */}
+          <PanelSection title="ICS Forms" color="#eab308" panels={panels}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px', padding: '4px 8px 6px' }}>
+              {[
+                ['309', t('icsForms.rail.309', { defaultValue: '309 Comm Log' })],
+                ['214', t('icsForms.rail.214', { defaultValue: '214 Activity Log' })],
+                ['213', t('icsForms.rail.213', { defaultValue: '213 General Message' })],
+                ['205', t('icsForms.rail.205', { defaultValue: '205 Radio Plan' })],
+              ].map(([id, label]) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setIcsForm(id)}
+                  style={{ ...EVENT_BTN_STYLE, textAlign: 'left', padding: '5px 8px' }}
+                >
+                  📋 {label}
+                </button>
+              ))}
+            </div>
+          </PanelSection>
+
           {/* Message Compose */}
           {historyTarget && (
             <div
@@ -1958,11 +1979,11 @@ export default function EmcommLayout(props) {
                     fontSize: '12px',
                   }}
                   onKeyDown={(e) => {
-                    if (e.key === 'Enter') sendAprsMessage();
+                    if (e.key === 'Enter') sendMessageToTarget();
                   }}
                 />
                 <button
-                  onClick={sendAprsMessage}
+                  onClick={sendMessageToTarget}
                   style={{
                     padding: '6px 12px',
                     background: '#22d3ee',
@@ -1984,6 +2005,7 @@ export default function EmcommLayout(props) {
           )}
         </div>
       </div>
+      {icsForm && <IcsFormsOverlay config={config} initialForm={icsForm} onClose={() => setIcsForm(null)} />}
     </div>
   );
 }

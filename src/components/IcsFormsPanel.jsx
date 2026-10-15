@@ -1,0 +1,1081 @@
+/**
+ * IcsFormsPanel — ICS 309 / 214 / 213 / 205 paperwork built from what the
+ * app already records (dockable panel `ics-forms`, and the overlay opened
+ * from the EmComm layout's operations rail).
+ *
+ * All form logic lives in utils/icsForms.js; this component only edits the
+ * draft (persisted in localStorage), shows a live preview, and hands the
+ * generated HTML to the in-page print helper. The ICS 213 "Send as APRS"
+ * action goes through utils/aprsMessageSend.js — the same path as the
+ * EmComm MSG composer.
+ */
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import '../styles/icsForms.css';
+import { getEvents, subscribeEvents, recordEvent, EVENT_TYPE_META } from '../utils/emcommEventLog.js';
+import { loadNetSchedule } from '../utils/netSchedule.js';
+import { apiFetch } from '../utils/apiFetch.js';
+import { sendAprsParts } from '../utils/aprsMessageSend.js';
+import { printIcsHtml, downloadCsv } from '../utils/icsPrint.js';
+import {
+  ICS_FORM_IDS,
+  ICS_FORM_TITLES,
+  ICS309_DEFAULT_TYPES,
+  loadDrafts,
+  saveDrafts,
+  defaultDrafts,
+  headerRange,
+  toInputDateTime,
+  ics309RowsFromEvents,
+  ics309Csv,
+  ics214RowsFromEvents,
+  mergeIcs214Rows,
+  newIcs214Row,
+  newIcs214Resource,
+  sortRowsByDateTime,
+  ics213AprsText,
+  splitForAprs,
+  ics205RowFromRepeater,
+  ics205RowFromNet,
+  newSimplexRow,
+  buildIcsHtml,
+  utcDate,
+} from '../utils/icsForms.js';
+
+const TAB_KEY = 'ohc_icsForms_tab';
+const REPEATER_RADIUS_KEY = 'ohc_repeaters_radius'; // shared with the Repeaters panel
+
+const inputStyle = {
+  padding: '3px 6px',
+  background: 'var(--bg-secondary, #0a0e14)',
+  border: '1px solid var(--border-color, #2a3040)',
+  borderRadius: '3px',
+  color: 'var(--text-primary, #ddd)',
+  fontSize: '11px',
+  fontFamily: 'var(--font-mono)',
+  minWidth: 0,
+  width: '100%',
+  boxSizing: 'border-box',
+};
+
+const btnStyle = {
+  background: 'var(--bg-tertiary, #1a1f2e)',
+  border: '1px solid var(--border-color, #2a3040)',
+  borderRadius: '3px',
+  color: 'var(--text-secondary, #ccc)',
+  fontSize: '10px',
+  padding: '3px 8px',
+  cursor: 'pointer',
+  fontFamily: 'var(--font-mono)',
+  whiteSpace: 'nowrap',
+};
+
+const primaryBtn = { ...btnStyle, background: '#22d3ee', color: '#000', border: 'none', fontWeight: 700 };
+
+const labelStyle = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '2px',
+  fontSize: '9px',
+  color: 'var(--text-muted, #888)',
+};
+
+const gridStyle = (min = 150) => ({
+  display: 'grid',
+  gridTemplateColumns: `repeat(auto-fill, minmax(${min}px, 1fr))`,
+  gap: '6px',
+});
+
+function Field({ label, children, wide }) {
+  return (
+    <label style={{ ...labelStyle, ...(wide ? { gridColumn: '1 / -1' } : null) }}>
+      <span>{label}</span>
+      {children}
+    </label>
+  );
+}
+
+function SectionTitle({ children }) {
+  return (
+    <div
+      style={{
+        fontSize: '10px',
+        fontWeight: 700,
+        color: 'var(--accent-amber, #f59e0b)',
+        textTransform: 'uppercase',
+        letterSpacing: '0.5px',
+        margin: '10px 0 4px',
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function readTab() {
+  try {
+    const v = localStorage.getItem(TAB_KEY);
+    return ICS_FORM_IDS.includes(v) ? v : '309';
+  } catch {
+    return '309';
+  }
+}
+
+/** Fill blank call-sign fields from the station callsign on first load. */
+function initialDrafts(callsign) {
+  const d = loadDrafts();
+  const call = String(callsign || '').toUpperCase();
+  if (call && call !== 'N0CALL') {
+    if (!d.header.preparedCall) d.header = { ...d.header, preparedCall: call };
+    if (!d.ics309.operatorCall) d.ics309 = { ...d.ics309, operatorCall: call };
+  }
+  return d;
+}
+
+export default function IcsFormsPanel({ config, initialForm, onClose }) {
+  const { t } = useTranslation();
+  const [form, setForm] = useState(() => (ICS_FORM_IDS.includes(initialForm) ? initialForm : readTab()));
+  const [drafts, setDrafts] = useState(() => initialDrafts(config?.callsign));
+  const [events, setEvents] = useState(() => getEvents());
+  const [showPreview, setShowPreview] = useState(true);
+
+  // Follow the rail's form buttons when the overlay is re-opened on another form
+  useEffect(() => {
+    if (ICS_FORM_IDS.includes(initialForm)) setForm(initialForm);
+  }, [initialForm]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(TAB_KEY, form);
+    } catch {}
+  }, [form]);
+
+  useEffect(() => subscribeEvents(setEvents), []);
+
+  // Persist drafts (debounced — typing in the message box shouldn't hammer storage)
+  const saveTimer = useRef(null);
+  useEffect(() => {
+    clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => saveDrafts(drafts), 300);
+    return () => clearTimeout(saveTimer.current);
+  }, [drafts]);
+  // Flush on unmount so closing the overlay never loses the last keystrokes
+  const latestDrafts = useRef(drafts);
+  latestDrafts.current = drafts;
+  useEffect(() => () => saveDrafts(latestDrafts.current), []);
+
+  const patch = useCallback((section, changes) => {
+    setDrafts((d) => ({ ...d, [section]: { ...d[section], ...changes } }));
+  }, []);
+
+  const html = useMemo(
+    () => (showPreview ? buildIcsHtml(form, drafts, { events, now: Date.now() }) : ''),
+    [showPreview, form, drafts, events],
+  );
+
+  const ics309Rows = useMemo(
+    () =>
+      ics309RowsFromEvents(events, {
+        ...headerRange(drafts.header),
+        operatorCall: drafts.ics309.operatorCall,
+        types: drafts.ics309.types,
+      }),
+    [events, drafts.header, drafts.ics309],
+  );
+
+  const fileStem = useMemo(() => {
+    const incident = (drafts.header.incidentName || 'incident').replace(/[^A-Za-z0-9-]+/g, '-').replace(/^-|-$/g, '');
+    return `ICS-${form}-${incident || 'incident'}-${utcDate(Date.now())}`;
+  }, [form, drafts.header.incidentName]);
+
+  const handlePrint = useCallback(() => {
+    printIcsHtml(buildIcsHtml(form, drafts, { events: getEvents(), now: Date.now() }), { title: fileStem });
+  }, [form, drafts, fileStem]);
+
+  const handleCsv = useCallback(() => {
+    downloadCsv(ics309Csv(drafts, ics309Rows), `${fileStem}.csv`);
+  }, [drafts, ics309Rows, fileStem]);
+
+  const resetForm = useCallback(() => {
+    if (!window.confirm(t('icsForms.resetConfirm', { defaultValue: 'Clear this form back to blank?' }))) return;
+    const fresh = defaultDrafts();
+    const key = `ics${form}`;
+    setDrafts((d) => ({ ...d, [key]: fresh[key] }));
+  }, [form, t]);
+
+  const h = drafts.header;
+
+  return (
+    <div
+      className="panel ics-forms-panel"
+      style={{
+        padding: '8px',
+        height: '100%',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '6px',
+        overflow: 'hidden',
+        fontFamily: 'var(--font-mono)',
+      }}
+    >
+      {/* Title row: form tabs + actions */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+        <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--accent-primary, #f59e0b)' }}>
+          📋 {t('icsForms.title', { defaultValue: 'ICS FORMS' })}
+        </span>
+        <div role="tablist" aria-label={t('icsForms.tabs', { defaultValue: 'Form' })} style={{ display: 'flex' }}>
+          {ICS_FORM_IDS.map((id, i) => (
+            <button
+              key={id}
+              role="tab"
+              aria-selected={form === id}
+              title={ICS_FORM_TITLES[id]}
+              onClick={() => setForm(id)}
+              style={{
+                ...btnStyle,
+                borderRadius: i === 0 ? '3px 0 0 3px' : i === ICS_FORM_IDS.length - 1 ? '0 3px 3px 0' : 0,
+                background: form === id ? 'var(--accent-amber, #f59e0b)' : btnStyle.background,
+                color: form === id ? '#000' : btnStyle.color,
+                fontWeight: form === id ? 700 : 400,
+              }}
+            >
+              {id}
+            </button>
+          ))}
+        </div>
+        <span style={{ flex: 1 }} />
+        <label style={{ fontSize: '10px', color: 'var(--text-muted, #888)', display: 'flex', gap: '3px' }}>
+          <input type="checkbox" checked={showPreview} onChange={(e) => setShowPreview(e.target.checked)} />
+          {t('icsForms.preview', { defaultValue: 'Preview' })}
+        </label>
+        {form === '309' && (
+          <button
+            onClick={handleCsv}
+            style={btnStyle}
+            title={t('icsForms.csvTitle', { defaultValue: 'Download the Communications Log as CSV' })}
+          >
+            CSV
+          </button>
+        )}
+        <button
+          onClick={handlePrint}
+          style={primaryBtn}
+          title={t('icsForms.printTitle', {
+            defaultValue: "Print this form — choose Save as PDF in your browser's print dialog for a PDF",
+          })}
+        >
+          {t('icsForms.print', { defaultValue: 'Print / PDF' })}
+        </button>
+        {onClose && (
+          <button
+            onClick={onClose}
+            aria-label={t('icsForms.close', { defaultValue: 'Close' })}
+            style={{ ...btnStyle, border: 'none', background: 'none', fontSize: '14px', padding: '0 4px' }}
+          >
+            ✕
+          </button>
+        )}
+      </div>
+      <div style={{ fontSize: '10px', color: 'var(--text-secondary, #aaa)' }}>{ICS_FORM_TITLES[form]}</div>
+
+      <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', paddingRight: '2px' }}>
+        {/* Shared header — typed once, used by every form */}
+        <SectionTitle>{t('icsForms.incident', { defaultValue: 'Incident' })}</SectionTitle>
+        <div style={gridStyle(160)}>
+          <Field label={t('icsForms.incidentName', { defaultValue: 'Incident name / activation #' })} wide>
+            <input
+              style={inputStyle}
+              value={h.incidentName}
+              onChange={(e) => patch('header', { incidentName: e.target.value })}
+            />
+          </Field>
+          <Field label={t('icsForms.periodFrom', { defaultValue: 'Operational period from (UTC)' })}>
+            <input
+              type="datetime-local"
+              style={inputStyle}
+              value={h.periodFrom}
+              onChange={(e) => patch('header', { periodFrom: e.target.value })}
+            />
+          </Field>
+          <Field label={t('icsForms.periodTo', { defaultValue: 'Operational period to (UTC)' })}>
+            <div style={{ display: 'flex', gap: '3px' }}>
+              <input
+                type="datetime-local"
+                style={inputStyle}
+                value={h.periodTo}
+                onChange={(e) => patch('header', { periodTo: e.target.value })}
+              />
+              <button
+                type="button"
+                style={btnStyle}
+                onClick={() => patch('header', { periodTo: toInputDateTime(Date.now()) })}
+              >
+                {t('icsForms.now', { defaultValue: 'Now' })}
+              </button>
+            </div>
+          </Field>
+          <Field label={t('icsForms.preparedBy', { defaultValue: 'Prepared by (name / position)' })}>
+            <input
+              style={inputStyle}
+              value={h.preparedBy}
+              onChange={(e) => patch('header', { preparedBy: e.target.value })}
+            />
+          </Field>
+          <Field label={t('icsForms.preparedCall', { defaultValue: 'Prepared by call sign' })}>
+            <input
+              style={inputStyle}
+              value={h.preparedCall}
+              onChange={(e) => patch('header', { preparedCall: e.target.value.toUpperCase() })}
+            />
+          </Field>
+        </div>
+
+        {form === '309' && <Ics309Editor t={t} drafts={drafts} patch={patch} rowCount={ics309Rows.length} />}
+        {form === '214' && <Ics214Editor t={t} drafts={drafts} patch={patch} events={events} />}
+        {form === '213' && <Ics213Editor t={t} drafts={drafts} patch={patch} config={config} />}
+        {form === '205' && <Ics205Editor t={t} drafts={drafts} patch={patch} config={config} />}
+
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '8px' }}>
+          <button onClick={resetForm} style={{ ...btnStyle, color: '#ef4444', borderColor: '#ef444455' }}>
+            {t('icsForms.reset', { defaultValue: 'Clear form' })}
+          </button>
+        </div>
+
+        {showPreview && (
+          <>
+            <SectionTitle>{t('icsForms.previewTitle', { defaultValue: 'Print preview' })}</SectionTitle>
+            {/* html is built by utils/icsForms.js — every user value is escaped there */}
+            <div className="ics-paper" dangerouslySetInnerHTML={{ __html: html }} />
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Large modal host for the panel — the EmComm operations rail is too narrow
+ * to edit a form in, so its ICS Forms buttons open this over the map.
+ * Escape or a click on the backdrop closes it; drafts are saved on close.
+ */
+export function IcsFormsOverlay({ config, initialForm, onClose }) {
+  const { t } = useTranslation();
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === 'Escape') onClose?.();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  return (
+    <div
+      role="presentation"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose?.();
+      }}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        zIndex: 10000,
+        background: 'rgba(0,0,0,0.6)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '16px',
+      }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={t('icsForms.title', { defaultValue: 'ICS FORMS' })}
+        style={{
+          width: 'min(1100px, 100%)',
+          height: 'min(92vh, 100%)',
+          background: 'var(--bg-primary, #111)',
+          border: '1px solid var(--border-color, #333)',
+          borderRadius: '8px',
+          overflow: 'hidden',
+          color: 'var(--text-primary, #ddd)',
+        }}
+      >
+        <IcsFormsPanel config={config} initialForm={initialForm} onClose={onClose} />
+      </div>
+    </div>
+  );
+}
+
+// ── ICS 309 ─────────────────────────────────────────────────────────────────
+function Ics309Editor({ t, drafts, patch, rowCount }) {
+  const f = drafts.ics309;
+  const types = Array.isArray(f.types) ? f.types : ICS309_DEFAULT_TYPES;
+  const toggleType = (type) =>
+    patch('ics309', { types: types.includes(type) ? types.filter((x) => x !== type) : [...types, type] });
+  return (
+    <>
+      <SectionTitle>{t('icsForms.309.section', { defaultValue: 'Communications log' })}</SectionTitle>
+      <div style={gridStyle(160)}>
+        <Field label={t('icsForms.309.netName', { defaultValue: 'Radio net name or position / tactical call' })} wide>
+          <input style={inputStyle} value={f.netName} onChange={(e) => patch('ics309', { netName: e.target.value })} />
+        </Field>
+        <Field label={t('icsForms.309.operatorName', { defaultValue: 'Radio operator name' })}>
+          <input
+            style={inputStyle}
+            value={f.operatorName}
+            onChange={(e) => patch('ics309', { operatorName: e.target.value })}
+          />
+        </Field>
+        <Field label={t('icsForms.309.operatorCall', { defaultValue: 'Radio operator call sign' })}>
+          <input
+            style={inputStyle}
+            value={f.operatorCall}
+            onChange={(e) => patch('ics309', { operatorCall: e.target.value.toUpperCase() })}
+          />
+        </Field>
+      </div>
+      <div style={{ fontSize: '9px', color: 'var(--text-muted, #888)', margin: '8px 0 3px' }}>
+        {t('icsForms.309.include', { defaultValue: 'Include from the event log:' })}
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 10px' }}>
+        {Object.entries(EVENT_TYPE_META).map(([type, meta]) => (
+          <label key={type} style={{ fontSize: '10px', display: 'flex', gap: '3px', color: meta.color }}>
+            <input type="checkbox" checked={types.includes(type)} onChange={() => toggleType(type)} />
+            {meta.label}
+          </label>
+        ))}
+      </div>
+      <div style={{ fontSize: '10px', color: 'var(--text-secondary, #aaa)', marginTop: '6px' }}>
+        {t('icsForms.309.rowCount', {
+          defaultValue: 'Log entries in the operational period: {{count}}',
+          count: rowCount,
+        })}
+      </div>
+    </>
+  );
+}
+
+// ── ICS 214 ─────────────────────────────────────────────────────────────────
+function Ics214Editor({ t, drafts, patch, events }) {
+  const f = drafts.ics214;
+  const rows = f.rows || [];
+  const resources = f.resources || [];
+
+  const importEvents = () => {
+    const imported = ics214RowsFromEvents(events, headerRange(drafts.header));
+    patch('ics214', { rows: mergeIcs214Rows(rows, imported) });
+  };
+  const updateRow = (id, changes) =>
+    patch('ics214', { rows: rows.map((r) => (r.id === id ? { ...r, ...changes } : r)) });
+  const removeRow = (id) => patch('ics214', { rows: rows.filter((r) => r.id !== id) });
+  const updateRes = (id, changes) =>
+    patch('ics214', { resources: resources.map((r) => (r.id === id ? { ...r, ...changes } : r)) });
+
+  return (
+    <>
+      <SectionTitle>{t('icsForms.214.section', { defaultValue: 'Unit / operator' })}</SectionTitle>
+      <div style={gridStyle(150)}>
+        <Field label={t('icsForms.214.name', { defaultValue: 'Name' })}>
+          <input style={inputStyle} value={f.name} onChange={(e) => patch('ics214', { name: e.target.value })} />
+        </Field>
+        <Field label={t('icsForms.214.position', { defaultValue: 'ICS position' })}>
+          <input
+            style={inputStyle}
+            value={f.icsPosition}
+            onChange={(e) => patch('ics214', { icsPosition: e.target.value })}
+          />
+        </Field>
+        <Field label={t('icsForms.214.agency', { defaultValue: 'Home agency (and unit)' })}>
+          <input
+            style={inputStyle}
+            value={f.homeAgency}
+            onChange={(e) => patch('ics214', { homeAgency: e.target.value })}
+          />
+        </Field>
+      </div>
+
+      <SectionTitle>{t('icsForms.214.resources', { defaultValue: 'Resources assigned' })}</SectionTitle>
+      {resources.map((r) => (
+        <div
+          key={r.id}
+          style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr auto', gap: '4px', marginBottom: '3px' }}
+        >
+          <input
+            style={inputStyle}
+            placeholder={t('icsForms.214.name', { defaultValue: 'Name' })}
+            value={r.name}
+            onChange={(e) => updateRes(r.id, { name: e.target.value })}
+          />
+          <input
+            style={inputStyle}
+            placeholder={t('icsForms.214.position', { defaultValue: 'ICS position' })}
+            value={r.position}
+            onChange={(e) => updateRes(r.id, { position: e.target.value })}
+          />
+          <input
+            style={inputStyle}
+            placeholder={t('icsForms.214.agency', { defaultValue: 'Home agency (and unit)' })}
+            value={r.agency}
+            onChange={(e) => updateRes(r.id, { agency: e.target.value })}
+          />
+          <button
+            style={btnStyle}
+            aria-label={t('icsForms.remove', { defaultValue: 'Remove' })}
+            onClick={() => patch('ics214', { resources: resources.filter((x) => x.id !== r.id) })}
+          >
+            ✕
+          </button>
+        </div>
+      ))}
+      <button style={btnStyle} onClick={() => patch('ics214', { resources: [...resources, newIcs214Resource()] })}>
+        + {t('icsForms.214.addResource', { defaultValue: 'Add person' })}
+      </button>
+
+      <SectionTitle>{t('icsForms.214.activity', { defaultValue: 'Activity log' })}</SectionTitle>
+      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '6px' }}>
+        <button
+          style={btnStyle}
+          onClick={importEvents}
+          title={t('icsForms.214.importTitle', {
+            defaultValue: 'Add event-log entries from the operational period. Rows you already edited are kept.',
+          })}
+        >
+          ⤓ {t('icsForms.214.import', { defaultValue: 'Import from event log' })}
+        </button>
+        <button
+          style={btnStyle}
+          onClick={() => patch('ics214', { rows: sortRowsByDateTime([...rows, newIcs214Row()]) })}
+        >
+          + {t('icsForms.214.addRow', { defaultValue: 'Add entry' })}
+        </button>
+        {rows.length > 0 && (
+          <button
+            style={{ ...btnStyle, marginLeft: 'auto' }}
+            onClick={() => patch('ics214', { rows: sortRowsByDateTime(rows) })}
+          >
+            {t('icsForms.214.sort', { defaultValue: 'Sort by time' })}
+          </button>
+        )}
+      </div>
+      {rows.length === 0 && (
+        <div style={{ fontSize: '10px', color: 'var(--text-muted, #888)', fontStyle: 'italic' }}>
+          {t('icsForms.214.empty', {
+            defaultValue: 'No entries yet — import from the event log or add your own.',
+          })}
+        </div>
+      )}
+      {rows.map((r) => (
+        <div
+          key={r.id}
+          style={{ display: 'grid', gridTemplateColumns: '150px 1fr auto', gap: '4px', marginBottom: '3px' }}
+        >
+          <input
+            type="datetime-local"
+            style={inputStyle}
+            value={r.dateTime}
+            aria-label={t('icsForms.214.dateTime', { defaultValue: 'Date/time (UTC)' })}
+            onChange={(e) => updateRow(r.id, { dateTime: e.target.value })}
+          />
+          <textarea
+            style={{ ...inputStyle, resize: 'vertical', minHeight: '24px' }}
+            rows={1}
+            value={r.text}
+            aria-label={t('icsForms.214.notable', { defaultValue: 'Notable activity' })}
+            onChange={(e) => updateRow(r.id, { text: e.target.value })}
+          />
+          <button
+            style={btnStyle}
+            aria-label={t('icsForms.remove', { defaultValue: 'Remove' })}
+            onClick={() => removeRow(r.id)}
+          >
+            ✕
+          </button>
+        </div>
+      ))}
+    </>
+  );
+}
+
+// ── ICS 213 ─────────────────────────────────────────────────────────────────
+function Ics213Editor({ t, drafts, patch, config }) {
+  const f = drafts.ics213;
+  const [status, setStatus] = useState(null); // { kind: 'ok'|'error'|'busy', text }
+  // Local TNC state: null = unknown (let the server decide), true/false from rig-bridge
+  const [tncConnected, setTncConnected] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    const check = async () => {
+      try {
+        const res = await apiFetch('/api/aprs/tnc-status', { cache: 'no-store' });
+        if (!alive || !res?.ok) return;
+        const data = await res.json();
+        if (alive) setTncConnected(!!data?.connected);
+      } catch {
+        /* status unknown — sending still reports the server's answer */
+      }
+    };
+    check();
+    const id = setInterval(check, 30 * 1000);
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
+  }, []);
+  const aprsText = ics213AprsText(f);
+  const parts = useMemo(() => splitForAprs(aprsText), [aprsText]);
+  const addressee = String(f.toCall || '')
+    .trim()
+    .toUpperCase();
+  const tncDown = tncConnected === false;
+  const canSend = !!addressee && parts.length > 0 && !tncDown && status?.kind !== 'busy';
+
+  const send = async () => {
+    if (!canSend) return;
+    const ok = window.confirm(
+      t('icsForms.213.sendConfirm', {
+        defaultValue: 'Send this ICS 213 to {{call}} as {{count}} APRS message(s) through the local TNC?',
+        call: addressee,
+        count: parts.length,
+      }),
+    );
+    if (!ok) return;
+    setStatus({ kind: 'busy', text: t('icsForms.213.sending', { defaultValue: 'Sending…' }) });
+    const r = await sendAprsParts(addressee, parts);
+    if (r.sent > 0) {
+      recordEvent('ics213_sent', {
+        callsign: config?.callsign || 'N0CALL',
+        summary: `ICS 213 to ${addressee}: ${f.subject || '(no subject)'}`,
+        details: r.sent === r.total ? aprsText : `${aprsText} [partial: ${r.sent}/${r.total} parts sent]`,
+      });
+    }
+    setStatus(
+      r.error
+        ? {
+            kind: 'error',
+            text: t('icsForms.213.sendFailed', {
+              defaultValue: 'Sent {{sent}} of {{total}} — {{error}}',
+              sent: r.sent,
+              total: r.total,
+              error: r.error,
+            }),
+          }
+        : {
+            kind: 'ok',
+            text: t('icsForms.213.sent', {
+              defaultValue: 'Sent to {{call}} in {{count}} message(s) and recorded in the event log.',
+              call: addressee,
+              count: r.total,
+            }),
+          },
+    );
+  };
+
+  return (
+    <>
+      <SectionTitle>{t('icsForms.213.section', { defaultValue: 'General message' })}</SectionTitle>
+      <div style={gridStyle(160)}>
+        <Field label={t('icsForms.213.to', { defaultValue: 'To (name and position)' })}>
+          <input style={inputStyle} value={f.to} onChange={(e) => patch('ics213', { to: e.target.value })} />
+        </Field>
+        <Field label={t('icsForms.213.toCall', { defaultValue: 'To call sign (APRS addressee)' })}>
+          <input
+            style={inputStyle}
+            value={f.toCall}
+            maxLength={9}
+            onChange={(e) => patch('ics213', { toCall: e.target.value.toUpperCase().replace(/\s/g, '') })}
+          />
+        </Field>
+        <Field label={t('icsForms.213.from', { defaultValue: 'From (name and position)' })}>
+          <input style={inputStyle} value={f.from} onChange={(e) => patch('ics213', { from: e.target.value })} />
+        </Field>
+        <Field label={t('icsForms.213.dateTime', { defaultValue: 'Date / time (UTC)' })}>
+          <div style={{ display: 'flex', gap: '3px' }}>
+            <input
+              type="datetime-local"
+              style={inputStyle}
+              value={f.dateTime}
+              onChange={(e) => patch('ics213', { dateTime: e.target.value })}
+            />
+            <button
+              type="button"
+              style={btnStyle}
+              onClick={() => patch('ics213', { dateTime: toInputDateTime(Date.now()) })}
+            >
+              {t('icsForms.now', { defaultValue: 'Now' })}
+            </button>
+          </div>
+        </Field>
+        <Field label={t('icsForms.213.subject', { defaultValue: 'Subject' })} wide>
+          <input style={inputStyle} value={f.subject} onChange={(e) => patch('ics213', { subject: e.target.value })} />
+        </Field>
+        <Field label={t('icsForms.213.message', { defaultValue: 'Message' })} wide>
+          <textarea
+            style={{ ...inputStyle, resize: 'vertical', minHeight: '80px' }}
+            value={f.message}
+            onChange={(e) => patch('ics213', { message: e.target.value })}
+          />
+        </Field>
+        <Field label={t('icsForms.213.approvedBy', { defaultValue: 'Approved by (name)' })}>
+          <input
+            style={inputStyle}
+            value={f.approvedBy}
+            onChange={(e) => patch('ics213', { approvedBy: e.target.value })}
+          />
+        </Field>
+        <Field label={t('icsForms.213.approvedPosition', { defaultValue: 'Approver position / title' })}>
+          <input
+            style={inputStyle}
+            value={f.approvedPosition}
+            onChange={(e) => patch('ics213', { approvedPosition: e.target.value })}
+          />
+        </Field>
+        <Field label={t('icsForms.213.reply', { defaultValue: 'Reply' })} wide>
+          <textarea
+            style={{ ...inputStyle, resize: 'vertical', minHeight: '40px' }}
+            value={f.reply}
+            onChange={(e) => patch('ics213', { reply: e.target.value })}
+          />
+        </Field>
+        <Field label={t('icsForms.213.repliedBy', { defaultValue: 'Replied by (name / position)' })}>
+          <input
+            style={inputStyle}
+            value={f.repliedBy}
+            onChange={(e) => patch('ics213', { repliedBy: e.target.value })}
+          />
+        </Field>
+        <Field label={t('icsForms.213.repliedDateTime', { defaultValue: 'Reply date / time (UTC)' })}>
+          <input
+            type="datetime-local"
+            style={inputStyle}
+            value={f.repliedDateTime}
+            onChange={(e) => patch('ics213', { repliedDateTime: e.target.value })}
+          />
+        </Field>
+      </div>
+
+      <SectionTitle>{t('icsForms.213.aprs', { defaultValue: 'Send over APRS' })}</SectionTitle>
+      <div style={{ fontSize: '10px', color: 'var(--text-secondary, #aaa)', marginBottom: '4px' }}>
+        {parts.length === 0
+          ? t('icsForms.213.aprsEmpty', { defaultValue: 'Write a subject or message to send it over APRS.' })
+          : t('icsForms.213.aprsParts', {
+              defaultValue: 'Subject and message go out as {{count}} APRS message(s) of up to 67 characters:',
+              count: parts.length,
+            })}
+      </div>
+      {parts.length > 0 && (
+        <ol
+          style={{
+            margin: '0 0 6px',
+            paddingLeft: '22px',
+            fontSize: '10px',
+            color: 'var(--text-primary, #ddd)',
+            maxHeight: '120px',
+            overflowY: 'auto',
+          }}
+        >
+          {parts.map((p, i) => (
+            <li key={i} style={{ wordBreak: 'break-word' }}>
+              {p} <span style={{ color: 'var(--text-muted, #888)' }}>({p.length})</span>
+            </li>
+          ))}
+        </ol>
+      )}
+      <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+        <button
+          onClick={send}
+          disabled={!canSend}
+          style={{ ...primaryBtn, opacity: canSend ? 1 : 0.4, cursor: canSend ? 'pointer' : 'not-allowed' }}
+        >
+          📡 {t('icsForms.213.send', { defaultValue: 'Send as APRS message' })}
+        </button>
+        {!addressee && (
+          <span style={{ fontSize: '10px', color: 'var(--text-muted, #888)' }}>
+            {t('icsForms.213.needCall', { defaultValue: 'Enter the To call sign first.' })}
+          </span>
+        )}
+        {tncDown && (
+          <span style={{ fontSize: '10px', color: '#f59e0b' }}>
+            {t('icsForms.213.noTnc', {
+              defaultValue: 'No local TNC connected — enable the APRS TNC plugin in Rig Bridge.',
+            })}
+          </span>
+        )}
+        {status && (
+          <span
+            role="status"
+            style={{
+              fontSize: '10px',
+              color: status.kind === 'error' ? '#ef4444' : status.kind === 'ok' ? '#22c55e' : '#aaa',
+            }}
+          >
+            {status.text}
+          </span>
+        )}
+      </div>
+    </>
+  );
+}
+
+// ── ICS 205 ─────────────────────────────────────────────────────────────────
+const COLS_205 = [
+  ['zone', 'Zone', 50],
+  ['ch', 'Ch #', 36],
+  ['function', 'Function', 80],
+  ['name', 'Channel name', 110],
+  ['assignment', 'Assignment', 90],
+  ['rxFreq', 'RX MHz', 76],
+  ['rxTone', 'RX tone', 56],
+  ['txFreq', 'TX MHz', 76],
+  ['txTone', 'TX tone', 56],
+];
+
+function Ics205Editor({ t, drafts, patch, config }) {
+  const f = drafts.ics205;
+  const rows = f.rows || [];
+  const [picker, setPicker] = useState(null); // 'repeaters' | 'nets' | null
+  const [repeaters, setRepeaters] = useState(null);
+  const [repLoading, setRepLoading] = useState(false);
+  const [repError, setRepError] = useState('');
+  const nets = useMemo(() => (picker === 'nets' ? loadNetSchedule() : []), [picker]);
+  const lat = config?.location?.lat;
+  const lon = config?.location?.lon;
+
+  const loadRepeaters = useCallback(async () => {
+    if (lat == null || lon == null) {
+      setRepError(t('icsForms.205.noLocation', { defaultValue: 'Set your location in Settings → Station first.' }));
+      return;
+    }
+    setRepLoading(true);
+    setRepError('');
+    try {
+      let radius = 100;
+      try {
+        const stored = Number(localStorage.getItem(REPEATER_RADIUS_KEY));
+        if (stored > 0) radius = stored;
+      } catch {}
+      const res = await apiFetch(`/api/repeaters?lat=${lat}&lon=${lon}&radius=${radius}`);
+      if (!res?.ok) throw new Error(res ? `HTTP ${res.status}` : 'busy');
+      const data = await res.json();
+      setRepeaters(Array.isArray(data?.repeaters) ? data.repeaters : []);
+    } catch (e) {
+      setRepError(
+        t('icsForms.205.repError', { defaultValue: 'Could not load repeaters ({{error}})', error: e?.message || '' }),
+      );
+    } finally {
+      setRepLoading(false);
+    }
+  }, [lat, lon, t]);
+
+  const openPicker = (which) => {
+    setPicker((p) => (p === which ? null : which));
+    if (which === 'repeaters' && repeaters == null && !repLoading) loadRepeaters();
+  };
+
+  const addRow = (row) => patch('ics205', { rows: [...rows, row] });
+  const updateRow = (id, changes) =>
+    patch('ics205', { rows: rows.map((r) => (r.id === id ? { ...r, ...changes } : r)) });
+  const moveRow = (idx, dir) => {
+    const j = idx + dir;
+    if (j < 0 || j >= rows.length) return;
+    const next = rows.slice();
+    [next[idx], next[j]] = [next[j], next[idx]];
+    patch('ics205', { rows: next });
+  };
+
+  const pickerList = {
+    maxHeight: '180px',
+    overflowY: 'auto',
+    border: '1px solid var(--border-color, #2a3040)',
+    borderRadius: '3px',
+    margin: '4px 0 8px',
+    fontSize: '10px',
+  };
+  const pickerRow = {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: '6px',
+    padding: '3px 6px',
+    borderBottom: '1px solid rgba(255,255,255,0.05)',
+  };
+
+  return (
+    <>
+      <SectionTitle>{t('icsForms.205.section', { defaultValue: 'Basic radio channel use' })}</SectionTitle>
+      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+        <button style={btnStyle} onClick={() => openPicker('repeaters')} aria-expanded={picker === 'repeaters'}>
+          🗼 {t('icsForms.205.fromRepeaters', { defaultValue: 'Add from Repeaters' })}
+        </button>
+        <button style={btnStyle} onClick={() => openPicker('nets')} aria-expanded={picker === 'nets'}>
+          🕐 {t('icsForms.205.fromNets', { defaultValue: 'Add from Nets' })}
+        </button>
+        <button style={btnStyle} onClick={() => addRow(newSimplexRow())}>
+          + {t('icsForms.205.addSimplex', { defaultValue: 'Simplex channel' })}
+        </button>
+      </div>
+
+      {picker === 'repeaters' && (
+        <div style={pickerList}>
+          {repLoading && <div style={{ padding: '6px' }}>{t('icsForms.loading', { defaultValue: 'Loading…' })}</div>}
+          {repError && <div style={{ padding: '6px', color: '#ef4444' }}>{repError}</div>}
+          {!repLoading && !repError && repeaters?.length === 0 && (
+            <div style={{ padding: '6px' }}>
+              {t('icsForms.205.noRepeaters', { defaultValue: 'No repeaters found near your location.' })}
+            </div>
+          )}
+          {(repeaters || []).map((r, i) => (
+            <div key={`${r.callsign}-${r.mhz}-${i}`} style={pickerRow}>
+              <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <b>{r.callsign || '—'}</b> {Number(r.mhz).toFixed(4)}{' '}
+                {r.offsetMhz ? `${r.offsetMhz > 0 ? '+' : ''}${Number(r.offsetMhz).toFixed(1)}` : 'simplex'}
+                {r.tone ? ` · ${r.tone}` : ''}
+                {r.mode ? ` · ${r.mode}` : ''}
+                {r.city ? ` · ${r.city}` : ''}
+              </span>
+              <button style={btnStyle} onClick={() => addRow(ics205RowFromRepeater(r))}>
+                + {t('icsForms.add', { defaultValue: 'Add' })}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {picker === 'nets' && (
+        <div style={pickerList}>
+          {nets.length === 0 && (
+            <div style={{ padding: '6px' }}>
+              {t('icsForms.205.noNets', { defaultValue: 'No nets saved — add them in the Nets panel.' })}
+            </div>
+          )}
+          {nets.map((n) => (
+            <div key={n.id || n.name} style={pickerRow}>
+              <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <b>{n.name}</b> {n.freq_mhz ? Number(n.freq_mhz).toFixed(3) : ''} {n.mode || ''} {n.time_utc}Z
+              </span>
+              <button style={btnStyle} onClick={() => addRow(ics205RowFromNet(n))}>
+                + {t('icsForms.add', { defaultValue: 'Add' })}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {rows.length === 0 ? (
+        <div style={{ fontSize: '10px', color: 'var(--text-muted, #888)', fontStyle: 'italic', marginTop: '6px' }}>
+          {t('icsForms.205.empty', {
+            defaultValue: 'No channels yet — add repeaters, nets, or simplex channels above.',
+          })}
+        </div>
+      ) : (
+        <div style={{ overflowX: 'auto', marginTop: '6px' }}>
+          <table style={{ borderCollapse: 'collapse', fontSize: '10px' }}>
+            <thead>
+              <tr style={{ color: 'var(--text-muted, #888)', textAlign: 'left' }}>
+                {COLS_205.map(([key, label]) => (
+                  <th key={key} style={{ padding: '2px 3px', fontWeight: 400 }}>
+                    {t(`icsForms.205.col.${key}`, { defaultValue: label })}
+                  </th>
+                ))}
+                <th style={{ padding: '2px 3px', fontWeight: 400 }}>
+                  {t('icsForms.205.col.bandwidth', { defaultValue: 'N/W' })}
+                </th>
+                <th style={{ padding: '2px 3px', fontWeight: 400 }}>
+                  {t('icsForms.205.col.mode', { defaultValue: 'Mode' })}
+                </th>
+                <th style={{ padding: '2px 3px', fontWeight: 400 }}>
+                  {t('icsForms.205.col.remarks', { defaultValue: 'Remarks' })}
+                </th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, idx) => (
+                <tr key={r.id}>
+                  {COLS_205.map(([key, label, width]) => (
+                    <td key={key} style={{ padding: '1px 2px' }}>
+                      <input
+                        style={{ ...inputStyle, width: `${width}px` }}
+                        value={r[key] || ''}
+                        aria-label={t(`icsForms.205.col.${key}`, { defaultValue: label })}
+                        onChange={(e) => updateRow(r.id, { [key]: e.target.value })}
+                      />
+                    </td>
+                  ))}
+                  <td style={{ padding: '1px 2px' }}>
+                    <select
+                      style={{ ...inputStyle, width: '44px' }}
+                      value={r.rxNW === 'W' ? 'W' : 'N'}
+                      aria-label={t('icsForms.205.col.bandwidth', { defaultValue: 'N/W' })}
+                      title={t('icsForms.205.bandwidthTitle', { defaultValue: 'N = narrowband, W = wideband' })}
+                      onChange={(e) => updateRow(r.id, { rxNW: e.target.value, txNW: e.target.value })}
+                    >
+                      <option value="N">N</option>
+                      <option value="W">W</option>
+                    </select>
+                  </td>
+                  <td style={{ padding: '1px 2px' }}>
+                    <select
+                      style={{ ...inputStyle, width: '48px' }}
+                      value={r.mode || 'A'}
+                      aria-label={t('icsForms.205.col.mode', { defaultValue: 'Mode' })}
+                      onChange={(e) => updateRow(r.id, { mode: e.target.value })}
+                    >
+                      <option value="A">A</option>
+                      <option value="D">D</option>
+                      <option value="M">M</option>
+                    </select>
+                  </td>
+                  <td style={{ padding: '1px 2px' }}>
+                    <input
+                      style={{ ...inputStyle, width: '160px' }}
+                      value={r.remarks || ''}
+                      aria-label={t('icsForms.205.col.remarks', { defaultValue: 'Remarks' })}
+                      onChange={(e) => updateRow(r.id, { remarks: e.target.value })}
+                    />
+                  </td>
+                  <td style={{ padding: '1px 2px', whiteSpace: 'nowrap' }}>
+                    <button
+                      style={btnStyle}
+                      onClick={() => moveRow(idx, -1)}
+                      aria-label={t('icsForms.moveUp', { defaultValue: 'Move up' })}
+                    >
+                      ↑
+                    </button>
+                    <button
+                      style={btnStyle}
+                      onClick={() => moveRow(idx, 1)}
+                      aria-label={t('icsForms.moveDown', { defaultValue: 'Move down' })}
+                    >
+                      ↓
+                    </button>
+                    <button
+                      style={btnStyle}
+                      aria-label={t('icsForms.remove', { defaultValue: 'Remove' })}
+                      onClick={() => patch('ics205', { rows: rows.filter((x) => x.id !== r.id) })}
+                    >
+                      ✕
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <div style={{ fontSize: '9px', color: 'var(--text-muted, #888)', marginTop: '4px' }}>
+        {t('icsForms.205.hint', {
+          defaultValue:
+            'Blank Ch # cells are numbered in order when printed. N/W: narrowband or wideband. Mode: A = analog, D = digital, M = mixed.',
+        })}
+      </div>
+
+      <div style={{ marginTop: '8px' }}>
+        <Field label={t('icsForms.205.special', { defaultValue: 'Special instructions' })} wide>
+          <textarea
+            style={{ ...inputStyle, resize: 'vertical', minHeight: '40px' }}
+            value={f.specialInstructions}
+            onChange={(e) => patch('ics205', { specialInstructions: e.target.value })}
+          />
+        </Field>
+      </div>
+    </>
+  );
+}

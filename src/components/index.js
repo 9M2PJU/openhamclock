@@ -86,3 +86,4 @@ export { default as WefaxPanel } from './WefaxPanel.jsx';
 export { default as MapCursorReadout } from './MapCursorReadout.jsx';
 export { default as HamAlertPanel } from './HamAlertPanel.jsx';
 export { default as BalloonsPanel } from './BalloonsPanel.jsx';
+export { default as IcsFormsPanel } from './IcsFormsPanel.jsx';
