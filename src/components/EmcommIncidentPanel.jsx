@@ -204,7 +204,7 @@ export default function EmcommIncidentPanel({ incident, callsign }) {
   // ── Not joined ────────────────────────────────────────────────────────────
   if (!incident.joined) {
     return (
-      <div style={{ padding: '4px 8px 6px', fontSize: '11px' }}>
+      <div data-testid="incident-panel-local" style={{ padding: '4px 8px 6px', fontSize: '11px' }}>
         {incident.error && <div style={{ color: '#f59e0b', marginBottom: '6px' }}>{incident.error}</div>}
         {!mode && (
           <>

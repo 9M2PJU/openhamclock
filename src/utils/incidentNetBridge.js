@@ -64,6 +64,9 @@ export function fitHistory(list) {
 function announce(type) {
   try {
     state.channel?.postMessage({ type, from: BRIDGE_ID });
+    // Net Control counts every sender as another open panel; the bridge is
+    // not one, so it signs off straight away.
+    state.channel?.postMessage({ type: 'bye', from: BRIDGE_ID });
   } catch {
     /* channel closed */
   }

@@ -1917,6 +1917,8 @@ export default function EmcommLayout(props) {
                 return (
                   <div
                     key={op.call}
+                    data-testid="roster-row"
+                    data-call={op.call}
                     onClick={hasPos ? () => panToTarget(op) : undefined}
                     onMouseEnter={() => scheduleHistoryHover(op.call)}
                     onMouseLeave={cancelHistoryHover}
@@ -2071,6 +2073,7 @@ export default function EmcommLayout(props) {
                 .map((ev) => (
                   <div
                     key={ev.id}
+                    data-testid="event-row"
                     style={{
                       padding: '3px 8px',
                       fontSize: '10px',
@@ -2474,7 +2477,9 @@ function PanelSection({ title, count, color, extra, panels, bodyMaxHeight = '250
   const collapsed = panels ? panels.collapsedFor(title) : localCollapsed;
   const setCollapsed = panels ? () => panels.toggle(title) : setLocalCollapsed;
   return (
-    <div style={{ background: '#0d0d0d', borderRadius: '6px', overflow: 'hidden' }}>
+    // flexShrink 0: the rail is a scrolling flex column; without it, once the
+    // panels outgrow the rail every section is squashed and its content clipped.
+    <div style={{ background: '#0d0d0d', borderRadius: '6px', overflow: 'hidden', flexShrink: 0 }}>
       <div
         style={{
           display: 'flex',
