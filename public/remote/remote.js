@@ -1,5 +1,8 @@
 /* OpenHamClock phone remote — drives one display through /api/control.
- * Plain JS, no build step. URL: /remote?target=<display id>&key=<optional API key>
+ * Plain JS, no build step. URL: /remote?target=<display id>&key=<pairing key>
+ * The pairing key is the display's own secret (QR code / Settings → Station);
+ * the server's API_WRITE_KEY works too. It is moved out of the address bar
+ * into sessionStorage on connect and sent as Authorization: Bearer.
  * State comes from GET /api/control/state (what the display last reported);
  * every button is one POST /api/control/<command>. See docs/API.md.
  */
@@ -126,6 +129,16 @@
     $('statusText').textContent = text;
     $('statusDot').className = `dot ${cls || ''}`;
   };
+  // "Paired ✓" once the server has accepted our key for a command / state
+  // read; "not paired" after a 401/403. Empty until we know.
+  let paired = null;
+  const setPaired = (ok) => {
+    paired = ok;
+    const el = $('pairStatus');
+    el.textContent = ok === null ? '' : ok ? 'Paired ✓' : 'not paired';
+    el.className = `pair ${ok === null ? '' : ok ? 'ok' : 'bad'}`;
+  };
+  const authFailed = (status) => status === 401 || status === 403;
 
   async function send(cmd, body) {
     try {
@@ -136,9 +149,11 @@
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
+        if (authFailed(res.status)) setPaired(false);
         toast(json.error || `HTTP ${res.status}`, true);
         return null;
       }
+      if (paired !== true) setPaired(true);
       if (json.live === 0 && json.queued) toast('Display offline — queued');
       else toast(`✓ ${cmd}`);
       setTimeout(refresh, 800);
@@ -153,8 +168,9 @@
     if (!target && serverInfo.requireTarget) return;
     try {
       const res = await fetch(`/api/control/state${tq()}`, { headers: headers() });
-      if (res.status === 401) {
-        setStatus('API key required', 'bad');
+      if (authFailed(res.status)) {
+        setPaired(false);
+        setStatus(key ? 'pairing key not accepted' : 'pairing key required', 'bad');
         return;
       }
       if (res.status === 404) {
@@ -166,6 +182,8 @@
         return;
       }
       const json = await res.json();
+      // The server says how it let us in; 'open' (no key configured) proves nothing.
+      if (json.auth === 'pairing' || json.auth === 'master') setPaired(true);
       if (json.displays && !target) {
         // Local fan-out server: adopt the first connected display for state rendering.
         const ids = Object.keys(json.displays);
@@ -309,12 +327,13 @@
   function connect() {
     target = $('targetInput').value.trim();
     key = $('keyInput').value.trim();
+    setPaired(null);
     sessionStorage.setItem('ohc-remote-target', target);
     sessionStorage.setItem('ohc-remote-key', key);
     const url = new URL(location.href);
     if (target) url.searchParams.set('target', target);
     else url.searchParams.delete('target');
-    url.searchParams.delete('key'); // never keep the key in the address bar
+    url.searchParams.delete('key'); // never keep the pairing key in the address bar / history
     history.replaceState(null, '', url.toString());
     if (!target && serverInfo.requireTarget) {
       toast('This server needs a display id — scan the QR in Settings → Station', true);
@@ -430,10 +449,12 @@
     $('keyInput').value = key;
     $('pickDisplayBtn').hidden = !!serverInfo.requireTarget;
     $('setupHint').textContent = serverInfo.requireTarget
-      ? 'This server requires a display id. Scan the QR code in Settings → Station on the display.'
+      ? 'This server requires a display id. Scan the QR code in Settings → Station on the display — it fills in the id and the pairing key.'
       : 'Leave the id empty to broadcast to every display on this server, or pick one.';
     if (serverInfo.writeKeyRequired && !key)
-      $('setupHint').textContent += ' Commands need the API key (API_WRITE_KEY).';
+      $('setupHint').textContent += target
+        ? ' Commands need this display’s pairing key (QR code / Settings → Station) or the server’s API_WRITE_KEY.'
+        : ' Broadcast commands need the server’s API_WRITE_KEY; with a display id its pairing key is enough.';
     if (target || !serverInfo.requireTarget) connect();
     else setStatus('enter a display id', 'bad');
   })();

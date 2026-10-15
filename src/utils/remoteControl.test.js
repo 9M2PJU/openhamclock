@@ -1,9 +1,11 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
   getControlId,
+  getControlSecret,
   rotateControlId,
   isRemoteEnabled,
   buildRemoteUrl,
+  displayQuery,
   readMapSettings,
   panelsFromLayoutJson,
   buildStateReport,
@@ -11,7 +13,56 @@ import {
   resolveDxTarget,
   CONTROL_ID_KEY,
   CONTROL_ID_RE,
+  CONTROL_SECRET_KEY,
+  CONTROL_SECRET_RE,
+  CONTROL_ID_CHANGED_EVENT,
 } from './remoteControl.js';
+
+describe('controlSecret', () => {
+  beforeEach(() => {
+    localStorage.removeItem(CONTROL_ID_KEY);
+    localStorage.removeItem(CONTROL_SECRET_KEY);
+  });
+
+  it('creates a 32-char url-safe secret and keeps it stable', () => {
+    const s = getControlSecret();
+    expect(s).toMatch(CONTROL_SECRET_RE);
+    expect(s.length).toBe(32);
+    expect(getControlSecret()).toBe(s);
+    expect(localStorage.getItem(CONTROL_SECRET_KEY)).toBe(s);
+  });
+
+  it('replaces a short or unsafe stored secret', () => {
+    localStorage.setItem(CONTROL_SECRET_KEY, 'too short');
+    expect(getControlSecret()).toMatch(CONTROL_SECRET_RE);
+  });
+
+  it('secrets differ between generations', () => {
+    const a = getControlSecret();
+    localStorage.removeItem(CONTROL_SECRET_KEY);
+    expect(getControlSecret()).not.toBe(a);
+  });
+
+  it('rotateControlId replaces id AND secret and announces it', () => {
+    const id = getControlId();
+    const secret = getControlSecret();
+    let seen = null;
+    const onChange = (e) => (seen = e.detail.controlId);
+    window.addEventListener(CONTROL_ID_CHANGED_EVENT, onChange);
+    const next = rotateControlId();
+    window.removeEventListener(CONTROL_ID_CHANGED_EVENT, onChange);
+    expect(next).not.toBe(id);
+    expect(getControlSecret()).not.toBe(secret);
+    expect(getControlSecret()).toMatch(CONTROL_SECRET_RE);
+    expect(seen).toBe(next);
+  });
+
+  it('displayQuery carries target and secret, url-encoded', () => {
+    expect(displayQuery('ohc-abc', 'S3cr-t_x')).toBe('target=ohc-abc&secret=S3cr-t_x');
+    expect(displayQuery('ohc-abc', '')).toBe('target=ohc-abc');
+    expect(displayQuery('a b', 'c&d')).toBe('target=a%20b&secret=c%26d');
+  });
+});
 
 describe('controlId', () => {
   beforeEach(() => localStorage.removeItem(CONTROL_ID_KEY));

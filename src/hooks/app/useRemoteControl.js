@@ -3,12 +3,17 @@
  *
  * When enabled (Settings → Station → Remote control; default on for local
  * installs) the display:
- *   • subscribes to GET /api/control/stream?target=<controlId> (SSE) and
- *     applies each `command` event through the app's own setters;
- *   • POSTs its state to /api/control/report every 30 s and whenever the
- *     reported fields change (debounced), so the phone remote can render
- *     the right buttons;
+ *   • subscribes to GET /api/control/stream?target=<controlId>&secret=… (SSE)
+ *     and applies each `command` event through the app's own setters;
+ *   • POSTs its state (+ pairing secret) to /api/control/report every 30 s
+ *     and whenever the reported fields change (debounced), so the phone
+ *     remote can render the right buttons;
  *   • answers `capture` commands with a PNG frame (utils/captureFrame.js).
+ *
+ * The pairing secret (utils/remoteControl.js getControlSecret) is what lets
+ * the phone remote command this display without the server's API_WRITE_KEY.
+ * A 403 from the server means another browser already paired this id —
+ * surfaced as remoteStatus 'rejected' (Settings → "New id" fixes it).
  *
  * Features owned elsewhere are reached through window events so this hook
  * never needs those components' internals:
@@ -19,9 +24,12 @@
  *   ohc:set-time {offsetMs} / ohc:set-alarm {...}     → dispatched for other packages
  *   ohc:set-title → utils/sessionFlags titleOverride  → Header
  */
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   getControlId,
+  getControlSecret,
+  displayQuery,
+  CONTROL_ID_CHANGED_EVENT,
   buildStateReport,
   stateFingerprint,
   readMapSettings,
@@ -71,14 +79,24 @@ export default function useRemoteControl({
   const ref = useRef({});
   ref.current = { config, onSaveConfig, dxLocation, dxCallsign, setDxLocation, setDxCallsign, satellites };
 
+  // Settings → "New id" rotates id + secret; re-subscribe under the new pair.
+  const [generation, setGeneration] = useState(0);
+  useEffect(() => {
+    const bump = () => setGeneration((g) => g + 1);
+    window.addEventListener(CONTROL_ID_CHANGED_EVENT, bump);
+    return () => window.removeEventListener(CONTROL_ID_CHANGED_EVENT, bump);
+  }, []);
+
   useEffect(() => {
     if (!enabled) {
       setFlag('remoteStatus', 'off');
       return undefined;
     }
     const controlId = getControlId();
+    const controlSecret = getControlSecret();
     let es = null;
     let closed = false;
+    let rejected = false; // another browser holds this id — stop hammering the server
     let retryTimer = null;
     let retryMs = 2000;
 
@@ -173,7 +191,7 @@ export default function useRemoteControl({
           break;
         }
         case 'capture':
-          await uploadFrame(controlId);
+          await uploadFrame(controlId, controlSecret);
           break;
         default:
           break;
@@ -182,9 +200,9 @@ export default function useRemoteControl({
 
     // ── SSE subscription ──────────────────────────────────────────────
     const connect = () => {
-      if (closed) return;
+      if (closed || rejected) return;
       setFlag('remoteStatus', 'connecting');
-      es = new EventSource(`/api/control/stream?target=${encodeURIComponent(controlId)}`);
+      es = new EventSource(`/api/control/stream?${displayQuery(controlId, controlSecret)}`);
       es.addEventListener('connected', () => {
         retryMs = 2000;
         setFlag('remoteStatus', 'connected');
@@ -199,14 +217,14 @@ export default function useRemoteControl({
         apply(cmd).catch((err) => console.warn('[RemoteControl] command failed:', cmd?.type, err));
       });
       es.onerror = () => {
-        setFlag('remoteStatus', 'error');
+        if (!rejected) setFlag('remoteStatus', 'error');
         try {
           es.close();
         } catch {
           /* ignore */
         }
         es = null;
-        if (!closed) {
+        if (!closed && !rejected) {
           retryTimer = setTimeout(connect, retryMs);
           retryMs = Math.min(60000, retryMs * 2);
         }
@@ -243,20 +261,35 @@ export default function useRemoteControl({
     };
 
     const send = async (state) => {
+      if (rejected) return;
       lastSent = Date.now();
       lastFingerprint = stateFingerprint(state);
       try {
-        await fetch('/api/control/report', {
+        const res = await fetch('/api/control/report', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ target: controlId, state }),
+          body: JSON.stringify({ target: controlId, secret: controlSecret, state }),
         });
+        if (res.status === 403) {
+          // This id is paired to a different secret (another browser claimed
+          // it, or our secret was reset). Stop; Settings → "New id" recovers.
+          rejected = true;
+          setFlag('remoteStatus', 'rejected');
+          try {
+            es?.close();
+          } catch {
+            /* ignore */
+          }
+          es = null;
+          if (retryTimer) clearTimeout(retryTimer);
+        }
       } catch {
         /* server away — the next tick retries */
       }
     };
 
     const tick = () => {
+      if (rejected) return;
       const state = collect();
       const fp = stateFingerprint(state);
       const due = Date.now() - lastSent >= REPORT_INTERVAL_MS;
@@ -284,5 +317,5 @@ export default function useRemoteControl({
       }
       setFlag('remoteStatus', 'off');
     };
-  }, [enabled]);
+  }, [enabled, generation]);
 }

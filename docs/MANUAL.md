@@ -909,8 +909,21 @@ the **phone remote** at `/remote?target=<id>` — big touch buttons for DX by
 callsign or grid, layout, theme, projection and basemap, common layers,
 tracked satellites, docked panels, time shift (±10 min / 1 h / 1 day and
 "Now"), alarm, stopwatch and countdown, and rig tuning through the Rig
-Bridge cloud relay when this display uses one. If the server sets
-`API_WRITE_KEY`, paste it in the remote page (or add `&key=` to the URL).
+Bridge cloud relay when this display uses one.
+
+The QR code and the phone URL also carry this display's **pairing key** — a
+random secret the browser generates next to its id and registers with the
+server (which keeps only a hash). Whoever holds it can drive this display,
+and only this one, so it works on openhamclock.com and on any server that
+sets `API_WRITE_KEY` without anyone having to hand out the site-wide key;
+the admin key still works everywhere. Treat the link like a password: share
+it by scanning, not by posting it. **New id** replaces both id and key, and
+the remote page shows **Paired ✓** once the server has accepted its key (or
+**not paired** when it was refused — scan the current QR code again). If the
+Settings section shows **Id in use**, another browser has paired the same id
+on this server; press **New id**. The remote page moves the key out of the
+address bar into session storage as soon as it connects. Scripts can use the
+same key: see [docs/API.md → Authentication](API.md#authentication-pairing-key-or-admin-key).
 
 A screenshot of the display is available at `/api/control/capture.png`. In
 the desktop app it is pixel-perfect; in a browser it is a best-effort

@@ -29,12 +29,17 @@
           <input id="targetInput" type="text" inputmode="text" autocomplete="off" placeholder="ohc-…" />
         </label>
         <label class="field">
-          <span>API key (only if the server sets <code>API_WRITE_KEY</code>)</span>
-          <input id="keyInput" type="password" autocomplete="off" placeholder="optional" />
+          <span>Pairing key</span>
+          <input id="keyInput" type="password" autocomplete="off" placeholder="from the QR code" />
+          <small class="help"
+            >From the QR code / Settings → Station on the display; the server admin key (<code>API_WRITE_KEY</code>)
+            also works.</small
+          >
         </label>
         <div class="row">
           <button class="btn" id="connectBtn" type="button">Connect</button>
           <button class="btn ghost" id="pickDisplayBtn" type="button" hidden>Pick a display…</button>
+          <span class="pair" id="pairStatus" aria-live="polite"></span>
         </div>
         <div class="hint" id="setupHint"></div>
       </section>

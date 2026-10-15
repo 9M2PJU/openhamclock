@@ -3,56 +3,89 @@
  *
  * Each display has a stable `controlId` (localStorage) that names its SSE
  * channel; the phone remote and `curl` address it with `?target=<id>`.
+ * Next to it lives a `controlSecret` — the pairing key: the display
+ * registers it with the server (which keeps only a hash) and anyone who
+ * presents it may command this one display, even on a server whose global
+ * API_WRITE_KEY they do not have. The QR code / phone URL carries it.
  * buildStateReport() packs what the remote needs to render its buttons
  * (tracked satellites, map layers, current layout…) and
  * stateFingerprint() lets the hook post only when something changed.
  */
 
 export const CONTROL_ID_KEY = 'openhamclock_controlId';
+export const CONTROL_SECRET_KEY = 'openhamclock_controlSecret';
 export const REPORT_INTERVAL_MS = 30_000;
 export const REPORT_DEBOUNCE_MS = 1_000;
 export const CONTROL_ID_RE = /^[A-Za-z0-9_-]{8,64}$/;
+// Keep in sync with server/utils/controlAuth.js CONTROL_SECRET_RE.
+export const CONTROL_SECRET_RE = /^[A-Za-z0-9_-]{24,128}$/;
 
-function randomId() {
-  const alphabet = 'abcdefghijkmnpqrstuvwxyz23456789';
-  let out = 'ohc-';
+const ID_ALPHABET = 'abcdefghijkmnpqrstuvwxyz23456789';
+const SECRET_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-';
+
+function randomString(alphabet, length) {
+  let out = '';
   try {
-    const arr = new Uint8Array(12);
+    const arr = new Uint8Array(length);
     (globalThis.crypto || window.crypto).getRandomValues(arr);
     for (const b of arr) out += alphabet[b % alphabet.length];
   } catch {
-    for (let i = 0; i < 12; i++) out += alphabet[Math.floor(Math.random() * alphabet.length)];
+    for (let i = 0; i < length; i++) out += alphabet[Math.floor(Math.random() * alphabet.length)];
   }
   return out;
 }
 
-/** Stable per-browser display id; created on first use. */
-export function getControlId() {
-  let id = null;
+const randomId = () => 'ohc-' + randomString(ID_ALPHABET, 12);
+// 64-symbol alphabet × 32 chars = 192 bits.
+const randomSecret = () => randomString(SECRET_ALPHABET, 32);
+
+function readOrCreate(key, re, make) {
+  let v = null;
   try {
-    id = localStorage.getItem(CONTROL_ID_KEY);
+    v = localStorage.getItem(key);
   } catch {
     /* private mode */
   }
-  if (!id || !CONTROL_ID_RE.test(id)) {
-    id = randomId();
+  if (!v || !re.test(v)) {
+    v = make();
     try {
-      localStorage.setItem(CONTROL_ID_KEY, id);
+      localStorage.setItem(key, v);
     } catch {
       /* ignore */
     }
   }
-  return id;
+  return v;
 }
 
-/** Generate a fresh id (Settings → "New id"). */
+/** Stable per-browser display id; created on first use. */
+export function getControlId() {
+  return readOrCreate(CONTROL_ID_KEY, CONTROL_ID_RE, randomId);
+}
+
+/** This display's pairing secret; created on first use (never leaves the browser except to the server). */
+export function getControlSecret() {
+  return readOrCreate(CONTROL_SECRET_KEY, CONTROL_SECRET_RE, randomSecret);
+}
+
+/** Fired on window after rotateControlId() so the live hook re-subscribes under the new pair. */
+export const CONTROL_ID_CHANGED_EVENT = 'ohc:control-id-changed';
+
+/** Generate a fresh id AND secret (Settings → "New id") — old QR codes stop working. */
 export function rotateControlId() {
   try {
     localStorage.removeItem(CONTROL_ID_KEY);
+    localStorage.removeItem(CONTROL_SECRET_KEY);
   } catch {
     /* ignore */
   }
-  return getControlId();
+  getControlSecret();
+  const id = getControlId();
+  try {
+    window.dispatchEvent(new CustomEvent(CONTROL_ID_CHANGED_EVENT, { detail: { controlId: id } }));
+  } catch {
+    /* no window (tests) */
+  }
+  return id;
 }
 
 /**
@@ -65,11 +98,19 @@ export function isRemoteEnabled(config, isLocalInstall) {
   return !!isLocalInstall;
 }
 
+/** Phone-remote URL; `key` is normally this display's pairing secret (the page moves it out of the address bar). */
 export function buildRemoteUrl(origin, controlId, key = '') {
   const base = String(origin || '').replace(/\/$/, '');
   let url = `${base}/remote?target=${encodeURIComponent(controlId)}`;
   if (key) url += `&key=${encodeURIComponent(key)}`;
   return url;
+}
+
+/** Query string the display appends to its own endpoints (stream / report / capture). */
+export function displayQuery(controlId, secret) {
+  let q = `target=${encodeURIComponent(controlId)}`;
+  if (secret) q += `&secret=${encodeURIComponent(secret)}`;
+  return q;
 }
 
 /** { projection, basemap } from the WorldMap's persisted settings. */

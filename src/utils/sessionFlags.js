@@ -10,7 +10,7 @@
  *   titleOverride {text,fg,bg}|null – remote `/title` command
  *   kioskLocked   boolean  – mirrors utils/kioskLock (kept here for cheap subscriptions)
  *   timeOffsetMs  number   – remote `/time` command (consumers may ignore)
- *   remoteStatus  'off'|'connecting'|'connected'|'error'
+ *   remoteStatus  'off'|'connecting'|'connected'|'error'|'rejected' (id paired to another browser)
  */
 
 export const SESSION_FLAG_EVENT = 'ohc:session-flag';

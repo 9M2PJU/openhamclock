@@ -117,6 +117,25 @@ main {
   display: block;
   margin-bottom: 4px;
 }
+.field .help {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+.pair {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.pair.ok {
+  color: var(--green);
+}
+.pair.bad {
+  color: var(--red);
+}
 input,
 select {
   width: 100%;
