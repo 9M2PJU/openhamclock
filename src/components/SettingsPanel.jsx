@@ -42,6 +42,7 @@ import { useGps } from '../hooks/useGps.js';
 import { useBridgeEvent } from '../hooks/useBridgeEvent.js';
 import { BRIGHTNESS_PREVIEW_EVENT } from '../hooks/app/useDisplayBrightness.js';
 import SpokenAlertsSettings from './SpokenAlertsSettings.jsx';
+import { LightningGuardSettings, LightningRelayPinSettings } from './LightningGuardSettings.jsx';
 import {
   isPushSupported,
   getServerPushStatus,
@@ -7366,7 +7367,14 @@ export const SettingsPanel = ({
           aria-labelledby="tab-settings-alerts"
           hidden={activeTab !== 'alerts'}
         >
-          {activeTab === 'alerts' && <AudioAlertsTab callsign={config?.callsign} timeZone={config?.timezone} />}
+          {activeTab === 'alerts' && (
+            <AudioAlertsTab
+              callsign={config?.callsign}
+              timeZone={config?.timezone}
+              imperial={distUnits === 'imperial'}
+              hasLocation={Number.isFinite(config?.location?.lat) && Number.isFinite(config?.location?.lon)}
+            />
+          )}
         </div>
 
         {/* Rig Bridge Tab */}
@@ -7933,6 +7941,13 @@ export const SettingsPanel = ({
                 deLat={Number.isFinite(parseFloat(lat)) ? parseFloat(lat) : null}
                 deLon={Number.isFinite(parseFloat(lon)) ? parseFloat(lon) : null}
               />
+              {/* Lightning guard relay — GPIO line for the antenna-protection relay */}
+              <LightningRelayPinSettings
+                rigEnabled={rigEnabled}
+                rigHost={rigHost}
+                rigPort={rigPort}
+                rigApiToken={rigApiToken}
+              />
             </div>
           )}
         </div>
@@ -8129,7 +8144,7 @@ function WebPushCard({ notifPermission }) {
 }
 
 /** Audio Alerts settings tab */
-function AudioAlertsTab({ callsign, timeZone }) {
+function AudioAlertsTab({ callsign, timeZone, imperial = false, hasLocation = true }) {
   const { t } = useTranslation();
   const [alertSettings, setAlertSettingsState] = useState(() => getAlertSettings());
   // CQ zone derived from the callsign — the Band Openings scope default (#1191)
@@ -8210,6 +8225,14 @@ function AudioAlertsTab({ callsign, timeZone }) {
 
       {/* Web Push — closed-browser space weather alerts */}
       <WebPushCard notifPermission={notifPermission} />
+
+      {/* Lightning guard — strike distance alerts + Rig Bridge antenna relay */}
+      <LightningGuardSettings
+        alertSettings={alertSettings}
+        updateSettings={updateSettings}
+        imperial={imperial}
+        hasLocation={hasLocation}
+      />
 
       {/* Volume */}
       <div

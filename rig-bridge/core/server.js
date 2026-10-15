@@ -1096,7 +1096,7 @@ function buildSetupHtml(version, firstRunToken = null) {
         { id: 'http.interval', label: 'HTTP poll interval (s)', type: 'number', default: 60 },
         { id: 'verbose', label: 'Verbose logging', type: 'checkbox', default: false },
       ]},
-      { key: 'gpio', name: 'Raspberry Pi GPIO', maturity: 'alpha', desc: 'ON-AIR / alarm / countdown / satellite lines and PTT, countdown-restart and alarm-silence buttons — HamClock header pinout, no native modules (gpiod CLI or sysfs)', fields: [
+      { key: 'gpio', name: 'Raspberry Pi GPIO', maturity: 'alpha', desc: 'ON-AIR / alarm / countdown / satellite / lightning-relay lines and PTT, countdown-restart and alarm-silence buttons — classic shack-display header pinout, no native modules (gpiod CLI or sysfs)', fields: [
         { id: 'backend', label: 'Backend', type: 'select', options: ['auto', 'gpiod', 'sysfs', 'mock'], default: 'auto' },
         { id: 'chip', label: 'gpiochip', type: 'text', default: 'gpiochip0' },
         { id: 'pins.pttIn', label: 'PTT / ON-AIR input (BCM)', type: 'number', default: 16 },
@@ -1107,6 +1107,9 @@ function buildSetupHtml(version, firstRunToken = null) {
         { id: 'pins.countdownGreenOut', label: 'Countdown green (BCM)', type: 'number', default: 13 },
         { id: 'pins.countdownRedOut', label: 'Countdown red (BCM)', type: 'number', default: 19 },
         { id: 'pins.satOut', label: 'Satellite output (BCM)', type: 'number', default: 20 },
+        { id: 'pins.lightningOut', label: 'Lightning relay output (BCM, -1 = off; suggested 25)', type: 'number', default: -1 },
+        { id: 'lightningFailSafe', label: 'Lightning relay fail-safe (energise = antenna connected)', type: 'checkbox', default: false },
+        { id: 'lightningHoldWhenStale', label: 'Hold lightning relay when the browser goes quiet', type: 'checkbox', default: true },
         { id: 'activeLow', label: 'Inputs active low (switch to ground)', type: 'checkbox', default: true },
         { id: 'outputActiveLow', label: 'Outputs active low', type: 'checkbox', default: false },
         { id: 'debounceMs', label: 'Debounce (ms)', type: 'number', default: 50 },
@@ -2687,7 +2690,8 @@ function createServer(registry, version) {
 
   // ─── Indicators: browser → hardware plugins ───────────────────────────
   // OpenHamClock POSTs its indicator state (satellite visible / AOS / LOS,
-  // countdown timer, alarm) so plugins such as GPIO can drive LEDs. Any
+  // countdown timer, alarm, lightning guard level + relay request) so
+  // plugins such as GPIO can drive LEDs and relays. Any
   // plugin may subscribe with pluginBus.on('indicators', fn).
   let lastIndicators = null;
   app.post('/api/indicators', requireAuth, indicatorLimiter, (req, res) => {
@@ -2698,6 +2702,9 @@ function createServer(registry, version) {
       satLosInSec: Number.isFinite(body.satLosInSec) ? body.satLosInSec : null,
       alarm: body.alarm === true,
       countdown: ['off', 'running', 'expired'].includes(body.countdown) ? body.countdown : 'off',
+      // Lightning guard (optional — absent when the browser does not drive the relay)
+      ...(typeof body.lightningRelay === 'boolean' ? { lightningRelay: body.lightningRelay } : {}),
+      ...(['clear', 'warn', 'alarm'].includes(body.lightning) ? { lightning: body.lightning } : {}),
       receivedAt: Date.now(),
     };
     lastIndicators = clean;

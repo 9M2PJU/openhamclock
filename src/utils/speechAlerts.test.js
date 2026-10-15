@@ -41,6 +41,17 @@ describe('formatSpeechText', () => {
       'Space weather: G 3 Geomagnetic storm',
     );
     expect(formatSpeechText('lightning', { distance: 12.4 })).toBe('Lightning 12 kilometres away');
+    expect(
+      formatSpeechText('lightning-guard', { level: 'alarm', distanceKm: 12.4, bearing: 'north-east', relay: true }),
+    ).toBe('Lightning alarm. Strike 12 kilometres north-east. Antenna relay engaged.');
+    expect(
+      formatSpeechText('lightning-guard', { level: 'warn', distanceKm: 40, bearing: 'west', imperial: true }),
+    ).toBe('Lightning warning. Strike 25 miles west.');
+    expect(formatSpeechText('lightning-guard', { level: 'warn', downgraded: true, relay: false })).toBe(
+      'Lightning alarm ended. Warning continues. Antenna relay released.',
+    );
+    expect(formatSpeechText('lightning-guard', { level: 'clear' })).toBe('Lightning all clear.');
+    expect(formatSpeechText('lightning-guard', { level: 'nope' })).toBe('');
     expect(formatSpeechText('opportunity', { call: 'P5DX', band: '20m', mode: 'CW', needs: ['dxcc', 'zone'] })).toBe(
       'Opportunity: Papa Five Delta X-ray on 20 metres CW, new DXCC, new zone',
     );

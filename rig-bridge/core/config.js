@@ -258,7 +258,13 @@ const DEFAULT_CONFIG = {
       countdownGreenOut: 13,
       countdownRedOut: 19,
       satOut: 20,
+      lightningOut: -1, // lightning antenna-protection relay — off until assigned (suggested BCM 25 / header 22)
     },
+    // Lightning relay: invert lightningOut so the relay is energised to keep
+    // the antenna connected (power loss / crash / bridge stop → disconnected)
+    lightningFailSafe: false,
+    // Keep the lightning relay engaged when the browser stops reporting
+    lightningHoldWhenStale: true,
     verbose: false,
   },
   // Ambient light → display brightness (LTR-329 / HTTP lux / mock) + backlight control

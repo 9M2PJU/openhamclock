@@ -943,7 +943,7 @@ Rig Bridge can control antenna rotators via [Hamlib's](https://hamlib.github.io/
 
 ## Raspberry Pi Hardware _(Alpha)_
 
-Four plugins bring Raspberry Pi hardware into the shack display: a GPS receiver, BME280 environment sensors, the GPIO header lines (ON-AIR, alarm, countdown, satellite, buttons) and an ambient-light sensor driving the display brightness. None of them needs a compiled Node module: serial and TCP go through `serialport`/`net`, I2C goes through the optional `i2c-bus` package, and GPIO uses the `gpiod` command-line tools or sysfs. Everything also has a **mock** mode, so the OpenHamClock panels can be tried on any computer without a Pi.
+Four plugins bring Raspberry Pi hardware into the shack display: a GPS receiver, BME280 environment sensors, the GPIO header lines (ON-AIR, alarm, countdown, satellite, lightning relay, buttons) and an ambient-light sensor driving the display brightness. None of them needs a compiled Node module: serial and TCP go through `serialport`/`net`, I2C goes through the optional `i2c-bus` package, and GPIO uses the `gpiod` command-line tools or sysfs. Everything also has a **mock** mode, so the OpenHamClock panels can be tried on any computer without a Pi.
 
 All four are enabled on the **Plugins** tab of the setup page (<http://localhost:5555>) and restart in place when you change their settings — no rig-bridge restart needed. The browser receives their state over the same `/stream` connection as the rig (`{ type:'plugin', event:'gps'|'env'|'gpio'|'brightness' }`), and the latest state is replayed to every new browser connection.
 
@@ -1011,16 +1011,17 @@ API: `GET /api/env/status`, `GET /api/env/history`.
 
 Drives indicator and switch lines on the Pi header, plus a PTT sense input. Pin numbers below are **BCM GPIO numbers** (what `gpioinfo` shows); the header position is in brackets. You may also type a header pin as `P37` in the config.
 
-| Function            | Direction | Default BCM (header) | Notes                                                                         |
-| ------------------- | --------- | -------------------- | ----------------------------------------------------------------------------- |
-| `pttIn`             | input     | 16 (36)              | PTT / ON-AIR sense, active low → bridge `onAir` state → browser shows ON AIR  |
-| `countdownResetIn`  | input     | 26 (37)              | Button to restart the ID / countdown timer                                    |
-| `alarmSilenceIn`    | input     | 5 (29)               | Button to silence the alarm line                                              |
-| `onAirOut`          | output    | 21 (40)              | ON-AIR LED — rig PTT (CAT) or `pttIn` active                                  |
-| `alarmOut`          | output    | 6 (31)               | Alarm ringing — the ID timer has expired                                      |
-| `countdownGreenOut` | output    | 13 (33)              | Countdown running                                                             |
-| `countdownRedOut`   | output    | 19 (35)              | Countdown expired                                                             |
-| `satOut`            | output    | 20 (38)              | 1 Hz the minute before AOS, steady during the pass, 2 Hz the last minute (SA) |
+| Function            | Direction | Default BCM (header)           | Notes                                                                                     |
+| ------------------- | --------- | ------------------------------ | ----------------------------------------------------------------------------------------- |
+| `pttIn`             | input     | 16 (36)                        | PTT / ON-AIR sense, active low → bridge `onAir` state → browser shows ON AIR              |
+| `countdownResetIn`  | input     | 26 (37)                        | Button to restart the ID / countdown timer                                                |
+| `alarmSilenceIn`    | input     | 5 (29)                         | Button to silence the alarm line                                                          |
+| `onAirOut`          | output    | 21 (40)                        | ON-AIR LED — rig PTT (CAT) or `pttIn` active                                              |
+| `alarmOut`          | output    | 6 (31)                         | Alarm ringing — the ID timer has expired                                                  |
+| `countdownGreenOut` | output    | 13 (33)                        | Countdown running                                                                         |
+| `countdownRedOut`   | output    | 19 (35)                        | Countdown expired                                                                         |
+| `satOut`            | output    | 20 (38)                        | 1 Hz the minute before AOS, steady during the pass, 2 Hz the last minute (SA)             |
+| `lightningOut`      | output    | off (suggested 25 / header 22) | Lightning antenna-protection relay — see [Lightning relay](#lightning-relay-lightningout) |
 
 Set a pin to `-1` to disable that function. `activeLow` (default on) means switches pull the input to ground; `outputActiveLow` inverts the outputs for sink-driven LEDs.
 
@@ -1032,9 +1033,32 @@ gpio=5,16,26=pu
 
 **Backends** (`backend`): `auto` picks sysfs when `/sys/class/gpio` exists (every Raspberry Pi OS release so far) and otherwise the libgpiod tools (`gpioget`/`gpioset`/`gpiomon`, v1 or v2 — install with `sudo apt install gpiod`). `mock` keeps everything in memory; `POST /api/gpio/mock/input { "name": "pttIn", "level": 1 }` presses a virtual button so you can watch the ON AIR panel react.
 
-The browser tells the bridge what to show by posting its indicator state to `POST /api/indicators` (`{ satVisible, satAosInSec, satLosInSec, countdown: off|running|expired, alarm }`, token-protected, every 15 s and on change). Any plugin can subscribe with `pluginBus.on('indicators', fn)`. Physical button presses go the other way as `{ type:'plugin', event:'gpio-button' }` — the **ID Timer** panel restarts on `countdown-restart` and dismisses its reminder on `alarm-silence`.
+The browser tells the bridge what to show by posting its indicator state to `POST /api/indicators` (`{ satVisible, satAosInSec, satLosInSec, countdown: off|running|expired, alarm, lightning?: clear|warn|alarm, lightningRelay?: bool }`, token-protected, every 15 s and on change). Any plugin can subscribe with `pluginBus.on('indicators', fn)`. Physical button presses go the other way as `{ type:'plugin', event:'gpio-button' }` — the **ID Timer** panel restarts on `countdown-restart` and dismisses its reminder on `alarm-silence`.
 
 API: `GET /api/gpio/status`, `POST /api/gpio/mock/input`, `POST /api/indicators`, `GET /api/indicators`.
+
+#### Lightning relay (`lightningOut`)
+
+> ⚠️ **Safety first.** The lightning relay is a **convenience, not lightning protection.** Lightning data can arrive late or not at all, and the browser, network, Pi or relay can fail. A relay a few millimetres apart does not stop a direct or nearby strike. It does **not** replace a proper station ground, bonding, coax surge arrestors at the entry panel, and disconnecting antennas by hand when storms are forecast. Never use it to make outdoor work safe.
+
+The GPIO plugin can drive one more output, `lightningOut`, from the browser's **lightning guard** (OpenHamClock → Settings → Alerts → Lightning guard): the relay engages when strikes come inside the alarm radius (or the warning radius, if chosen there) and releases automatically after the all-clear time. The browser sends `lightningRelay: true|false` and the guard level `lightning` in the indicator payload above; a browser that does not drive the relay leaves both out, so a second display cannot release a relay the first one engaged.
+
+| Setting                  | Default | Description                                                                                                                    |
+| ------------------------ | ------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `pins.lightningOut`      | `-1`    | BCM line for the relay (`-1` = off). Suggested `25` (header 22) — free on a bare Pi. `P22` also works                          |
+| `lightningFailSafe`      | `false` | Invert this line only: energised = antenna **connected**. Power loss, a crash or a stopped bridge then disconnects the antenna |
+| `lightningHoldWhenStale` | `true`  | Keep the relay engaged when the browser stops reporting (90 s). Off: release with the other indicator lines                    |
+
+Assign the line from OpenHamClock (**Settings → Rig Bridge → Lightning relay (GPIO)** → _Push to Rig Bridge_) or on the setup page (Plugins → Raspberry Pi GPIO). `GET /api/gpio/status` reports `lightning: { pin, relay, requested, level, reportAgeMs, failSafe, holdWhenStale }`. With the **mock** backend you can watch it work without hardware: enable the guard, click _Simulate alarm strike_, and `mockLevels` in the status shows the line switching.
+
+**Wiring:**
+
+- A Pi GPIO gives 3.3 V and a few milliamps — drive a **relay module** (one with a transistor driver and flyback diode on board, logic input rated for 3.3 V), never a bare relay coil. Feed the module from the Pi's 5 V pin or its own supply, and tie the grounds together.
+- Switch the antenna with a relay or **coax switch rated for your RF power and frequency** (a proper coaxial relay for anything above a few watts); a PCB signal relay is only good for a receive antenna. Only switch while receiving.
+- A common layout: the antenna feedline on the relay's common (C) contact, the radio on one throw and a grounded dummy load or a direct ground on the other. Which throw is "protected" decides the wiring:
+  - **Normal mode** (`lightningFailSafe: false`): the line is high while protecting. Radio on **NC** (connected while the coil is off), ground/load on **NO**. If the Pi or bridge stops, the antenna stays connected to the radio.
+  - **Fail-safe** (`lightningFailSafe: true`): the line is high while it is safe to connect. Radio on **NO**, ground/load on **NC**. Anything that removes power — Pi off, bridge stopped, crash, a pulled wire — disconnects the antenna. Remember the antenna is then also disconnected whenever the bridge isn't running.
+- Many relay modules switch on a _low_ input; use `outputActiveLow` for those (it inverts every output line, so check your LEDs), or pick an active-high module.
 
 ### Light Sensor / Brightness plugin
 

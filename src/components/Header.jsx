@@ -12,6 +12,7 @@ import { formatTemperature, formatTemperatureBoth } from '../utils/formatWeather
 import useDisplayTime from '../hooks/app/useDisplayTime.js';
 import { formatOffset } from '../utils/displayTime.js';
 import { AlarmIndicator } from './AlarmIndicator.jsx';
+import { LightningGuardIndicator } from './LightningGuardIndicator.jsx';
 import useSessionFlag from '../hooks/app/useSessionFlag.js';
 import { resolveCallsignBox } from '../utils/titles.js';
 import { KIOSK_UNLOCK_REQUEST_EVENT } from '../hooks/app/useKioskLock.js';
@@ -206,6 +207,7 @@ export const Header = ({
               </button>
             )}
             <AlarmIndicator timeZone={config.timezone} />
+            <LightningGuardIndicator />
           </div>
         ) : (
           <div

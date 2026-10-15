@@ -151,3 +151,33 @@ describe('buildSwpcPushPayload', () => {
     expect(long.body.endsWith('…')).toBe(true);
   });
 });
+
+describe('lightning guard push helpers', () => {
+  it('builds payloads from validated numbers only', () => {
+    expect(helpers.buildLightningPushPayload({ level: 'warn', distanceKm: 41, bearingDeg: 270 })).toEqual({
+      title: 'Lightning warning',
+      body: 'Nearest strike 41 km W',
+      tag: 'ohc-lightning',
+    });
+    expect(helpers.buildLightningPushPayload({ level: 'alarm', distanceKm: 8, imperial: true }).body).toBe(
+      'Nearest strike 5.0 mi',
+    );
+    expect(helpers.buildLightningPushPayload({ level: 'clear', relay: false })).toEqual({
+      title: 'Lightning all clear',
+      body: 'No strikes nearby for the all-clear time · antenna relay released',
+      tag: 'ohc-lightning',
+    });
+    expect(helpers.buildLightningPushPayload({ level: 'alarm', distanceKm: 'abc' }).body).toBe('');
+    expect(helpers.buildLightningPushPayload({ level: 'boom' })).toBeNull();
+    expect(helpers.buildLightningPushPayload(null)).toBeNull();
+  });
+
+  it('throttles: minimum gap, and no repeat of the same level within ten minutes', () => {
+    expect(helpers.shouldPushLightning(null, 'warn', NOW)).toBe(true);
+    const last = { at: NOW, level: 'warn' };
+    expect(helpers.shouldPushLightning(last, 'alarm', NOW + 5000)).toBe(false);
+    expect(helpers.shouldPushLightning(last, 'alarm', NOW + helpers.LIGHTNING_PUSH_MIN_GAP_MS)).toBe(true);
+    expect(helpers.shouldPushLightning(last, 'warn', NOW + 5 * 60 * 1000)).toBe(false);
+    expect(helpers.shouldPushLightning(last, 'warn', NOW + helpers.LIGHTNING_PUSH_REPEAT_MS)).toBe(true);
+  });
+});

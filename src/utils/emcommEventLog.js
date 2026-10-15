@@ -3,7 +3,7 @@
  *
  * Accumulates significant events (net check-ins/outs, APRS messages sent and
  * received, new NWS alerts, shelter and field reports, first-heard EmComm
- * stations) into localStorage so operators can export an After Action Review
+ * stations, lightning guard warnings / alarms / all-clears) into localStorage so operators can export an After Action Review
  * as CSV or a print-friendly report.
  *
  * Storage: localStorage key `openhamclock_emcommEventLog`, capped at 2000
@@ -30,6 +30,7 @@ export const EVENT_TYPE_META = {
   field_report: { label: 'Field Report', color: '#f472b6' },
   station_heard: { label: 'Station Heard', color: '#a855f7' },
   ics213_sent: { label: 'ICS 213 Sent', color: '#eab308' },
+  lightning: { label: 'Lightning', color: '#facc15' },
 };
 
 // ── In-memory state (mirrors localStorage) ──────────────────────────────────

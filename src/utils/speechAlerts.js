@@ -144,6 +144,20 @@ export function formatSpeechText(feedId, item, { phonetic = true } = {}) {
       if (item.distance == null) return '';
       return `Lightning ${Math.round(item.distance)} kilometres away`;
     }
+    case 'lightning-guard': {
+      // Lightning guard transition: { level, downgraded, distanceKm, bearing (words), imperial, relay }
+      const relayWords =
+        item.relay === true ? ' Antenna relay engaged.' : item.relay === false ? ' Antenna relay released.' : '';
+      if (item.level === 'clear') return `Lightning all clear.${relayWords}`;
+      if (item.level !== 'warn' && item.level !== 'alarm') return '';
+      if (item.downgraded) return `Lightning alarm ended. Warning continues.${relayWords}`;
+      const head = item.level === 'alarm' ? 'Lightning alarm.' : 'Lightning warning.';
+      if (!Number.isFinite(item.distanceKm)) return `${head}${relayWords}`;
+      const dist = item.imperial ? item.distanceKm * 0.621371 : item.distanceKm;
+      const unit = item.imperial ? 'miles' : 'kilometres';
+      const where = item.bearing ? ` ${item.bearing}` : '';
+      return `${head} Strike ${Math.max(1, Math.round(dist))} ${unit}${where}.${relayWords}`;
+    }
     case 'opportunity': {
       if (!item.call) return '';
       const needs = (item.needs || []).map((n) => needWords[n]).filter(Boolean);
@@ -269,6 +283,17 @@ export function speakAlert(feedId, item, alertSettings) {
   return queue().enqueue(text);
 }
 
+/**
+ * Speak a sentence through the shared queue with the configured voice and
+ * rate, regardless of the master/per-feed toggles. For safety alerts that
+ * carry their own on/off switch (the lightning guard).
+ */
+export function speakText(text, alertSettings) {
+  if (!isSpeechSupported()) return false;
+  currentSettings = getSpeechSettings(alertSettings);
+  return queue().enqueue(text);
+}
+
 /** Speak a sample sentence immediately (Settings "Test" button). */
 export function speakSample(alertSettings) {
   if (!isSpeechSupported()) return;
@@ -291,5 +316,6 @@ export default {
   formatSpeechText,
   SpeechQueue,
   speakAlert,
+  speakText,
   speakSample,
 };
