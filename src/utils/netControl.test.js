@@ -36,7 +36,32 @@ import {
   loadHistory,
   pushHistory,
   loadScript,
-  saveScript,
+  loadScriptTemplates,
+  saveScriptTemplates,
+  getTemplate,
+  addTemplate,
+  duplicateTemplate,
+  renameTemplate,
+  updateTemplate,
+  deleteTemplate,
+  builtinDefault,
+  BUILTIN_TEMPLATES,
+  NET_CONTROL_SCRIPT_KEY,
+  NET_CONTROL_SCRIPTS_KEY,
+  NET_CONTROL_KEY,
+  peekUndo,
+  withdrawalSummary,
+  attachEvent,
+  readRunningNetRecord,
+  commitRunningNet,
+  pickNewer,
+  livePeerCount,
+  PEER_TTL_MS,
+  serializeNetState,
+  applyRemoteNetState,
+  parseNetFrequency,
+  localParts,
+  fmtLocalDateTime,
   rememberStation,
   loadStationCache,
   saveStationCache,
@@ -475,10 +500,8 @@ describe('storage', () => {
     expect(again).toHaveLength(MAX_HISTORY);
     expect(again[0].id).toBe(list[3].id);
   });
-  it('script defaults and persists', () => {
+  it('script defaults to the first built-in template', () => {
     expect(loadScript()).toEqual({ preamble: DEFAULT_PREAMBLE, closing: DEFAULT_CLOSING });
-    saveScript({ preamble: 'Hi', closing: DEFAULT_CLOSING });
-    expect(loadScript().preamble).toBe('Hi');
   });
   it('station cache remembers, merges and evicts oldest', () => {
     let cache = rememberStation({}, 'w1aw', { name: 'Hiram' }, 1);
@@ -522,5 +545,250 @@ describe('storage', () => {
   it('flagsToText', () => {
     expect(flagsToText(['mobile', 'traffic', 'bogus'])).toBe('TFC MOB');
     expect(flagsToText([])).toBe('');
+  });
+});
+
+describe('undo bookkeeping', () => {
+  it('records the action and attached event ids on the undo entry and the station', () => {
+    let net = startNet();
+    ({ net } = checkIn(net, { call: 'W1AW', flags: ['traffic'], now: T0 }));
+    net = attachEvent(net, 'ev-1', 'W1AW');
+    expect(peekUndo(net)).toMatchObject({ action: { kind: 'new', call: 'W1AW' }, eventIds: ['ev-1'] });
+    expect(net.stations[0].logIds).toEqual(['ev-1']);
+    net = passTraffic(net, 'W1AW', T0 + min(1));
+    expect(peekUndo(net).action).toEqual({ kind: 'traffic', call: 'W1AW' });
+    net = checkOut(net, 'W1AW', T0 + min(2));
+    expect(peekUndo(net).action.kind).toBe('checkout');
+    net = toggleFlag(net, 'W1AW', 'mobile');
+    expect(peekUndo(net).action.kind).toBe('flag');
+    net = removeStation(net, 'W1AW');
+    expect(peekUndo(net).action.kind).toBe('remove');
+    expect(attachEvent(null, 'x')).toBeNull();
+  });
+  it('withdrawalSummary names what Undo reversed', () => {
+    expect(withdrawalSummary({ kind: 'new' }, 'ARES')).toBe('Check-in withdrawn (ARES)');
+    expect(withdrawalSummary({ kind: 'return' })).toBe('Re-check-in withdrawn');
+    expect(withdrawalSummary({ kind: 'checkout' })).toBe('Check-out withdrawn');
+    expect(withdrawalSummary({ kind: 'traffic' })).toBe('Traffic pass withdrawn');
+    expect(withdrawalSummary({ kind: 'remove' })).toBe('Removal undone, entries reinstated');
+    expect(withdrawalSummary(null)).toBe('Entry withdrawn');
+  });
+  it('reads the bare-array undo entries saved by the first release', () => {
+    let net = startNet();
+    ({ net } = checkIn(net, { call: 'W1AW', now: T0 }));
+    const legacy = { ...net, undo: [[]] };
+    expect(peekUndo(legacy)).toEqual({ stations: [], action: null, eventIds: [] });
+    expect(undoLast(legacy).stations).toEqual([]);
+    expect(peekUndo(startNet())).toBeNull();
+  });
+});
+
+describe('script templates', () => {
+  beforeEach(() => localStorage.clear());
+  it('seeds the built-ins on first load', () => {
+    const { templates, lastId } = loadScriptTemplates();
+    expect(templates.map((t) => t.name)).toEqual(['ARES weekly net', 'SKYWARN activation', 'Tactical net']);
+    expect(lastId).toBe('tpl-ares');
+    for (const t of BUILTIN_TEMPLATES) {
+      expect(t.preamble).toContain('{ncs}');
+      expect(t.closing).toContain('{net}');
+    }
+  });
+  it('migrates a customised single script from the first release', () => {
+    localStorage.setItem(NET_CONTROL_SCRIPT_KEY, JSON.stringify({ preamble: 'Mine', closing: DEFAULT_CLOSING }));
+    const { templates, lastId } = loadScriptTemplates();
+    expect(templates[0]).toMatchObject({ name: 'My net script', preamble: 'Mine' });
+    expect(lastId).toBe(templates[0].id);
+    expect(templates).toHaveLength(4);
+  });
+  it('does not migrate an unchanged default script', () => {
+    localStorage.setItem(
+      NET_CONTROL_SCRIPT_KEY,
+      JSON.stringify({ preamble: DEFAULT_PREAMBLE, closing: DEFAULT_CLOSING }),
+    );
+    expect(loadScriptTemplates().templates).toHaveLength(3);
+  });
+  it('create / duplicate / rename / update / delete', () => {
+    let { templates } = loadScriptTemplates();
+    let id;
+    ({ templates, id } = addTemplate(templates, { name: 'Hospital net' }));
+    expect(getTemplate(templates, id).name).toBe('Hospital net');
+    ({ templates, id } = addTemplate(templates, { name: 'Hospital net' }));
+    expect(getTemplate(templates, id).name).toBe('Hospital net (2)');
+    const dup = duplicateTemplate(templates, 'tpl-skywarn');
+    templates = dup.templates;
+    const copy = getTemplate(templates, dup.id);
+    expect(copy).toMatchObject({ name: 'SKYWARN activation (copy)', preamble: BUILTIN_TEMPLATES[1].preamble });
+    expect(copy.builtin).toBeUndefined();
+    templates = renameTemplate(templates, dup.id, '  Spotter net ');
+    expect(getTemplate(templates, dup.id).name).toBe('Spotter net');
+    expect(renameTemplate(templates, dup.id, '   ')).toBe(templates);
+    templates = renameTemplate(templates, dup.id, 'Tactical net'); // clash → numbered
+    expect(getTemplate(templates, dup.id).name).toBe('Tactical net (2)');
+    templates = updateTemplate(templates, 'tpl-ares', { preamble: 'Edited' });
+    expect(getTemplate(templates, 'tpl-ares').preamble).toBe('Edited');
+    expect(builtinDefault(getTemplate(templates, 'tpl-ares')).preamble).toBe(DEFAULT_PREAMBLE);
+    expect(builtinDefault(copy)).toBeNull();
+    templates = deleteTemplate(templates, 'tpl-ares');
+    expect(templates.find((t) => t.id === 'tpl-ares')).toBeUndefined();
+    expect(getTemplate(templates, 'tpl-ares').id).toBe(templates[0].id); // falls back to the first
+    const one = [templates[0]];
+    expect(deleteTemplate(one, one[0].id)).toBe(one); // last one stays
+  });
+  it('persists and restores the list and last-used id', () => {
+    const state = loadScriptTemplates();
+    const { templates, id } = addTemplate(state.templates, { name: 'Mine', preamble: 'P', closing: 'C' });
+    saveScriptTemplates({ templates, lastId: id });
+    expect(JSON.parse(localStorage.getItem(NET_CONTROL_SCRIPTS_KEY)).lastId).toBe(id);
+    const again = loadScriptTemplates();
+    expect(again.lastId).toBe(id);
+    expect(loadScript()).toEqual({ preamble: 'P', closing: 'C' });
+  });
+});
+
+describe('tabs in step (revision counter)', () => {
+  beforeEach(() => localStorage.clear());
+  it('commits with increasing revs and refuses to overwrite a newer state', () => {
+    const a = commitRunningNet(null, startNet(), T0);
+    expect(a).toMatchObject({ conflict: false });
+    expect(a.net.rev).toBe(1);
+    // Tab A and tab B both hold rev 1
+    let tabA = a.net;
+    const tabB = a.net;
+    ({ net: tabA } = commitRunningNet(tabA, checkIn(tabA, { call: 'W1AW', now: T0 }).net, T0));
+    expect(tabA.rev).toBe(2);
+    // B's change is based on rev 1 → refused, B gets A's newer net
+    const res = commitRunningNet(tabB, checkIn(tabB, { call: 'K0CJH', now: T0 }).net, T0);
+    expect(res.conflict).toBe(true);
+    expect(res.net.stations.map((s) => s.call)).toEqual(['W1AW']);
+    expect(readRunningNetRecord().stations.map((s) => s.call)).toEqual(['W1AW']);
+  });
+  it('closing leaves a tombstone that closes the net in other tabs and blocks stale writes', () => {
+    const { net } = commitRunningNet(null, startNet(), T0);
+    const stale = net;
+    expect(commitRunningNet(net, null, T0).net).toBeNull();
+    expect(readRunningNetRecord()).toMatchObject({ closedId: net.id, rev: 2 });
+    expect(loadRunningNet()).toBeNull();
+    expect(pickNewer(stale, readRunningNetRecord())).toEqual({ net: null, changed: true });
+    const res = commitRunningNet(stale, checkIn(stale, { call: 'W1AW', now: T0 }).net, T0);
+    expect(res).toEqual({ net: null, conflict: true });
+    // a new net may start over the tombstone
+    const fresh = commitRunningNet(null, createNet({ name: 'Next', now: T0 }), T0);
+    expect(fresh.conflict).toBe(false);
+    expect(fresh.net.rev).toBe(3);
+  });
+  it('starting a net while another tab already runs one adopts that net', () => {
+    const { net } = commitRunningNet(null, startNet(), T0);
+    const res = commitRunningNet(null, createNet({ name: 'Other', now: T0 }), T0);
+    expect(res.conflict).toBe(true);
+    expect(res.net.id).toBe(net.id);
+  });
+  it('pickNewer applies only higher revisions', () => {
+    const local = { ...startNet(), rev: 5 };
+    expect(pickNewer(local, { ...local, rev: 4 }).changed).toBe(false);
+    expect(pickNewer(local, { ...local, rev: 6, name: 'X' })).toMatchObject({ changed: true, net: { name: 'X' } });
+    expect(pickNewer(local, null)).toEqual({ net: local, changed: false });
+    expect(pickNewer(local, { closedId: 'someone-else', rev: 9 }).changed).toBe(false);
+    expect(pickNewer(null, { ...local, rev: 1 }).changed).toBe(true);
+  });
+  it('livePeerCount drops panels not heard from within the TTL', () => {
+    expect(livePeerCount({ a: T0, b: T0 - PEER_TTL_MS - 1 }, T0 + 1000)).toBe(1);
+    expect(livePeerCount(null)).toBe(0);
+  });
+  it('the running net is written under NET_CONTROL_KEY', () => {
+    commitRunningNet(null, startNet(), T0);
+    expect(JSON.parse(localStorage.getItem(NET_CONTROL_KEY)).rev).toBe(1);
+  });
+});
+
+describe('shared-incident adapters', () => {
+  it('serializes without the undo stack and applies by revision', () => {
+    let net = { ...startNet(), rev: 3 };
+    ({ net } = checkIn(net, { call: 'W1AW', now: T0 }));
+    const doc = serializeNetState(net, T0);
+    expect(doc).toMatchObject({ v: 1, kind: 'net-control', rev: 3, closedId: null });
+    expect(doc.net.undo).toBeUndefined();
+    expect(JSON.parse(JSON.stringify(doc))).toEqual(doc);
+    // same rev → no change; newer remote → applied with empty undo
+    expect(applyRemoteNetState(net, doc).changed).toBe(false);
+    const newer = { ...doc, rev: 4, net: { ...doc.net, name: 'Renamed' } };
+    const applied = applyRemoteNetState(net, newer);
+    expect(applied.changed).toBe(true);
+    expect(applied.net).toMatchObject({ name: 'Renamed', rev: 4, undo: [] });
+    // a closed net elsewhere
+    const closed = serializeNetState({ closedId: net.id, rev: 9 }, T0);
+    expect(closed.net).toBeNull();
+    expect(applyRemoteNetState(net, closed)).toEqual({ net: null, changed: true });
+    // no net / foreign or future documents are ignored
+    expect(serializeNetState(null, T0)).toMatchObject({ net: null, closedId: null, rev: 0 });
+    expect(applyRemoteNetState(net, { ...newer, v: 2 }).changed).toBe(false);
+    expect(applyRemoteNetState(net, null).changed).toBe(false);
+  });
+});
+
+describe('report times (UTC + local)', () => {
+  const tz = 'America/Chicago'; // CDT = UTC−5 in October
+  const net = () => {
+    let n = startNet();
+    ({ net: n } = checkIn(n, { call: 'W1AW', now: T0 + min(1) }));
+    n = checkOut(n, 'W1AW', T0 + min(30));
+    return closeNet(n, T0 + min(40));
+  };
+  it('localParts converts to the given zone and survives a bad zone', () => {
+    expect(localParts(T0, tz)).toEqual({ date: '2026-10-15', time: '14:00', zone: 'CDT' });
+    expect(fmtLocalDateTime(T0, tz)).toBe('2026-10-15 14:00 CDT');
+    expect(localParts(T0, 'Not/AZone')).toBeTruthy();
+    expect(localParts(null, tz)).toBeNull();
+  });
+  it('text and print add local times only when asked', () => {
+    const r = buildReport(net());
+    expect(reportToText(r, { timeZone: tz })).not.toContain('CDT');
+    const both = reportToText(r, { times: 'both', timeZone: tz });
+    expect(both).toContain('Opened: 2026-10-15 19:00Z (2026-10-15 14:00 CDT)');
+    expect(both).toContain('19:01 14:01 W1AW');
+    expect(both).toContain('out 19:30/14:30');
+    const html = reportToPrintHtml(r, { times: 'both', timeZone: tz });
+    expect(html).toContain('<th>In (CDT)</th>');
+    expect(html).toContain('Opened (local)');
+    expect(reportToPrintHtml(r, { timeZone: tz })).not.toContain('(local)');
+  });
+  it('CSV always carries both columns and the zone', () => {
+    const lines = reportToCsv(buildReport(net()), { timeZone: tz }).trim().split('\r\n');
+    expect(lines[0]).toContain('Check-In (UTC),Check-In (local)');
+    expect(lines[0].endsWith('Time Zone')).toBe(true);
+    expect(lines[1]).toContain('2026-10-15T19:01:00.000Z,2026-10-15 14:01');
+    expect(lines[1]).toContain('2026-10-15T19:30:00.000Z,2026-10-15 14:30');
+    expect(lines[1].endsWith('America/Chicago')).toBe(true);
+  });
+  it('scriptContext uses the configured zone', () => {
+    expect(scriptContext(startNet(), T0, tz).time).toMatch(/0?2:00\s?PM local \(19:00 UTC\)|14:00 local \(19:00 UTC\)/);
+  });
+});
+
+describe('parseNetFrequency', () => {
+  it('reads repeater descriptions', () => {
+    expect(parseNetFrequency('146.940 − PL 100.0')).toEqual({ mhz: 146.94, txMhz: 146.34, tone: '100.0', mode: '' });
+    expect(parseNetFrequency('442.150 +5 T 123.0 FM')).toEqual({
+      mhz: 442.15,
+      txMhz: 447.15,
+      tone: '123.0',
+      mode: 'FM',
+    });
+    expect(parseNetFrequency('147.105 MHz + 600 kHz 88.5 Hz')).toMatchObject({ txMhz: 147.705, tone: '88.5' });
+    expect(parseNetFrequency('146.520 MHz FM')).toEqual({ mhz: 146.52, txMhz: 146.52, tone: '', mode: 'FM' });
+    expect(parseNetFrequency('3.873 LSB')).toEqual({ mhz: 3.873, txMhz: 3.873, tone: '', mode: 'LSB' });
+    expect(parseNetFrequency('53.150 -')).toMatchObject({ mhz: 53.15, txMhz: null }); // no standard 6 m offset
+    expect(parseNetFrequency('Main repeater')).toBeNull();
+    expect(parseNetFrequency('')).toBeNull();
+  });
+});
+
+describe('createNet frequency fields', () => {
+  it('stores scheduled frequency, mode and script', () => {
+    const net = createNet({ name: 'N', freqMhz: 146.94, mode: 'fm', scriptId: 'tpl-skywarn', now: T0 });
+    expect(net).toMatchObject({ freqMhz: 146.94, mode: 'FM', scriptId: 'tpl-skywarn', rev: 0 });
+    expect(createNet({ name: 'N', freqMhz: 'x' }).freqMhz).toBeNull();
+    saveRosterSnapshot(net, { active: true });
+    expect(getNetControlRoster()).toMatchObject({ freqMhz: 146.94, mode: 'FM' });
   });
 });

@@ -1493,7 +1493,7 @@ export const DockableApp = ({
           break;
 
         case 'net-control':
-          content = <NetControlPanel callsign={config.callsign} />;
+          content = <NetControlPanel callsign={config.callsign} timeZone={config.timezone} />;
           break;
 
         case 'callsign-search':
