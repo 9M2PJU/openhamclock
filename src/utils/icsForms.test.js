@@ -610,7 +610,12 @@ describe('Net Control integration', () => {
     expect(row).toMatchObject({ from: 'W1AW', to: 'K0CJH', message: 'Traffic passed on ARES' });
   });
   it('ics205RowFromVoiceNet reads the running net frequency, offset and tone', () => {
-    const row = ics205RowFromVoiceNet({ net: 'County ARES Net', ncs: 'K0CJH', frequency: '146.940 − PL 100.0' });
+    const row = ics205RowFromVoiceNet({
+      net: 'County ARES Net',
+      ncs: 'K0CJH',
+      frequency: '146.940 − PL 100.0',
+      region: 'R2',
+    });
     expect(row).toMatchObject({
       function: 'Net',
       name: 'County ARES Net',
@@ -635,6 +640,21 @@ describe('Net Control integration', () => {
     });
     expect(scheduled).toMatchObject({ rxFreq: '441.000', txFreq: '441.000', mode: 'D', modeName: 'DMR' });
     expect(ics205RowFromVoiceNet({ net: 'X', frequency: 'the usual' })).toMatchObject({ rxFreq: '', txFreq: '' });
+    // 6 m in the Americas: −1 MHz assumed, noted for checking
+    expect(ics205RowFromVoiceNet({ net: '6m', frequency: '53.150 −', region: 'R2' })).toMatchObject({
+      rxFreq: '53.150',
+      txFreq: '52.150',
+      remarks: 'TX offset −1 MHz assumed — check locally · 53.150 −',
+    });
+    // direction without a known size: TX left for the operator, flagged and noted — never silently blank
+    const unknown = ics205RowFromVoiceNet({ net: '6m', frequency: '50.840 −', region: 'R3' });
+    expect(unknown).toMatchObject({ rxFreq: '50.840', txFreq: '', txUnknown: true });
+    expect(unknown.remarks).toMatch(/^TX offset\? — fill in TX/);
+    // the operator's override wins
+    expect(ics205RowFromVoiceNet({ net: '6m', frequency: '53.150 −', region: 'R2', offset: '500k' })).toMatchObject({
+      txFreq: '52.650',
+      remarks: '53.150 −',
+    });
   });
 });
 

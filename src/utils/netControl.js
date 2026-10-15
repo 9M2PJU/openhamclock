@@ -3,7 +3,8 @@
  * runs a voice net on a repeater or simplex frequency.
  *
  * A running net:
- *   { id, name, frequency (free text), freqMhz?, mode?, ncs, scheduleId,
+ *   { id, name, frequency (free text), freqMhz?, mode?, region (band plan),
+ *     offset (operator's TX offset override), ncs, scheduleId,
  *     scriptId (template), rev (write counter), startTime, endTime: null,
  *     calling: null|call (traffic station called with "next"),
  *     stations: [station…] (display order, newest activity first),
@@ -137,6 +138,8 @@ export function createNet({
   scriptId = null,
   freqMhz = null,
   mode = '',
+  region = null,
+  offset = '',
   now = Date.now(),
 } = {}) {
   const n = String(name || '').trim();
@@ -152,6 +155,8 @@ export function createNet({
     scriptId: scriptId || null,
     freqMhz: Number.isFinite(Number(freqMhz)) && Number(freqMhz) > 0 ? Number(freqMhz) : null,
     mode: String(mode || '').toUpperCase(),
+    region: region || null,
+    offset: String(offset || '').trim(),
     startTime: now,
     rev: 0,
     endTime: null,
@@ -189,11 +194,22 @@ export function peekUndo(net) {
 export function attachEvent(net, eventId, call = null) {
   if (!net || !eventId) return net;
   const undo = (net.undo || []).slice();
-  if (undo.length) {
-    const top = undoEntry(undo[undo.length - 1]);
-    undo[undo.length - 1] = { ...top, eventIds: [...(top.eventIds || []), eventId] };
-  }
   const c = call ? String(call).toUpperCase() : null;
+  // The newest undo entry for this call (another tab's action may have been
+  // stacked on top since), else the top one
+  let at = undo.length - 1;
+  if (c) {
+    for (let i = undo.length - 1; i >= 0; i--) {
+      if (undoEntry(undo[i]).action?.call === c) {
+        at = i;
+        break;
+      }
+    }
+  }
+  if (at >= 0) {
+    const entry = undoEntry(undo[at]);
+    undo[at] = { ...entry, eventIds: [...(entry.eventIds || []), eventId] };
+  }
   const stations = c
     ? net.stations.map((x) => (x.call === c ? { ...x, logIds: [...(x.logIds || []), eventId] } : x))
     : net.stations;
@@ -991,6 +1007,60 @@ export function commitRunningNet(base, next, now = Date.now()) {
   return { net: out, conflict: false };
 }
 
+/** Net-level fields a change can touch (stations are compared per call). */
+const NET_FIELDS = [
+  'name',
+  'frequency',
+  'ncs',
+  'calling',
+  'scriptId',
+  'endTime',
+  'offset',
+  'freqMhz',
+  'mode',
+  'region',
+];
+
+const sameValue = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+
+/** Calls whose station line differs between nets `a` and `b` (added, removed or changed). */
+export function changedCalls(a, b) {
+  const byCall = (n) => new Map((n?.stations || []).map((s) => [s.call, s]));
+  const ma = byCall(a);
+  const mb = byCall(b);
+  const out = new Set();
+  for (const call of new Set([...ma.keys(), ...mb.keys()])) {
+    if (!sameValue(ma.get(call), mb.get(call))) out.add(call);
+  }
+  return out;
+}
+
+/** Net-level fields that differ between `a` and `b`. */
+export function changedNetFields(a, b) {
+  return NET_FIELDS.filter((f) => !sameValue(a?.[f], b?.[f]));
+}
+
+/**
+ * Can a change that was refused (because another tab or panel wrote first)
+ * simply be re-applied to the newer net? `base` is what this panel had,
+ * `mine` its change, `theirs` the newer stored net. Yes when the two changes
+ * touched different station lines and different net fields (or set a field
+ * to the same value) — e.g. checking in two different calls, or toggling
+ * flags on two different lines. No when both changed the same station, when
+ * the other side closed the net or started a different one.
+ * Returns { ok, calls: [both changed], fields: [both changed differently] }.
+ */
+export function rebaseCheck(base, mine, theirs) {
+  if (!base || !mine || !theirs || theirs.id !== base.id || mine.id !== base.id) {
+    return { ok: false, calls: [], fields: [] };
+  }
+  const theirCalls = changedCalls(base, theirs);
+  const calls = [...changedCalls(base, mine)].filter((c) => theirCalls.has(c));
+  const theirFields = changedNetFields(base, theirs);
+  const fields = changedNetFields(base, mine).filter((f) => theirFields.includes(f) && !sameValue(mine[f], theirs[f]));
+  return { ok: calls.length === 0 && fields.length === 0, calls, fields };
+}
+
 /** Number of other Net Control panels heard from within PEER_TTL_MS ({ id: lastSeenMs }). */
 export function livePeerCount(peers, now = Date.now()) {
   return Object.values(peers || {}).filter((ts) => now - ts < PEER_TTL_MS).length;
@@ -1131,6 +1201,8 @@ export function saveRosterSnapshot(net, { active = false, now = Date.now() } = {
     frequency: net?.frequency || '',
     freqMhz: net?.freqMhz ?? null,
     mode: net?.mode || '',
+    region: net?.region || null,
+    offset: net?.offset || '',
     startTime: net?.startTime ?? null,
     endTime: net?.endTime ?? null,
     roster: toRosterEntries(net),
@@ -1173,42 +1245,119 @@ export function mergeRosters(aprsRoster, snapshot, now = Date.now()) {
 
 // ── Frequency text ──────────────────────────────────────────────────────────
 
-/** Standard repeater offsets (MHz) by band, used when the text gives only "+" or "−". */
-const BAND_OFFSETS = [
-  [144, 148, 0.6],
-  [222, 225, 1.6],
-  [420, 450, 5],
-  [902, 928, 12],
-];
+/**
+ * IARU region for repeater band plans, from the station's location
+ * ({ lat, lon }). R2 = the Americas, R1 = Europe, Africa, the Middle East
+ * and northern Asia, R3 = the rest of Asia and the Pacific. Null when the
+ * location is unknown.
+ */
+export function bandPlanRegion(location) {
+  const lat = Number(location?.lat);
+  const lon = Number(location?.lon);
+  if (location?.lat == null || location?.lon == null || !Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  if (lon <= -25) return 'R2';
+  if (lon < 60 || lat >= 50) return 'R1';
+  return 'R3';
+}
+
+/**
+ * Standard repeater offset magnitudes (MHz) by region and band: [lo, hi,
+ * offset, check]. `check` marks offsets that vary locally (the band plan has
+ * more than one pairing in use), so the panel says "check locally" instead
+ * of presenting the guess as fact. A band missing here has no single
+ * standard: the offset is reported unknown ("offset?") and the operator
+ * types it.
+ */
+export const REPEATER_OFFSETS = {
+  R2: [
+    [29.5, 29.7, 0.1, false], // 10 m FM: 29.62–29.68 out, −100 kHz
+    [51, 54, 1, true], // 6 m: −1 MHz is the common US pairing; some areas use 500 kHz
+    [144, 148, 0.6, false],
+    [222, 225, 1.6, false],
+    [420, 450, 5, false],
+    [902, 928, 12, false],
+  ],
+  R1: [
+    [29.5, 29.7, 0.1, false],
+    [50, 52, 0.5, true], // 6 m repeaters exist in a few countries; 500 kHz where they do
+    [144, 146, 0.6, false],
+    [430, 440, 7.6, true], // IARU R1 −7.6 MHz; several countries use other splits
+  ],
+  R3: [
+    [29.5, 29.7, 0.1, false],
+    [144, 148, 0.6, true],
+    [430, 440, 5, true],
+  ],
+};
+
+/** { offset (MHz magnitude), check } for `mhz` in `region`, or null when there is no standard. */
+export function standardOffset(mhz, region) {
+  const row = (REPEATER_OFFSETS[region] || []).find(([lo, hi]) => mhz >= lo && mhz <= hi);
+  return row ? { offset: row[2], check: row[3] } : null;
+}
 
 const MODE_RE = /\b(NFM|FM|DMR|D-?STAR|YSF|C4FM|FUSION|P25|NXDN|M17|USB|LSB|SSB|AM|CW)\b/i;
+const normDash = (s) => String(s || '').replace(/[−–—]/g, '-');
+
+/** "+5", "-0.6", "−600 kHz", "500k", "0" → { sign: '+'|'-'|null, mhz } or null. */
+export function parseOffset(text) {
+  const m = /^\s*([+-])?\s*(\d+(?:\.\d+)?)\s*(MHz|kHz|k|M)?\s*$/i.exec(normDash(text));
+  if (!m) return null;
+  let mhz = Number(m[2]);
+  if (/^k/i.test(m[3] || '') || (!m[3] && mhz >= 100)) mhz /= 1000;
+  return { sign: m[1] || null, mhz };
+}
 
 /**
  * Read a free-text frequency/repeater description as typed when starting a
  * net ("146.940 − PL 100.0", "442.150 +5 T 123.0 FM", "3.873 LSB").
- * Returns { mhz, txMhz, tone, mode } — txMhz is the transmit frequency
- * (output + offset; null when an offset direction is given without a known
- * standard offset) — or null when no frequency is found.
+ *
+ * Options: `region` (bandPlanRegion) for standard offsets, `offset` — an
+ * operator override ("−0.6", "+500k"; the sign may also come from the text).
+ *
+ * Returns { mhz, txMhz, offsetMhz (signed), offsetSource, offsetCheck, tone,
+ * mode } or null when no frequency is found. offsetSource is 'explicit'
+ * (written in the text), 'override', 'standard' (band plan; offsetCheck
+ * true when it varies locally), 'simplex' (no offset given), or 'unknown'
+ * — a direction without a known size, where txMhz and offsetMhz are null
+ * and the panel shows "offset?".
  */
-export function parseNetFrequency(text) {
-  const s = String(text || '').replace(/[−–—]/g, '-');
+export function parseNetFrequency(text, { region = null, offset = '' } = {}) {
+  const s = normDash(text);
   const m = /(\d{1,4}\.\d{1,6})/.exec(s);
   if (!m) return null;
   const mhz = Number(m[1]);
   if (!Number.isFinite(mhz) || mhz <= 0) return null;
   const rest = s.slice(m.index + m[0].length);
-  let txMhz = mhz;
   const explicit = /^\s*(?:MHz)?\s*([+-])\s*(\d+(?:\.\d+)?)\s*(MHz|kHz)?/i.exec(rest);
   const signOnly = /^\s*(?:MHz)?\s*([+-])(?=\s|$|[A-Za-z])/i.exec(rest);
-  if (explicit) {
+  const textSign = explicit?.[1] || signOnly?.[1] || null;
+  const over = String(offset || '').trim() ? parseOffset(offset) : null;
+
+  let offsetMhz = 0;
+  let offsetSource = 'simplex';
+  let offsetCheck = false;
+  if (over) {
+    const sign = over.sign || textSign || '-';
+    offsetMhz = over.mhz === 0 ? 0 : sign === '-' ? -over.mhz : over.mhz;
+    offsetSource = 'override';
+  } else if (explicit) {
     let off = Number(explicit[2]);
     if (/khz/i.test(explicit[3] || '') || off >= 100) off /= 1000;
-    txMhz = mhz + (explicit[1] === '-' ? -off : off);
+    offsetMhz = explicit[1] === '-' ? -off : off;
+    offsetSource = 'explicit';
   } else if (signOnly) {
-    const band = BAND_OFFSETS.find(([lo, hi]) => mhz >= lo && mhz <= hi);
-    txMhz = band ? mhz + (signOnly[1] === '-' ? -band[2] : band[2]) : null;
+    const std = standardOffset(mhz, region);
+    if (std) {
+      offsetMhz = signOnly[1] === '-' ? -std.offset : std.offset;
+      offsetSource = 'standard';
+      offsetCheck = std.check;
+    } else {
+      offsetMhz = null;
+      offsetSource = 'unknown';
+    }
   }
-  if (txMhz != null) txMhz = Math.round(txMhz * 1e6) / 1e6;
+  const round = (x) => Math.round(x * 1e6) / 1e6;
   const toneM =
     /\b(?:PL|CTCSS|TONE|TSQ|T)\s*:?\s*(\d{2,3}(?:\.\d)?)\b/i.exec(rest) ||
     /\b(\d{2,3}\.\d)\s*Hz\b/i.exec(rest) ||
@@ -1216,8 +1365,19 @@ export function parseNetFrequency(text) {
   const modeM = MODE_RE.exec(rest);
   return {
     mhz,
-    txMhz,
+    txMhz: offsetMhz == null ? null : round(mhz + offsetMhz),
+    offsetMhz: offsetMhz == null ? null : round(offsetMhz),
+    offsetSource,
+    offsetCheck,
     tone: toneM ? toneM[1] : '',
     mode: modeM ? modeM[1].toUpperCase() : '',
   };
+}
+
+/** "−0.6 MHz" / "+500 kHz" for an offset in MHz (signed). */
+export function formatOffset(offsetMhz) {
+  if (offsetMhz == null || !Number.isFinite(offsetMhz)) return '';
+  const sign = offsetMhz < 0 ? '−' : '+';
+  const abs = Math.abs(offsetMhz);
+  return abs < 1 ? `${sign}${Math.round(abs * 1000)} kHz` : `${sign}${Number(abs.toFixed(3))} MHz`;
 }
