@@ -7995,6 +7995,8 @@ export const SettingsPanel = ({
                 rigHost={rigHost}
                 rigPort={rigPort}
                 rigApiToken={rigApiToken}
+                deLat={Number.isFinite(parseFloat(lat)) ? parseFloat(lat) : null}
+                deLon={Number.isFinite(parseFloat(lon)) ? parseFloat(lon) : null}
               />
             </div>
           )}

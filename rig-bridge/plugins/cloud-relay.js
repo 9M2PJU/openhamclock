@@ -343,6 +343,19 @@ const descriptor = {
         case 'fldigi':
           runFldigiCommand(cmd.payload || {}, localMod, localOptions);
           break;
+        case 'indicators':
+          // Display indicator state (satellite, countdown, alarm, lightning
+          // guard relay) from a browser in cloud-relay mode → the same local
+          // /api/indicators the browser would POST to directly.
+          if (cmd.payload && typeof cmd.payload === 'object') {
+            const indReq = localMod.request(localOptions('/api/indicators'), () => {});
+            indReq.on('error', (err) => {
+              if (cfg.verbose) console.error(`[CloudRelay] indicators dispatch error: ${err.message}`);
+            });
+            indReq.write(JSON.stringify(cmd.payload));
+            indReq.end();
+          }
+          break;
         default:
           if (cfg.verbose) console.log(`[CloudRelay] Unknown command type: ${cmd.type}`);
       }
