@@ -85,6 +85,11 @@ export function buildPanelDefs({ isLocalInstall = false } = {}) {
     'world-clocks': { name: 'World Clocks', icon: '🌐' },
     stopwatch: { name: 'Stopwatch', icon: '⏱️' },
     'aircraft-nearby': { name: 'Aircraft Nearby', icon: '✈️' },
+    'noaa-scales': { name: 'NOAA Scales', icon: '📶', group: 'Solar' },
+    dst: { name: 'Dst Index', icon: '🧲', group: 'Solar' },
+    eclipse: { name: 'Eclipses', icon: '🌘', group: 'Solar' },
+    planets: { name: 'Planets', icon: '🪐', group: 'Solar' },
+    'space-launches': { name: 'Space Launches', icon: '🚀' },
   };
 
   // Append auto-discovered panel plugins (src/plugins/local/panels/*.jsx).

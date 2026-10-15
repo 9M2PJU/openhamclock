@@ -112,6 +112,11 @@ export const PANEL_HELP = {
   'world-clocks': 'utility',
   stopwatch: 'utility',
   'aircraft-nearby': 'utility',
+  'noaa-scales': 'propagation-panels',
+  dst: 'propagation-panels',
+  eclipse: 'propagation-panels',
+  planets: 'propagation-panels',
+  'space-launches': 'utility',
 };
 
 /**
@@ -135,6 +140,7 @@ export const LAYER_HELP = {
   'winlink-gateways': 'emcomm-mesh',
   'worked-grids': 'logbook',
   'active-users': 'map-layers',
+  'launch-sites': 'map-layers',
 };
 
 /** Settings tab id → topic key */

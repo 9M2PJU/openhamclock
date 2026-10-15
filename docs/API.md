@@ -125,19 +125,24 @@ These are the endpoints third-party tools may reasonably consume. They are all
 upstream), and their response shapes change rarely — breaking changes will be
 called out in release notes.
 
-| Endpoint               | What it returns                                                                                                   | Server cache |
-| ---------------------- | ----------------------------------------------------------------------------------------------------------------- | ------------ |
-| `/api/pota/spots`      | Current POTA activation spots                                                                                     | ~1 min       |
-| `/api/sota/spots`      | Current SOTA activation spots                                                                                     | ~1 min       |
-| `/api/wwff/spots`      | Current WWFF activation spots                                                                                     | ~1 min       |
-| `/api/solar-indices`   | SFI, sunspot number, A/K indices, X-ray flux                                                                      | ~5 min       |
-| `/api/solar-cycle`     | Solar cycle history/prediction series                                                                             | hours        |
-| `/api/propagation`     | Point-to-point HF path prediction. Query: `deLat`, `deLon`, `dxLat`, `dxLon`, optional `mode`, `power`, `antenna` | ~10 min      |
-| `/api/band-openings`   | Detected band openings from live spot analysis                                                                    | ~1 min       |
-| `/api/satellites/data` | Tracked amateur satellite orbital elements (OMM)                                                                  | ~1 h         |
-| `/api/ionosonde`       | Live ionosonde soundings (foF2/MUF from GIRO via KC2G)                                                            | ~15 min      |
-| `/api/contests`        | Contest calendar (WA7BNM iCal, RSS fallback). Returns `{ contests, source, fetchedAt }`                           | ~30 min      |
-| `/api/health`          | Instance health/uptime probe                                                                                      | none         |
+| Endpoint               | What it returns                                                                                                                                                                             | Server cache |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------ |
+| `/api/pota/spots`      | Current POTA activation spots                                                                                                                                                               | ~1 min       |
+| `/api/sota/spots`      | Current SOTA activation spots                                                                                                                                                               | ~1 min       |
+| `/api/wwff/spots`      | Current WWFF activation spots                                                                                                                                                               | ~1 min       |
+| `/api/solar-indices`   | SFI, sunspot number, A/K indices, X-ray flux                                                                                                                                                | ~5 min       |
+| `/api/solar-cycle`     | Solar cycle history/prediction series                                                                                                                                                       | hours        |
+| `/api/propagation`     | Point-to-point HF path prediction. Query: `deLat`, `deLon`, `dxLat`, `dxLon`, optional `mode`, `power`, `antenna`                                                                           | ~10 min      |
+| `/api/band-openings`   | Detected band openings from live spot analysis                                                                                                                                              | ~1 min       |
+| `/api/satellites/data` | Tracked amateur satellite orbital elements (OMM)                                                                                                                                            | ~1 h         |
+| `/api/ionosonde`       | Live ionosonde soundings (foF2/MUF from GIRO via KC2G)                                                                                                                                      | ~15 min      |
+| `/api/contests`        | Contest calendar (WA7BNM iCal, RSS fallback). Returns `{ contests, source, fetchedAt }`                                                                                                     | ~30 min      |
+| `/api/swpc/scales`     | NOAA R/S/G space weather scales, today + 3-day forecast. Returns `{ scales: { "-1","0".."3" }, fetchedAt }` (raw NOAA shape)                                                                | ~5 min       |
+| `/api/swpc/dst`        | Kyoto real-time Dst index (SWPC mirror fallback). Returns `{ current: { t, dst }, series: [{ t, dst }] (72 h hourly), source, updatedAt, fetchedAt }`                                       | ~10 min      |
+| `/api/swpc/trends`     | 24 h solar wind / IMF / GOES proton (≥10 MeV) and electron (≥2 MeV) series in 10-minute bins. Returns `{ wind, mag, protons, electrons, latest, fetchedAt }`                                | ~10 min      |
+| `/api/swpc/activity`   | Peak OVATION aurora probability and D-RAP maximum affected frequency. Returns `{ aurora: { max, lat, lon, forecastTime }, drap: { maxFreq, validAt }, fetchedAt }`                          | ~5 min       |
+| `/api/space-launches`  | Upcoming orbital launches (Launch Library 2, slimmed). Returns `{ launches: [{ id, name, net, status, provider, rocket, mission, pad, location, lat, lon, … }], count, fetchedAt, stale? }` | ~30 min      |
+| `/api/health`          | Instance health/uptime probe                                                                                                                                                                | none         |
 
 ```bash
 curl -s http://localhost:3000/api/solar-indices | jq .

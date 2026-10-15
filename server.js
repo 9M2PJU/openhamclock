@@ -311,6 +311,10 @@ require('./server/routes/config-routes')(app, ctx);
 require('./server/routes/geo-time')(app, ctx);
 require('./server/routes/admin')(app, ctx);
 require('./server/routes/push')(app, ctx); // Web Push (dormant without VAPID keys); needs swpc-alerts exports
+require('./server/routes/noaa-scales')(app, ctx); // NOAA R/S/G scales + 3-day forecast (NOAA Scales panel)
+require('./server/routes/dst')(app, ctx); // Kyoto Dst index with SWPC fallback (Dst panel)
+require('./server/routes/space-wx-activity')(app, ctx); // aurora peak + D-RAP max for the auto space-weather layer
+require('./server/routes/space-launches')(app, ctx); // Launch Library 2 upcoming launches (Space Launches panel + layer)
 
 // Subsystem health background refresher (read by /api/health).
 const health = require('./server/health');

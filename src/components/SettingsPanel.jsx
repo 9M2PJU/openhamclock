@@ -4938,6 +4938,43 @@ export const SettingsPanel = ({
                   return result;
                 })();
               })()}
+
+              {/* Auto space-weather layer — Aurora / D-RAP switch themselves on when it matters */}
+              <div
+                style={{
+                  background: 'var(--bg-tertiary)',
+                  border: `1px solid ${config.autoSpaceWxLayers ? 'var(--accent-amber)' : 'var(--border-color)'}`,
+                  borderRadius: '8px',
+                  padding: '14px',
+                  marginTop: '16px',
+                }}
+              >
+                <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={!!config.autoSpaceWxLayers}
+                    onChange={() => onSave({ ...config, autoSpaceWxLayers: !config.autoSpaceWxLayers })}
+                    aria-label={t('station.settings.layers.autoSpaceWx.title')}
+                    style={{ width: '18px', height: '18px', cursor: 'pointer' }}
+                  />
+                  <span style={{ fontSize: '18px' }}>🌌</span>
+                  <div>
+                    <div
+                      style={{
+                        color: config.autoSpaceWxLayers ? 'var(--accent-amber)' : 'var(--text-primary)',
+                        fontSize: '14px',
+                        fontWeight: '600',
+                        fontFamily: 'var(--font-mono)',
+                      }}
+                    >
+                      {t('station.settings.layers.autoSpaceWx.title')}
+                    </div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                      {t('station.settings.layers.autoSpaceWx.description')}
+                    </div>
+                  </div>
+                </label>
+              </div>
             </div>
           )}
         </div>

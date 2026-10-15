@@ -865,6 +865,39 @@ export const LiStopwatch = glyph(
   </>,
 );
 
+// Horseshoe magnet — Dst (ring current)
+export const LiMagnet = glyph(
+  <>
+    <path d="M6 4v8a6 6 0 0 0 12 0V4" />
+    <line x1="6" y1="8" x2="9.5" y2="8" />
+    <line x1="14.5" y1="8" x2="18" y2="8" />
+    <line x1="9.5" y1="4" x2="9.5" y2="12" />
+    <line x1="14.5" y1="4" x2="14.5" y2="12" />
+  </>,
+);
+// Partially covered disk — eclipse
+export const LiEclipse = glyph(
+  <>
+    <circle cx="12" cy="12" r="8" />
+    <path d="M12 4a8 8 0 0 1 0 16 6 6 0 0 0 0-16z" fill="currentColor" stroke="none" />
+  </>,
+);
+// Ringed planet
+export const LiPlanet = glyph(
+  <>
+    <circle cx="12" cy="12" r="5" />
+    <path d="M3.5 15.5c3-1 8.5-3.5 12.5-6.5s6-5.5 4.5-6.5-7 .5-11 3.5-8 7-6 9.5z" />
+  </>,
+);
+// Rocket — space launches
+export const LiRocket = glyph(
+  <>
+    <path d="M12 3c3 2.5 4.5 6 4.5 10l-1.5 3h-6L7.5 13C7.5 9 9 5.5 12 3z" />
+    <circle cx="12" cy="10.5" r="1.5" />
+    <path d="M7.5 13 5 16.5h3M16.5 13 19 16.5h-3M10.5 16v4l1.5-1.5 1.5 1.5v-4" />
+  </>,
+);
+
 /**
  * PANEL_ICONS — panel id → line-icon component.
  *
@@ -937,6 +970,11 @@ export const PANEL_ICONS = {
   'world-clocks': LiGlobeClock,
   stopwatch: LiStopwatch,
   'aircraft-nearby': LiPlane,
+  'noaa-scales': LiSignal,
+  dst: LiMagnet,
+  eclipse: LiEclipse,
+  planets: LiPlanet,
+  'space-launches': LiRocket,
 };
 
 /**

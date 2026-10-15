@@ -6,6 +6,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { MoonSkyChart } from './MoonSkyChart.jsx';
 import { getMoonPhase, getMoonAzEl, getMoonTimes, latLonToMaidenhead } from '../utils/geo.js';
 import { loadConfig } from '../utils/config.js';
+import { interpretDst } from '../utils/dst.js';
 import useAutoRotate from '../hooks/app/useAutoRotate.js';
 
 const MODES = ['image', 'indices', 'xray', 'lunar'];
@@ -1208,6 +1209,91 @@ export const SolarPanel = ({ solarIndices, bandConditions, forcedMode, config })
                   </div>
                 </div>
               )}
+
+              {/* Electron Flux Row — GOES ≥2 MeV, N0NBH fallback */}
+              {(() => {
+                const goes = solarIndices.data.electron?.current;
+                const n0nbh = parseFloat(bandConditions?.extras?.electronFlux);
+                const v = Number.isFinite(goes) ? goes : Number.isFinite(n0nbh) ? n0nbh : null;
+                if (v == null) return null;
+                const color = v >= 1000 ? '#ff0000' : v >= 100 ? '#ffcc00' : '#00ff88';
+                return (
+                  <div
+                    style={{
+                      background: 'var(--bg-tertiary)',
+                      borderRadius: '6px',
+                      padding: '8px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '12px',
+                    }}
+                  >
+                    <div style={{ minWidth: '60px' }}>
+                      <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>Electrons</div>
+                      <div style={{ fontSize: '22px', fontWeight: '700', color, fontFamily: 'Orbitron, monospace' }}>
+                        {v >= 1000 ? `${(v / 1000).toFixed(1)}k` : Math.round(v)}
+                      </div>
+                      <div style={{ fontSize: '8px', color: 'var(--text-muted)', lineHeight: 1.2 }}>
+                        ≥2 MeV {Number.isFinite(goes) ? 'GOES' : 'N0NBH'}
+                      </div>
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: '9px', color: 'var(--text-muted)', lineHeight: 1.3 }}>
+                        Relativistic electrons at geosynchronous orbit.
+                        <br />
+                        {'<'}100 quiet · 100–1000 elevated · {'>'} 1000 alert
+                        <br />
+                        High flux charges satellites — the AMSAT operator's number.
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Dst Row — Kyoto ring-current index */}
+              {Number.isFinite(solarIndices.data.dst?.current) &&
+                (() => {
+                  const v = solarIndices.data.dst.current;
+                  const info = interpretDst(v);
+                  return (
+                    <div
+                      style={{
+                        background: 'var(--bg-tertiary)',
+                        borderRadius: '6px',
+                        padding: '8px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '12px',
+                      }}
+                    >
+                      <div style={{ minWidth: '60px' }}>
+                        <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>Dst</div>
+                        <div
+                          style={{
+                            fontSize: '22px',
+                            fontWeight: '700',
+                            color: info.color,
+                            fontFamily: 'Orbitron, monospace',
+                          }}
+                        >
+                          {v > 0 ? `+${v}` : v}
+                        </div>
+                        <div style={{ fontSize: '8px', color: 'var(--text-muted)', lineHeight: 1.2 }}>
+                          nT · {info.label}
+                        </div>
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: '9px', color: 'var(--text-muted)', lineHeight: 1.3 }}>
+                          Ring-current storm index (Kyoto).
+                          <br />
+                          Near 0 quiet · beyond ±10 may disturb 160 m
+                          <br />
+                          −50 minor · −100 moderate · −250 intense storm
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
             </div>
           ) : (
             <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '20px' }}>

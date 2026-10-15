@@ -67,6 +67,7 @@ import useAudioAlerts from './hooks/app/useAudioAlerts';
 import { useSatelliteAnnouncements } from './hooks/app/useSatelliteAnnouncements';
 import useSceneRotation from './hooks/app/useSceneRotation';
 import useIdleClock from './hooks/app/useIdleClock';
+import useAutoSpaceWxLayers from './hooks/app/useAutoSpaceWxLayers';
 import WhatsNew from './components/WhatsNew.jsx';
 import StarTrekDayModal from './components/StarTrekDayModal.jsx';
 import CommandPalette from './components/CommandPalette.jsx';
@@ -372,6 +373,8 @@ const App = () => {
   const dxpeditions = useDXpeditions();
   const contests = useContests();
   const swpcAlerts = useSWPCAlerts();
+  // Auto space-weather map layer (Settings → Map Layers): aurora / D-RAP on when it matters
+  useAutoSpaceWxLayers(!!config.autoSpaceWxLayers);
   // Band Openings are scoped to this station's CQ zone by default (#1191)
   const myRegion = useMemo(() => {
     const info = getCallsignInfo(config.callsign);

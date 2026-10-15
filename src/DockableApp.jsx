@@ -61,6 +61,11 @@ import {
   SkedPlannerPanel,
   IonosondePanel,
   PropVerifyPanel,
+  NOAAScalesPanel,
+  DstPanel,
+  EclipsePanel,
+  PlanetsPanel,
+  SpaceLaunchesPanel,
 } from './components';
 import MeshtasticPanel from './components/MeshtasticPanel.jsx';
 import LogbookPanel from './components/LogbookPanel.jsx';
@@ -93,6 +98,8 @@ import './styles/flexlayout-openhamclock.css';
 import useMapLayers from './hooks/app/useMapLayers';
 import { useMapTextData } from './hooks/useMapTextData.js';
 import useRotator from './hooks/useRotator';
+import { useNOAAScales } from './hooks/useNOAAScales.js';
+import { useDst } from './hooks/useDst.js';
 import { useCallsignPopup } from './components/CallsignPopupManager.jsx';
 
 // Icons
@@ -327,6 +334,11 @@ export const DockableApp = ({
   // Lightning / aircraft / aurora / Winlink data broadcast out of the map
   // plugins for the text view panel (#1002 v2).
   const mapTextData = useMapTextData();
+
+  // NOAA R/S/G scales (NOAA Scales panel + Space Wx Alerts header) and Kyoto
+  // Dst (Dst panel) — fetched once here, server-cached, shared by every tab.
+  const noaaScales = useNOAAScales();
+  const dst = useDst();
 
   // Fallback: if parent did not provide map-layer toggles (seen with rotator),
   // use the internal hook so the map buttons still work.
@@ -1203,7 +1215,14 @@ export const DockableApp = ({
           break;
 
         case 'swpc-alerts':
-          content = <SWPCAlertsPanel data={swpcAlerts?.data} loading={swpcAlerts?.loading} error={swpcAlerts?.error} />;
+          content = (
+            <SWPCAlertsPanel
+              data={swpcAlerts?.data}
+              loading={swpcAlerts?.loading}
+              error={swpcAlerts?.error}
+              scales={noaaScales.data}
+            />
+          );
           break;
 
         case 'meteor-showers':
@@ -1388,6 +1407,40 @@ export const DockableApp = ({
           );
           break;
 
+        case 'noaa-scales':
+          content = <NOAAScalesPanel data={noaaScales.data} loading={noaaScales.loading} error={noaaScales.error} />;
+          break;
+
+        case 'dst':
+          content = <DstPanel data={dst.data} loading={dst.loading} error={dst.error} />;
+          break;
+
+        case 'eclipse':
+          content = <EclipsePanel deLat={config.location?.lat ?? null} deLon={config.location?.lon ?? null} />;
+          break;
+
+        case 'planets':
+          content = (
+            <PlanetsPanel
+              deLat={config.location?.lat ?? null}
+              deLon={config.location?.lon ?? null}
+              use12Hour={use12Hour}
+              timeZone={config.timezone || undefined}
+            />
+          );
+          break;
+
+        case 'space-launches':
+          content = (
+            <SpaceLaunchesPanel
+              deLocation={config.location}
+              units={config.allUnits?.dist}
+              onSetDX={handleDXChange}
+              dxLocked={dxLocked}
+            />
+          );
+          break;
+
         default: {
           // Auto-discovered panel plugins (src/plugins/local/panels/*.jsx).
           // v1 props contract: { config, t } only — see docs/PLUGINS.md.
@@ -1450,6 +1503,9 @@ export const DockableApp = ({
       dxpeditions,
       contests,
       swpcAlerts,
+      noaaScales,
+      dst,
+      use12Hour,
       pskFilters,
       wsjtx,
       handleDXChange,

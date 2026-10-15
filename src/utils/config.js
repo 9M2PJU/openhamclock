@@ -70,6 +70,7 @@ export const DEFAULT_CONFIG = {
   customDxCluster: { enabled: false, host: '', port: 7300 },
   udpDxCluster: { host: '', port: 12060 },
   wsjtxRelayMulticast: { enabled: false, address: '224.0.0.1' },
+  autoSpaceWxLayers: false, // Auto-enable Aurora / D-RAP map layers when space weather warrants (Settings → Map Layers)
 };
 
 // Cache for server config

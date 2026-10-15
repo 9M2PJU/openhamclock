@@ -90,23 +90,55 @@ module.exports = function (app, ctx) {
         return res.json(noaaCache.solarIndices.data);
       }
 
-      const [fluxRes, kIndexRes, kForecastRes, sunspotRes, sfiSummaryRes, magRes, kpEstRes] = await Promise.allSettled([
-        fetch('https://services.swpc.noaa.gov/json/f107_cm_flux.json'),
-        fetch('https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json'),
-        fetch('https://services.swpc.noaa.gov/products/noaa-planetary-k-index-forecast.json'),
-        fetch('https://services.swpc.noaa.gov/json/solar-cycle/observed-solar-cycle-indices.json'),
-        fetch('https://services.swpc.noaa.gov/products/summary/10cm-flux.json'),
-        fetch('https://services.swpc.noaa.gov/products/solar-wind/mag-1-day.json'),
-        fetch('https://services.swpc.noaa.gov/json/planetary_k_index_1m.json'),
-      ]);
+      const [fluxRes, kIndexRes, kForecastRes, sunspotRes, sfiSummaryRes, magRes, kpEstRes, electronRes, dstRes] =
+        await Promise.allSettled([
+          fetch('https://services.swpc.noaa.gov/json/f107_cm_flux.json'),
+          fetch('https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json'),
+          fetch('https://services.swpc.noaa.gov/products/noaa-planetary-k-index-forecast.json'),
+          fetch('https://services.swpc.noaa.gov/json/solar-cycle/observed-solar-cycle-indices.json'),
+          fetch('https://services.swpc.noaa.gov/products/summary/10cm-flux.json'),
+          fetch('https://services.swpc.noaa.gov/products/solar-wind/mag-1-day.json'),
+          fetch('https://services.swpc.noaa.gov/json/planetary_k_index_1m.json'),
+          fetch('https://services.swpc.noaa.gov/json/goes/primary/integral-electrons-1-day.json'),
+          fetch('https://services.swpc.noaa.gov/products/kyoto-dst.json'),
+        ]);
 
       const result = {
         sfi: { current: null, history: [] },
         kp: { current: null, history: [], forecast: [] },
         ssn: { current: null, history: [] },
         bz: { current: null },
+        // GOES >=2 MeV electron flux (e/(cm²·s·sr)) — the satellite-charging channel
+        electron: { current: null, time: null },
+        // Kyoto Dst (nT) via SWPC mirror; the Dst panel uses /api/swpc/dst for the series
+        dst: { current: null, time: null },
         timestamp: new Date().toISOString(),
       };
+
+      // Electron flux: last valid >=2 MeV sample
+      if (electronRes.status === 'fulfilled' && electronRes.value.ok) {
+        try {
+          const data = await electronRes.value.json();
+          for (let i = (data?.length || 0) - 1; i >= 0; i--) {
+            const r = data[i];
+            if (r?.energy === '>=2 MeV' && Number.isFinite(r.flux)) {
+              result.electron = { current: Math.round(r.flux * 10) / 10, time: r.time_tag || null };
+              break;
+            }
+          }
+        } catch {}
+      }
+
+      // Dst: newest hourly value
+      if (dstRes.status === 'fulfilled' && dstRes.value.ok) {
+        try {
+          const data = await dstRes.value.json();
+          const last = Array.isArray(data) ? data[data.length - 1] : null;
+          if (last && Number.isFinite(Number(last.dst))) {
+            result.dst = { current: Number(last.dst), time: last.time_tag || null };
+          }
+        } catch {}
+      }
 
       // SFI current: prefer SWPC summary
       if (sfiSummaryRes.status === 'fulfilled' && sfiSummaryRes.value.ok) {
