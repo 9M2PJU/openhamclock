@@ -1053,6 +1053,75 @@ function buildSetupHtml(version, firstRunToken = null) {
         { id: 'ohcApiKey', label: 'Server API_WRITE_KEY (if set)', type: 'text', default: '' },
         { id: 'verbose', label: 'Log every measurement', type: 'checkbox', default: false },
       ]},
+      { key: 'gps', name: 'GPS Receiver', maturity: 'alpha', desc: 'NMEA over serial, gpsd, or a fifo/file — drives DE location and rover mode in OpenHamClock', fields: [
+        { id: 'source', label: 'Source', type: 'select', options: ['serial', 'gpsd', 'file', 'mock'], default: 'serial' },
+        { id: 'serialPort', label: 'Serial Port (serial)', type: 'text', default: '' },
+        { id: 'baudRate', label: 'Baud Rate', type: 'number', default: 9600 },
+        { id: 'gpsdHost', label: 'gpsd Host', type: 'text', default: '127.0.0.1' },
+        { id: 'gpsdPort', label: 'gpsd Port', type: 'number', default: 2947 },
+        { id: 'filePath', label: 'FIFO / file path (file)', type: 'text', default: '' },
+        { id: 'publishInterval', label: 'Update Interval (ms)', type: 'number', default: 1000 },
+        { id: 'verbose', label: 'Verbose logging', type: 'checkbox', default: false },
+      ]},
+      { key: 'envSensors', name: 'Environment Sensors', maturity: 'alpha', desc: 'BME280 / BMP280 on I2C (0x76 / 0x77) and/or an HTTP JSON sensor (ESPHome, Tasmota) — temperature, humidity, pressure with 24 h history', fields: [
+        { id: 'pollInterval', label: 'Poll Interval (s)', type: 'number', default: 10 },
+        { id: 'i2cBus', label: 'I2C Bus', type: 'number', default: 1 },
+        { id: 'mock', label: 'Simulate sensors (no hardware)', type: 'checkbox', default: false },
+        { id: 'sensorA.enabled', label: 'Sensor A (I2C)', type: 'checkbox', default: true },
+        { id: 'sensorA.address', label: 'Sensor A Address', type: 'text', default: '0x76' },
+        { id: 'sensorA.name', label: 'Sensor A Name', type: 'text', default: 'Indoor' },
+        { id: 'sensorA.dTemp', label: 'Sensor A dTemp (°C)', type: 'number', default: 0 },
+        { id: 'sensorA.dPres', label: 'Sensor A dPres (hPa)', type: 'number', default: 0 },
+        { id: 'sensorB.enabled', label: 'Sensor B (I2C)', type: 'checkbox', default: false },
+        { id: 'sensorB.address', label: 'Sensor B Address', type: 'text', default: '0x77' },
+        { id: 'sensorB.name', label: 'Sensor B Name', type: 'text', default: 'Outdoor' },
+        { id: 'sensorB.dTemp', label: 'Sensor B dTemp (°C)', type: 'number', default: 0 },
+        { id: 'sensorB.dPres', label: 'Sensor B dPres (hPa)', type: 'number', default: 0 },
+        { id: 'http.enabled', label: 'HTTP JSON source', type: 'checkbox', default: false },
+        { id: 'http.url', label: 'HTTP URL', type: 'text', default: '' },
+        { id: 'http.name', label: 'HTTP Sensor Name', type: 'text', default: 'Remote' },
+        { id: 'http.tempPath', label: 'Temperature field path', type: 'text', default: 'temperature' },
+        { id: 'http.humPath', label: 'Humidity field path', type: 'text', default: 'humidity' },
+        { id: 'http.presPath', label: 'Pressure field path', type: 'text', default: 'pressure' },
+        { id: 'http.tempUnit', label: 'Temperature unit', type: 'select', options: ['C', 'F'], default: 'C' },
+        { id: 'http.presUnit', label: 'Pressure unit', type: 'select', options: ['hPa', 'Pa', 'kPa', 'inHg', 'mmHg'], default: 'hPa' },
+        { id: 'http.interval', label: 'HTTP poll interval (s)', type: 'number', default: 60 },
+        { id: 'verbose', label: 'Verbose logging', type: 'checkbox', default: false },
+      ]},
+      { key: 'gpio', name: 'Raspberry Pi GPIO', maturity: 'alpha', desc: 'ON-AIR / alarm / countdown / satellite lines and PTT, countdown-restart and alarm-silence buttons — HamClock header pinout, no native modules (gpiod CLI or sysfs)', fields: [
+        { id: 'backend', label: 'Backend', type: 'select', options: ['auto', 'gpiod', 'sysfs', 'mock'], default: 'auto' },
+        { id: 'chip', label: 'gpiochip', type: 'text', default: 'gpiochip0' },
+        { id: 'pins.pttIn', label: 'PTT / ON-AIR input (BCM)', type: 'number', default: 16 },
+        { id: 'pins.countdownResetIn', label: 'Countdown button (BCM)', type: 'number', default: 26 },
+        { id: 'pins.alarmSilenceIn', label: 'Alarm silence button (BCM)', type: 'number', default: 5 },
+        { id: 'pins.onAirOut', label: 'ON-AIR LED (BCM)', type: 'number', default: 21 },
+        { id: 'pins.alarmOut', label: 'Alarm output (BCM)', type: 'number', default: 6 },
+        { id: 'pins.countdownGreenOut', label: 'Countdown green (BCM)', type: 'number', default: 13 },
+        { id: 'pins.countdownRedOut', label: 'Countdown red (BCM)', type: 'number', default: 19 },
+        { id: 'pins.satOut', label: 'Satellite output (BCM)', type: 'number', default: 20 },
+        { id: 'activeLow', label: 'Inputs active low (switch to ground)', type: 'checkbox', default: true },
+        { id: 'outputActiveLow', label: 'Outputs active low', type: 'checkbox', default: false },
+        { id: 'debounceMs', label: 'Debounce (ms)', type: 'number', default: 50 },
+        { id: 'verbose', label: 'Verbose logging', type: 'checkbox', default: false },
+      ]},
+      { key: 'brightness', name: 'Light Sensor / Brightness', maturity: 'alpha', desc: 'LTR-329 or HTTP lux → display brightness with two-point calibration; writes /sys/class/backlight and publishes the level for the browser overlay', fields: [
+        { id: 'source', label: 'Lux source', type: 'select', options: ['none', 'ltr329', 'http', 'mock'], default: 'none' },
+        { id: 'i2cBus', label: 'I2C Bus', type: 'number', default: 1 },
+        { id: 'address', label: 'LTR-329 address', type: 'text', default: '0x29' },
+        { id: 'http.url', label: 'HTTP URL (http)', type: 'text', default: '' },
+        { id: 'http.luxPath', label: 'Lux field path', type: 'text', default: 'lux' },
+        { id: 'interval', label: 'Read interval (s)', type: 'number', default: 5 },
+        { id: 'auto', label: 'Auto brightness', type: 'checkbox', default: true },
+        { id: 'manual', label: 'Manual brightness (%)', type: 'number', default: 100 },
+        { id: 'min', label: 'Minimum brightness (%)', type: 'number', default: 5 },
+        { id: 'calDimLux', label: 'Dim calibration: lux', type: 'number', default: 5 },
+        { id: 'calDimPct', label: 'Dim calibration: brightness %', type: 'number', default: 15 },
+        { id: 'calBrightLux', label: 'Bright calibration: lux', type: 'number', default: 400 },
+        { id: 'calBrightPct', label: 'Bright calibration: brightness %', type: 'number', default: 100 },
+        { id: 'backlightPath', label: 'Backlight sysfs path (blank = auto)', type: 'text', default: '' },
+        { id: 'powerMethod', label: 'Display power method', type: 'select', options: ['auto', 'backlight', 'vcgencmd', 'xset', 'none'], default: 'auto' },
+        { id: 'verbose', label: 'Verbose logging', type: 'checkbox', default: false },
+      ]},
     ];
 
     function maturityBadge(level) {
@@ -1162,7 +1231,7 @@ function buildSetupHtml(version, firstRunToken = null) {
         update[key][section][subkey] = value;
       } else {
         update[key] = {};
-        update[key][field] = typeof value === 'string' && /^\\d+$/.test(value) ? parseInt(value) : value;
+        update[key][field] = typeof value === 'string' && /^-?\\d+(\\.\\d+)?$/.test(value) ? parseFloat(value) : value;
       }
       try {
         await fetch('/api/config', {
@@ -2099,8 +2168,9 @@ function createServer(registry, version) {
   const cfgLimiter = makeRateLimiter(10, 60000); // 10/min
   const tokenLimiter = makeRateLimiter(3, 60000); // 3/min
 
-  // Allow plugins to register their own routes
-  registry.registerRoutes(app);
+  // Allow plugins to register their own routes (write routes get requireAuth)
+  registry.registerRoutes(app, requireAuth);
+  const indicatorLimiter = makeRateLimiter(10, 1000); // 10/s
 
   // ─── Setup Web UI ───
   app.get('/', (req, res) => {
@@ -2256,6 +2326,7 @@ function createServer(registry, version) {
       config.rtltcp = { ...config.rtltcp, ...newConfig.rtltcp };
     }
     // Deep-merge plugin config sections
+    const HW_KEYS = ['gps', 'envSensors', 'gpio', 'brightness'];
     // KiwiSDR beacon monitor — validate the receiver host/port before merging
     if (newConfig.beaconMonitor) {
       const bm = newConfig.beaconMonitor;
@@ -2279,15 +2350,39 @@ function createServer(registry, version) {
       'winlink',
       'meshcom',
       'beaconMonitor',
+      ...HW_KEYS,
     ]) {
       if (newConfig[key]) {
-        config[key] = { ...(config[key] || {}), ...newConfig[key] };
-        // Handle nested objects (e.g. winlink.pat)
-        if (newConfig[key].pat && config[key].pat) {
-          config[key].pat = { ...config[key].pat, ...newConfig[key].pat };
+        const incoming = newConfig[key];
+        const prev = config[key] || {};
+        config[key] = { ...prev, ...incoming };
+        // Handle nested objects one level deep (winlink.pat, envSensors.sensorA, gpio.pins, brightness.http …)
+        for (const sub of Object.keys(incoming)) {
+          if (incoming[sub] && typeof incoming[sub] === 'object' && !Array.isArray(incoming[sub])) {
+            config[key][sub] = {
+              ...((prev[sub] && typeof prev[sub] === 'object' && prev[sub]) || {}),
+              ...incoming[sub],
+            };
+          }
         }
       }
     }
+    // Hardware plugins: validate the few free-text fields that reach the OS
+    if (newConfig.gps) {
+      if (config.gps.serialPort && !isValidSerialPort(config.gps.serialPort)) {
+        return res.status(400).json({ success: false, error: 'Invalid GPS serial port path' });
+      }
+      if (config.gps.gpsdHost !== undefined && !isValidRemoteHost(config.gps.gpsdHost)) {
+        return res.status(400).json({ success: false, error: 'Invalid host value for gps.gpsdHost' });
+      }
+      if (config.gps.gpsdPort !== undefined && !isValidPort(config.gps.gpsdPort)) {
+        return res.status(400).json({ success: false, error: 'Invalid port value for gps.gpsdPort' });
+      }
+    }
+    if (newConfig.gpio && config.gpio.chip && !/^gpiochip\d{1,2}$/.test(String(config.gpio.chip))) {
+      return res.status(400).json({ success: false, error: 'gpio.chip must look like gpiochip0' });
+    }
+    const hwChanged = HW_KEYS.filter((k) => newConfig[k]);
 
     // TLS config — handle enable/disable and optional cert regeneration
     if (newConfig.tls) {
@@ -2331,6 +2426,9 @@ function createServer(registry, version) {
     if (newConfig.beaconMonitor) {
       registry.restartIntegration('kiwi-beacon-monitor');
     }
+    // Hardware plugins restart in place — no rig-bridge restart needed
+    const HW_PLUGIN_IDS = { gps: 'gps', envSensors: 'env-sensors', gpio: 'gpio', brightness: 'brightness' };
+    for (const k of hwChanged) registry.restartIntegration(HW_PLUGIN_IDS[k]);
 
     res.json({ success: true, config });
   });
@@ -2547,8 +2645,33 @@ function createServer(registry, version) {
       mode: state.mode,
       width: state.width,
       ptt: state.ptt,
+      onAir: state.onAir,
       timestamp: state.lastUpdate,
     });
+  });
+
+  // ─── Indicators: browser → hardware plugins ───────────────────────────
+  // OpenHamClock POSTs its indicator state (satellite visible / AOS / LOS,
+  // countdown timer, alarm) so plugins such as GPIO can drive LEDs. Any
+  // plugin may subscribe with pluginBus.on('indicators', fn).
+  let lastIndicators = null;
+  app.post('/api/indicators', requireAuth, indicatorLimiter, (req, res) => {
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const clean = {
+      satVisible: body.satVisible === true,
+      satAosInSec: Number.isFinite(body.satAosInSec) ? body.satAosInSec : null,
+      satLosInSec: Number.isFinite(body.satLosInSec) ? body.satLosInSec : null,
+      alarm: body.alarm === true,
+      countdown: ['off', 'running', 'expired'].includes(body.countdown) ? body.countdown : 'off',
+      receivedAt: Date.now(),
+    };
+    lastIndicators = clean;
+    const bus = registry.services && registry.services.pluginBus;
+    if (bus) bus.emit('indicators', clean);
+    res.json({ success: true });
+  });
+  app.get('/api/indicators', (req, res) => {
+    res.json(lastIndicators || { receivedAt: null });
   });
 
   app.get('/stream', (req, res) => {
@@ -2566,6 +2689,7 @@ function createServer(registry, version) {
       mode: state.mode,
       width: state.width,
       ptt: state.ptt,
+      onAir: state.onAir,
     };
     res.write(`data: ${JSON.stringify(initialData)}\n\n`);
 
@@ -2580,6 +2704,15 @@ function createServer(registry, version) {
         decodes: recentDecodes,
       })}\n\n`,
     );
+
+    // Hardware plugins (GPS, sensors, GPIO, brightness) replay their latest
+    // state so a browser that connects later doesn't wait for the next sample.
+    for (const instance of registry.getIntegrations().values()) {
+      if (typeof instance.getSseSnapshot !== 'function') continue;
+      try {
+        for (const ev of instance.getSseSnapshot()) res.write(`data: ${JSON.stringify(ev)}\n\n`);
+      } catch (e) {}
+    }
 
     const clientId = Date.now() + Math.random();
     addSseClient(clientId, res);

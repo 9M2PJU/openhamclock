@@ -79,6 +79,10 @@ class PluginRegistry {
       'rotator',
       'cloud-relay',
       'kiwi-beacon-monitor',
+      'gps',
+      'env-sensors',
+      'gpio',
+      'brightness',
     ]) {
       try {
         const p = require(`../plugins/${file}`);
@@ -217,10 +221,14 @@ class PluginRegistry {
    * (using a module-level instance reference) so routes work regardless of
    * whether the integration is currently running.
    */
-  registerRoutes(app) {
+  registerRoutes(app, requireAuth) {
     for (const descriptor of this._descriptors.values()) {
       if (typeof descriptor.registerRoutes === 'function') {
         descriptor.registerRoutes(app);
+      }
+      // Write endpoints that must sit behind the API token
+      if (typeof descriptor.registerAuthRoutes === 'function' && typeof requireAuth === 'function') {
+        descriptor.registerAuthRoutes(app, requireAuth);
       }
     }
   }

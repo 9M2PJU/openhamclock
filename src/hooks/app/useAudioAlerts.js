@@ -48,6 +48,9 @@ function itemKey(feedId, item) {
       // One alert per opening episode: beacon + band + when the contiguous
       // heard run began (a beacon re-measured every 15 min does not re-alert).
       return `${item.beacon || ''}-${item.band || ''}-${item.openedAt ?? ''}`;
+    case 'grid-change':
+      // One alert per grid entered (rover mode: GPS crossed a grid line).
+      return `${item.grid || ''}-${item.at || ''}`;
     default:
       return JSON.stringify(item).substring(0, 80);
   }

@@ -90,6 +90,8 @@ export function buildPanelDefs({ isLocalInstall = false } = {}) {
     'sat-planner': { name: 'Satellite Planner', icon: '🛰️' },
     // Raw telnet text of the user's own custom cluster session — self-hosted only
     ...(isLocalInstall ? { 'cluster-console': { name: 'Cluster Console', icon: '🖥️' } } : {}),
+    rover: { name: 'Rover (GPS)', icon: '🚙', group: 'Rig Bridge' },
+    'env-sensors': { name: 'Environment Sensors', icon: '🌡️', group: 'Rig Bridge' },
   };
 
   // Append auto-discovered panel plugins (src/plugins/local/panels/*.jsx).

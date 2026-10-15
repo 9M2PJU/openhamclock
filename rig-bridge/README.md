@@ -20,10 +20,11 @@ It also connects FT8/FT4 decoding software (WSJT-X, JTDX, MSHV, JS8Call) to Open
 8. [MeshCom UDP _(Beta)_](#meshcom-udp-plugin-beta)
 9. [Winlink Express CSV Ingest _(Beta)_](#winlink-express-csv-ingest-beta)
 10. [Antenna Rotator](#antenna-rotator-alpha)
-11. [HTTPS Setup (needed for openhamclock.com)](#https-setup)
-12. [Troubleshooting](#troubleshooting)
-13. [Glossary](#glossary)
-14. [Advanced Topics](#advanced-topics)
+11. [Raspberry Pi Hardware _(Alpha)_ — GPS, BME280, GPIO, brightness](#raspberry-pi-hardware-alpha)
+12. [HTTPS Setup (needed for openhamclock.com)](#https-setup)
+13. [Troubleshooting](#troubleshooting)
+14. [Glossary](#glossary)
+15. [Advanced Topics](#advanced-topics)
 
 ---
 
@@ -803,6 +804,123 @@ Rig Bridge can control antenna rotators via [Hamlib's](https://hamlib.github.io/
 
 ---
 
+## Raspberry Pi Hardware _(Alpha)_
+
+Four plugins close the gap with HamClock's Raspberry Pi hardware features: a GPS receiver, BME280 environment sensors, the GPIO header lines (ON-AIR, alarm, countdown, satellite, buttons) and an ambient-light sensor driving the display brightness. None of them needs a compiled Node module: serial and TCP go through `serialport`/`net`, I2C goes through the optional `i2c-bus` package, and GPIO uses the `gpiod` command-line tools or sysfs. Everything also has a **mock** mode, so the OpenHamClock panels can be tried on any computer without a Pi.
+
+All four are enabled on the **Plugins** tab of the setup page (<http://localhost:5555>) and restart in place when you change their settings — no rig-bridge restart needed. The browser receives their state over the same `/stream` connection as the rig (`{ type:'plugin', event:'gps'|'env'|'gpio'|'brightness' }`), and the latest state is replayed to every new browser connection.
+
+> **Hardware status:** these plugins were written against the datasheets and tested with mocks and unit tests only. If you run them on real hardware, please report what you see (good or bad) in a GitHub issue.
+
+### Raspberry Pi preparation
+
+```bash
+sudo raspi-config          # Interface Options → I2C → enable (for BME280 / LTR-329)
+sudo apt install gpiod i2c-tools
+sudo usermod -aG gpio,i2c,dialout,video $USER   # GPIO, I2C, serial GPS, vcgencmd
+cd ~/openhamclock/rig-bridge && npm install i2c-bus   # optional native module for I2C
+i2cdetect -y 1             # BME280 shows at 76 or 77, LTR-329 at 29
+```
+
+Log out and back in after the `usermod`. The compiled rig-bridge binaries cannot load `i2c-bus`; run from source (`node rig-bridge.js`) on the Pi when you use I2C sensors.
+
+### GPS plugin
+
+Feeds the station position into OpenHamClock: **Settings → Station → GPS** chooses _Off_, _Set once_ (first fix after start-up sets DE lat/lon, grid and altitude) or _Follow_ (rover mode — DE tracks the receiver, the **Rover** panel comes alive, QSOs are logged with the live `MY_GRIDSQUARE`, and a grid change rings the _Grid Change (Rover)_ alert). The browser also warns when the GPS time differs from the computer clock by more than 2 s (warning only).
+
+| Setting           | Default              | Description                                                            |
+| ----------------- | -------------------- | ---------------------------------------------------------------------- |
+| `source`          | `serial`             | `serial` (NMEA), `gpsd` (JSON on TCP 2947), `file` (fifo/file), `mock` |
+| `serialPort`      | —                    | `/dev/ttyACM0`, `/dev/ttyUSB0`, `COM5` …                               |
+| `baudRate`        | `9600`               | Most USB pucks: 9600; u-blox M8/M9 often 9600 or 38400                 |
+| `gpsdHost/Port`   | `127.0.0.1` / `2947` | gpsd — the plugin sends `?WATCH={"enable":true,"json":true}`           |
+| `filePath`        | —                    | A UNIX fifo (`mkfifo /tmp/nmea`) or a file something appends NMEA to   |
+| `publishInterval` | `1000` ms            | How often a new fix is pushed to the browser                           |
+
+Sentences parsed: **RMC** (fix, lat/lon, speed, course, UTC date+time), **GGA** (altitude, satellites used, HDOP, fix quality) and **GSA** (2D/3D). Any talker ID works (GP, GN, GL, GA, BD). Checksum failures are dropped.
+
+Typical setups:
+
+- **USB GPS puck on the Pi:** `source: serial`, `serialPort: /dev/ttyACM0`.
+- **Pi GPS HAT on the UART:** enable the serial port in `raspi-config` (disable the login shell on it), then `serialPort: /dev/serial0`.
+- **Already running gpsd** (chrony/NTP setups): `source: gpsd` — nothing else to configure.
+- **Bluetooth or network GPS:** pipe it into a fifo, e.g. `mkfifo /tmp/nmea && socat -u TCP:phone:10110 PIPE:/tmp/nmea`, and set `source: file`, `filePath: /tmp/nmea`.
+
+API: `GET /api/gps/status`.
+
+### Environment Sensors plugin (BME280 / BMP280 / HTTP)
+
+Temperature, humidity, dew point and station pressure, shown in the **Environment Sensors** panel with the two-sensor split HamClock uses and a 24 h history graph (one sample per minute is kept in the bridge and served from `GET /api/env/history`).
+
+| Setting                            | Default                | Description                                                                            |
+| ---------------------------------- | ---------------------- | -------------------------------------------------------------------------------------- |
+| `pollInterval`                     | `10` s                 | Sensor read interval                                                                   |
+| `i2cBus`                           | `1`                    | `/dev/i2c-1` on every Pi since the B+                                                  |
+| `sensorA.enabled/address/name`     | on / `0x76` / Indoor   | First BME280/BMP280 (chip id read from register 0xD0)                                  |
+| `sensorB.enabled/address/name`     | off / `0x77` / Outdoor | Second sensor — tie SDO high for 0x77                                                  |
+| `sensorX.dTemp` / `dPres` / `dHum` | `0`                    | Corrections added to the reading (HamClock dTemp/dPres), e.g. −1.5 °C for self-heating |
+| `http.enabled/url`                 | off                    | Any JSON URL: ESPHome `/sensor/…`, Tasmota `cm?cmnd=Status%2010`, Home Assistant …     |
+| `http.tempPath/humPath/presPath`   | `temperature` …        | Dotted field paths, e.g. `StatusSNS.BME280.Temperature`, `list[0].value`               |
+| `http.tempUnit` / `presUnit`       | `C` / `hPa`            | Convert from `F`, `Pa`, `kPa`, `inHg`, `mmHg`                                          |
+| `mock`                             | `false`                | Two simulated sensors — try the panel without hardware                                 |
+
+**Wiring (I2C, 3.3 V only):** BME280 VCC → pin 1 (3V3), GND → pin 6, SDA → pin 3 (GPIO 2), SCL → pin 5 (GPIO 3). For two sensors on one bus pull SDO of the second one to 3V3 (address 0x77). Keep I2C leads short (< 30 cm) or use a bus extender.
+
+The compensation math is Bosch's double-precision reference implementation (`lib/bme280.js`, unit-tested against the datasheet example values). Measurements use forced mode with 1× oversampling, so the sensor sleeps between reads and self-heating stays negligible.
+
+API: `GET /api/env/status`, `GET /api/env/history`.
+
+### GPIO plugin (HamClock header lines)
+
+Drives the same header pins HamClock uses, plus a PTT sense input. Pin numbers below are **BCM GPIO numbers** (what `gpioinfo` shows); the header position is in brackets. You may also type a header pin as `P37` in the config.
+
+| Function            | Direction | Default BCM (header) | Notes                                                                         |
+| ------------------- | --------- | -------------------- | ----------------------------------------------------------------------------- |
+| `pttIn`             | input     | 16 (36)              | PTT / ON-AIR sense, active low → bridge `onAir` state → browser shows ON AIR  |
+| `countdownResetIn`  | input     | 26 (37)              | Button to restart the ID / countdown timer (HamClock CD switch; pin 17 = 3V3) |
+| `alarmSilenceIn`    | input     | 5 (29)               | Button to silence the alarm line (HamClock AL reset)                          |
+| `onAirOut`          | output    | 21 (40)              | ON-AIR LED — rig PTT (CAT) or `pttIn` active (HamClock OA)                    |
+| `alarmOut`          | output    | 6 (31)               | Alarm ringing — the ID timer has expired (HamClock AL)                        |
+| `countdownGreenOut` | output    | 13 (33)              | Countdown running (HamClock CD green)                                         |
+| `countdownRedOut`   | output    | 19 (35)              | Countdown expired (HamClock CD red)                                           |
+| `satOut`            | output    | 20 (38)              | 1 Hz the minute before AOS, steady during the pass, 2 Hz the last minute (SA) |
+
+Set a pin to `-1` to disable that function. `activeLow` (default on) means switches pull the input to ground; `outputActiveLow` inverts the outputs for sink-driven LEDs.
+
+**Wiring:** LEDs through a 330 Ω–1 kΩ resistor to ground (3.3 V logic, ≤ 8 mA per pin — use a transistor or relay module for anything bigger). Switches between the input pin and ground; the plugin requests internal pull-ups, but GPIO 9–27 default to pull-_down_ at boot, so add this to `/boot/firmware/config.txt` (older images: `/boot/config.txt`) and reboot:
+
+```text
+gpio=5,16,26=pu
+```
+
+**Backends** (`backend`): `auto` picks sysfs when `/sys/class/gpio` exists (every Raspberry Pi OS release so far) and otherwise the libgpiod tools (`gpioget`/`gpioset`/`gpiomon`, v1 or v2 — install with `sudo apt install gpiod`). `mock` keeps everything in memory; `POST /api/gpio/mock/input { "name": "pttIn", "level": 1 }` presses a virtual button so you can watch the ON AIR panel react.
+
+The browser tells the bridge what to show by posting its indicator state to `POST /api/indicators` (`{ satVisible, satAosInSec, satLosInSec, countdown: off|running|expired, alarm }`, token-protected, every 15 s and on change). Any plugin can subscribe with `pluginBus.on('indicators', fn)`. Physical button presses go the other way as `{ type:'plugin', event:'gpio-button' }` — the **ID Timer** panel restarts on `countdown-restart` and dismisses its reminder on `alarm-silence`.
+
+API: `GET /api/gpio/status`, `POST /api/gpio/mock/input`, `POST /api/indicators`, `GET /api/indicators`.
+
+### Light Sensor / Brightness plugin
+
+Maps ambient light to display brightness with HamClock's two-point calibration and applies it to the panel.
+
+| Setting                         | Default       | Description                                                                                        |
+| ------------------------------- | ------------- | -------------------------------------------------------------------------------------------------- |
+| `source`                        | `none`        | `ltr329` (I2C 0x29), `http` (lux field from a JSON URL), `mock`, `none` (manual only)              |
+| `calDimLux` / `calDimPct`       | `5` / `15`    | In a dark room: the lux you read and the brightness you want                                       |
+| `calBrightLux` / `calBrightPct` | `400` / `100` | In a bright room: the lux you read and the brightness you want                                     |
+| `min`                           | `5` %         | Never dim below this                                                                               |
+| `auto` / `manual`               | on / `100`    | Follow the sensor, or hold a fixed level (also set from the browser)                               |
+| `backlightPath`                 | auto          | `/sys/class/backlight/<dev>` — auto-detected (official 7" display: `10-0045` / `rpi_backlight`)    |
+| `powerMethod`                   | `auto`        | Display off/on for the display schedule: `bl_power`, `vcgencmd display_power`, `xset dpms`, `none` |
+
+Read the current lux from `GET /api/brightness/status` while calibrating. The plugin writes the backlight when it is writable — add `SUBSYSTEM=="backlight", RUN+="/bin/chmod 0666 /sys/class/backlight/%k/brightness /sys/class/backlight/%k/bl_power"` as `/etc/udev/rules.d/99-backlight.rules` so it works without root. With no controllable backlight the level is still published and OpenHamClock dims with a translucent overlay (**Settings → Display → Brightness**: slider + _Auto brightness_). The display schedule (Settings → Station) switches the backlight off and on through `POST /api/brightness { "power": false|true }`.
+
+**Wiring (LTR-329, 3.3 V):** VCC → pin 1, GND → pin 9, SDA → pin 3, SCL → pin 5 — it shares the bus with the BME280.
+
+API: `GET /api/brightness/status`, `POST /api/brightness { brightness?: 0-100, auto?: bool, power?: bool }` (token-protected).
+
+---
+
 ## HTTPS Setup
 
 ### Do I need this?
@@ -1037,20 +1155,24 @@ Executables are saved to the `dist/` folder.
 
 Rig Bridge exposes a simple HTTP API — compatible with the original rig-daemon format:
 
-| Method | Endpoint                           | Description                                               |
-| ------ | ---------------------------------- | --------------------------------------------------------- |
-| GET    | `/status`                          | Current frequency, mode, PTT state, and connection status |
-| GET    | `/stream`                          | Real-time updates via SSE (Server-Sent Events)            |
-| POST   | `/freq`                            | Tune radio: `{ "freq": 14074000 }` (frequency in Hz)      |
-| POST   | `/mode`                            | Set mode: `{ "mode": "USB" }`                             |
-| POST   | `/ptt`                             | Key transmitter: `{ "ptt": true }`                        |
-| GET    | `/api/ports`                       | List available serial ports                               |
-| GET    | `/api/config`                      | Read current configuration                                |
-| POST   | `/api/config`                      | Save configuration and reconnect                          |
-| POST   | `/api/test`                        | Test a serial port without connecting                     |
-| GET    | `/api/status`                      | Lightweight health check                                  |
-| GET    | `/api/beacon-monitor/status`       | KiwiSDR beacon monitor connection state                   |
-| GET    | `/api/beacon-monitor/measurements` | Beacon SNR log: `?band=20m&hours=24` or `?since=<ms>`     |
+| Method | Endpoint                                                                                               | Description                                                                      |
+| ------ | ------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------- |
+| GET    | `/status`                                                                                              | Current frequency, mode, PTT state, and connection status                        |
+| GET    | `/stream`                                                                                              | Real-time updates via SSE (Server-Sent Events)                                   |
+| POST   | `/freq`                                                                                                | Tune radio: `{ "freq": 14074000 }` (frequency in Hz)                             |
+| POST   | `/mode`                                                                                                | Set mode: `{ "mode": "USB" }`                                                    |
+| POST   | `/ptt`                                                                                                 | Key transmitter: `{ "ptt": true }`                                               |
+| GET    | `/api/ports`                                                                                           | List available serial ports                                                      |
+| GET    | `/api/config`                                                                                          | Read current configuration                                                       |
+| POST   | `/api/config`                                                                                          | Save configuration and reconnect                                                 |
+| POST   | `/api/test`                                                                                            | Test a serial port without connecting                                            |
+| GET    | `/api/status`                                                                                          | Lightweight health check                                                         |
+| POST   | `/api/indicators`                                                                                      | Browser → hardware: `{ satVisible, satAosInSec, satLosInSec, countdown, alarm }` |
+| GET    | `/api/gps/status`, `/api/env/status`, `/api/env/history`, `/api/gpio/status`, `/api/brightness/status` | Hardware plugin state                                                            |
+| POST   | `/api/brightness`                                                                                      | `{ brightness?: 0-100, auto?: bool, power?: bool }`                              |
+| POST   | `/api/gpio/mock/input`                                                                                 | Press a virtual button in GPIO mock mode                                         |
+| GET    | `/api/beacon-monitor/status`                                                                           | KiwiSDR beacon monitor connection state                                          |
+| GET    | `/api/beacon-monitor/measurements`                                                                     | Beacon SNR log: `?band=20m&hours=24` or `?since=<ms>`                            |
 
 ### Project structure
 
@@ -1068,7 +1190,16 @@ rig-bridge/
 │   ├── message-log.js     # Persistent message log
 │   ├── kiss-protocol.js   # KISS frame encode/decode (APRS TNC)
 │   ├── wsjtx-protocol.js  # WSJT-X UDP protocol parser
-│   └── aprs-parser.js     # APRS packet decoder
+│   ├── aprs-parser.js     # APRS packet decoder
+│   ├── nmea.js            # NMEA 0183 RMC/GGA/GSA parser (GPS)
+│   ├── gpsd.js            # gpsd TPV/SKY → fix mapping
+│   ├── maidenhead.js      # lat/lon → grid locator
+│   ├── bme280.js          # Bosch BME280/BMP280 compensation math
+│   ├── ltr329.js          # LTR-329 light sensor registers + lux formula
+│   ├── gpio-logic.js      # GPIO pin map, output state machine, gpiod parsers
+│   ├── brightness-map.js  # lux → brightness two-point calibration
+│   ├── http-json.js       # dotted-path field picking for HTTP JSON sensors
+│   └── sample-ring.js     # 1-sample-per-minute 24 h ring buffer
 └── plugins/
     ├── usb/
     │   ├── index.js            # USB serial lifecycle (open, reconnect, poll)
@@ -1090,7 +1221,11 @@ rig-bridge/
     ├── rotator.js         # Antenna rotator via rotctld (Hamlib)
     ├── winlink-gateway.js # Winlink RMS gateway discovery + Pat client
     ├── winlink-express-csv.js # Winlink Express form-export CSV → EmComm field reports
-    └── cloud-relay.js     # Cloud relay — bridges local rig-bridge to cloud OHC
+    ├── cloud-relay.js     # Cloud relay — bridges local rig-bridge to cloud OHC
+    ├── gps.js             # GPS receiver (serial NMEA / gpsd / fifo / mock)
+    ├── env-sensors.js     # BME280/BMP280 over I2C + HTTP JSON sensors, 24 h history
+    ├── gpio.js            # Raspberry Pi GPIO lines (gpiod CLI / sysfs / mock)
+    └── brightness.js      # LTR-329 / HTTP lux → backlight brightness
 ```
 
 ### Writing a plugin

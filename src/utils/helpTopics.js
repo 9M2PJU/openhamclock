@@ -118,6 +118,8 @@ export const PANEL_HELP = {
   'eme-planner': 'eme',
   'sat-planner': 'satellites',
   'cluster-console': 'dx-cluster',
+  rover: 'rig-bridge',
+  'env-sensors': 'rig-bridge',
 };
 
 /**

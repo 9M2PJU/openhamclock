@@ -142,6 +142,11 @@ export function formatAlertBody(feedId, item) {
       }
       break;
     }
+    case 'grid-change': {
+      // Rover: { grid, from }
+      if (item.grid) parts.push(item.from ? `Entered ${item.grid} (from ${item.from})` : `Entered ${item.grid}`);
+      break;
+    }
     case 'band-openings': {
       // Opening entry: { band, from_continent, to_continent | to_zone, shortCount, factor }
       const band = item.band || '';

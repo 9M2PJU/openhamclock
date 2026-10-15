@@ -245,3 +245,18 @@ pluginBus.on('meshcom', (pkt) => {
   // so useMeshCom's window event listener handles both transparently.
   broadcast({ type: 'plugin', event: 'meshcom', source: 'meshcom-udp', data: pkt });
 });
+
+// ── Hardware plugins (GPS, environment sensors, GPIO, brightness) ────────
+// Each publishes its latest state on the plugin bus; forward it to the SSE
+// /stream as { type:'plugin', event, source, data } so the browser hooks
+// (useGps, useEnvSensors, useBridgeBrightness, IDTimer…) can subscribe.
+for (const [event, source] of [
+  ['gps', 'gps'],
+  ['env', 'env-sensors'],
+  ['gpio', 'gpio'],
+  ['brightness', 'brightness'],
+]) {
+  pluginBus.on(event, (data) => broadcast({ type: 'plugin', event, source, data }));
+}
+// Physical buttons (countdown restart, alarm silence) → browser
+pluginBus.on('gpio-button', (data) => broadcast({ type: 'plugin', event: 'gpio-button', source: 'gpio', data }));

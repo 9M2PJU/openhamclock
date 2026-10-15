@@ -33,6 +33,9 @@
   "devDependencies": {
     "@yao-pkg/pkg": "^5.12.0"
   },
+  "optionalDependencies": {
+    "i2c-bus": "^5.2.3"
+  },
   "overrides": {
     "qs": "^6.16.0"
   }

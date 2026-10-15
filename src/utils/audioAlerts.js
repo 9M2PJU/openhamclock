@@ -51,6 +51,7 @@ export const ALERT_FEEDS = {
   // picks the tone and whether a browser notification accompanies it.
   alarm: { label: 'Alarm Clock', defaultTone: 'chime', eventful: true },
   'beacon-opening': { label: 'Beacon Openings (KiwiSDR monitor)', defaultTone: 'chirp', eventful: true },
+  'grid-change': { label: 'Grid Change (Rover)', defaultTone: 'two-tone', eventful: true },
 };
 
 const LS_KEY = 'ohc_audio_alerts';

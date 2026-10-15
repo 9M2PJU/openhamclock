@@ -52,6 +52,8 @@ export const DEFAULT_CONFIG = {
   preventSleep: false, // Keep screen awake while app is open (tablet/kiosk mode)
   sharePresence: true, // Share callsign on the Active Users map layer
   displaySchedule: { enabled: false, sleepTime: '23:00', wakeTime: '07:00', keepSignalActive: true }, // Scheduled display on/off (#901)
+  gpsFollow: 'off', // Rig Bridge GPS plugin → DE location: 'off' | 'once' (first fix) | 'follow' (rover mode)
+  displayBrightness: { manual: 100, auto: false }, // Display tab: overlay dim / bridge backlight; auto = light sensor
   showSatellites: true,
   showPota: true,
   showDxPaths: true,

@@ -894,6 +894,24 @@ export const LiStopwatch = glyph(
     <line x1="12" y1="3.5" x2="12" y2="6.5" />
   </>,
 );
+// Rover: a car on a grid line
+export const LiRover = glyph(
+  <>
+    <path d="M4 15.5 5.5 10.5h13l1.5 5" />
+    <rect x="3" y="15.5" width="18" height="3.5" rx="1" />
+    <circle cx="7.5" cy="19.5" r="1.6" />
+    <circle cx="16.5" cy="19.5" r="1.6" />
+    <line x1="2" y1="7" x2="22" y2="7" strokeDasharray="2 2" />
+  </>,
+);
+// Environment sensors: thermometer
+export const LiThermometer = glyph(
+  <>
+    <path d="M10 4a2 2 0 0 1 4 0v9.3a4 4 0 1 1-4 0z" />
+    <line x1="12" y1="9" x2="12" y2="16" />
+    <circle cx="12" cy="17" r="1.2" />
+  </>,
+);
 
 /**
  * PANEL_ICONS — panel id → line-icon component.
@@ -971,6 +989,8 @@ export const PANEL_ICONS = {
   'eme-planner': LiEmePlan,
   'sat-planner': LiSatPlan,
   'cluster-console': LiTerminal,
+  rover: LiRover,
+  'env-sensors': LiThermometer,
 };
 
 /**

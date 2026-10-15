@@ -38,6 +38,9 @@ import {
 import { getCallsignInfo } from '../utils/callsign';
 import { AlarmSettingsSection } from './AlarmIndicator.jsx';
 import { getNotificationPermission, requestNotificationPermission } from '../utils/notifications';
+import { useGps } from '../hooks/useGps.js';
+import { useBridgeEvent } from '../hooks/useBridgeEvent.js';
+import { BRIGHTNESS_PREVIEW_EVENT } from '../hooks/app/useDisplayBrightness.js';
 import {
   isPushSupported,
   getServerPushStatus,
@@ -131,6 +134,11 @@ export const SettingsPanel = ({
     config?.displaySchedule || { enabled: false, sleepTime: '23:00', wakeTime: '07:00', keepSignalActive: true },
   );
   const [idleClock, setIdleClock] = useState(config?.idleClock || { enabled: false, minutes: 10 });
+  // Rig Bridge hardware: GPS follow mode (Station tab) and display brightness (Display tab)
+  const [gpsFollow, setGpsFollow] = useState(config?.gpsFollow || 'off');
+  const [displayBrightness, setDisplayBrightness] = useState(config?.displayBrightness || { manual: 100, auto: false });
+  const gpsStatus = useGps();
+  const { data: bridgeBrightness, stale: bridgeBrightnessStale } = useBridgeEvent('brightness', { staleMs: 90000 });
   const [sceneRotation, setSceneRotation] = useState(
     config?.sceneRotation || { enabled: false, intervalSec: 60, layouts: [] },
   );
@@ -759,6 +767,8 @@ export const SettingsPanel = ({
       remoteControl: { ...(config.remoteControl || {}), enabled: remoteEnabled },
       callsignTitles,
       grayscale,
+      gpsFollow,
+      displayBrightness,
       // units,
       allUnits: { dist: distUnits, temp: tempUnits, press: pressUnits },
       // Spread the existing propagation block: this panel only edits mode and
@@ -3112,6 +3122,79 @@ export const SettingsPanel = ({
                 onCallsignTitlesChange={setCallsignTitles}
                 isLocalInstall={isLocalInstall}
               />
+              {/* GPS (Rig Bridge gps plugin) — follow the receiver for DE location / rover mode */}
+              <div style={{ marginTop: '20px', marginBottom: '20px' }}>
+                <label
+                  style={{
+                    display: 'block',
+                    marginBottom: '8px',
+                    color: 'var(--text-muted)',
+                    fontSize: '11px',
+                    textTransform: 'uppercase',
+                    letterSpacing: '1px',
+                  }}
+                >
+                  🛰️ {t('station.settings.gps.title')}
+                </label>
+                <div
+                  style={{ display: 'flex', gap: '8px' }}
+                  role="radiogroup"
+                  aria-label={t('station.settings.gps.title')}
+                >
+                  {['off', 'once', 'follow'].map((mode) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      role="radio"
+                      aria-checked={gpsFollow === mode}
+                      onClick={() => setGpsFollow(mode)}
+                      style={{
+                        flex: 1,
+                        padding: '8px',
+                        background: gpsFollow === mode ? 'var(--accent-amber)' : 'var(--bg-tertiary)',
+                        border: `1px solid ${gpsFollow === mode ? 'var(--accent-amber)' : 'var(--border-color)'}`,
+                        borderRadius: '6px',
+                        color: gpsFollow === mode ? '#000' : 'var(--text-secondary)',
+                        fontSize: '12px',
+                        cursor: 'pointer',
+                        fontWeight: gpsFollow === mode ? '600' : '400',
+                      }}
+                    >
+                      {t(`station.settings.gps.${mode}`)}
+                    </button>
+                  ))}
+                </div>
+                <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '6px' }}>
+                  {t('station.settings.gps.describe')}
+                </div>
+                <div
+                  style={{
+                    fontSize: '11px',
+                    fontFamily: 'var(--font-mono)',
+                    marginTop: '6px',
+                    color: gpsStatus.fix ? 'var(--accent-green)' : 'var(--text-secondary)',
+                  }}
+                  aria-live="polite"
+                >
+                  {!gpsStatus.gps
+                    ? t('station.settings.gps.status.noData')
+                    : gpsStatus.stale
+                      ? t('station.settings.gps.status.stale')
+                      : gpsStatus.fix
+                        ? t('station.settings.gps.status.fix', {
+                            grid: gpsStatus.fix.grid6 || '—',
+                            lat: gpsStatus.fix.lat.toFixed(4),
+                            lon: gpsStatus.fix.lon.toFixed(4),
+                            sats: gpsStatus.fix.sats ?? '?',
+                          })
+                        : t('station.settings.gps.status.noFix')}
+                </div>
+                {gpsStatus.clockWarning && (
+                  <div style={{ fontSize: '11px', color: 'var(--accent-amber)', marginTop: '4px' }} role="status">
+                    ⚠ {t('station.settings.gps.clockWarning', { secs: (gpsStatus.timeOffsetMs / 1000).toFixed(1) })}
+                  </div>
+                )}
+              </div>
             </>
           )}
         </div>
@@ -4911,6 +4994,95 @@ export const SettingsPanel = ({
               </div>
 
               <DisplayExtrasSettings grayscale={grayscale} onGrayscaleChange={setGrayscale} />
+              {/* Brightness — overlay dim, or the Rig Bridge brightness plugin's backlight */}
+              <div style={{ marginTop: '24px', marginBottom: '8px' }}>
+                <label
+                  htmlFor="display-brightness-slider"
+                  style={{
+                    display: 'block',
+                    marginBottom: '8px',
+                    color: 'var(--text-muted)',
+                    fontSize: '11px',
+                    textTransform: 'uppercase',
+                    letterSpacing: '1px',
+                  }}
+                >
+                  🔆 {t('station.settings.brightness.title')}
+                </label>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <span style={{ fontSize: '11px', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>0%</span>
+                  <input
+                    id="display-brightness-slider"
+                    type="range"
+                    min="0"
+                    max="100"
+                    step="1"
+                    value={displayBrightness.manual ?? 100}
+                    disabled={displayBrightness.auto}
+                    aria-label={t('station.settings.brightness.title')}
+                    onChange={(e) => {
+                      const manual = parseInt(e.target.value, 10);
+                      setDisplayBrightness({ ...displayBrightness, manual });
+                      // Live preview before Save (useDisplayBrightness listens)
+                      window.dispatchEvent(new CustomEvent(BRIGHTNESS_PREVIEW_EVENT, { detail: { manual } }));
+                    }}
+                    style={{ flex: 1, accentColor: 'var(--accent-amber)' }}
+                  />
+                  <span style={{ fontSize: '11px', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>100%</span>
+                </div>
+                <div
+                  style={{
+                    textAlign: 'center',
+                    fontSize: '12px',
+                    color: 'var(--accent-amber)',
+                    fontWeight: 600,
+                    fontFamily: 'var(--font-mono)',
+                    marginTop: '4px',
+                  }}
+                >
+                  {displayBrightness.auto ? 'AUTO' : `${displayBrightness.manual ?? 100}%`}
+                </div>
+                <label
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '10px',
+                    cursor: 'pointer',
+                    fontSize: '13px',
+                    color: 'var(--text-primary)',
+                    marginTop: '10px',
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={!!displayBrightness.auto}
+                    onChange={(e) => setDisplayBrightness({ ...displayBrightness, auto: e.target.checked })}
+                    style={{ accentColor: 'var(--accent-amber)' }}
+                  />
+                  {t('station.settings.brightness.auto')}
+                </label>
+                <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '6px' }}>
+                  {t('station.settings.brightness.describe')}
+                </div>
+                <div
+                  style={{
+                    fontSize: '11px',
+                    fontFamily: 'var(--font-mono)',
+                    color: 'var(--text-secondary)',
+                    marginTop: '6px',
+                  }}
+                >
+                  {bridgeBrightness && !bridgeBrightnessStale
+                    ? t('station.settings.brightness.bridgeStatus', {
+                        pct: Number.isFinite(bridgeBrightness.brightness) ? bridgeBrightness.brightness : '—',
+                        lux: Number.isFinite(bridgeBrightness.lux) ? Math.round(bridgeBrightness.lux) : '—',
+                        hw: bridgeBrightness.hardware
+                          ? t('station.settings.brightness.hwYes')
+                          : t('station.settings.brightness.hwNo'),
+                      })
+                    : t('station.settings.brightness.noBridge')}
+                </div>
+              </div>
             </div>
           )}
         </div>

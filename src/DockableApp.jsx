@@ -52,6 +52,8 @@ import {
   IBPPanel,
   SWPCAlertsPanel,
   MeteorShowerPanel,
+  RoverPanel,
+  EnvSensorsPanel,
   FrequencyMemoriesPanel,
   NetSchedulePanel,
   CallsignSearchPanel,
@@ -101,6 +103,7 @@ import useRigBridgeRotator from './hooks/useRigBridgeRotator';
 import useDopplerTuning from './hooks/useDopplerTuning';
 import useRotatorAutoTrack from './hooks/useRotatorAutoTrack';
 import { useSatAutomation, setSatAutomationLive, setRotatorMode } from './utils/satAutomationStore.js';
+import { useGps } from './hooks/useGps.js';
 import { useCallsignPopup } from './components/CallsignPopupManager.jsx';
 
 // Icons
@@ -400,6 +403,11 @@ export const DockableApp = ({
 
   // Rig Control Hook
   const { tuneTo, enabled } = useRig();
+
+  // Rover mode: with Settings → Station → Follow GPS = follow, QSOs are
+  // stamped with the live GPS grid (MY_GRIDSQUARE) rather than the saved one.
+  const { fix: gpsFix } = useGps();
+  const liveGrid = config.gpsFollow === 'follow' && gpsFix?.grid6 ? gpsFix.grid6 : null;
 
   // Unified Spot Click Handler (Tune + Set DX)
   const handleSpotClick = useCallback(
@@ -1176,7 +1184,7 @@ export const DockableApp = ({
           break;
 
         case 'logbook':
-          content = <LogbookPanel userCallsign={config.callsign} myGrid={deGrid} />;
+          content = <LogbookPanel userCallsign={config.callsign} myGrid={liveGrid || deGrid} />;
           break;
 
         case 'awards':
@@ -1536,6 +1544,14 @@ export const DockableApp = ({
           content = <ClusterConsolePanel config={config} isLocalInstall={isLocalInstall} />;
           break;
 
+        case 'rover':
+          content = <RoverPanel config={config} />;
+          break;
+
+        case 'env-sensors':
+          content = <EnvSensorsPanel allUnits={config.allUnits} />;
+          break;
+
         default: {
           // Auto-discovered panel plugins (src/plugins/local/panels/*.jsx).
           // v1 props contract: { config, t } only — see docs/PLUGINS.md.
@@ -1570,6 +1586,7 @@ export const DockableApp = ({
     [
       config,
       deGrid,
+      liveGrid,
       dxGrid,
       dxLocation,
       deSunTimes,
