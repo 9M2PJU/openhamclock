@@ -1023,7 +1023,7 @@ Drives indicator and switch lines on the Pi header, plus a PTT sense input. Pin 
 | `satOut`            | output    | 20 (38)                        | 1 Hz the minute before AOS, steady during the pass, 2 Hz the last minute (SA)             |
 | `lightningOut`      | output    | off (suggested 25 / header 22) | Lightning antenna-protection relay — see [Lightning relay](#lightning-relay-lightningout) |
 
-Set a pin to `-1` to disable that function. `activeLow` (default on) means switches pull the input to ground; `outputActiveLow` inverts the outputs for sink-driven LEDs.
+Set a pin to `-1` to disable that function. Pins are BCM numbers or header pins written `P37`, both in the config file and on the setup page. `activeLow` (default on) means switches pull the input to ground; `outputActiveLow` inverts the outputs for sink-driven LEDs.
 
 **Wiring:** LEDs through a 330 Ω–1 kΩ resistor to ground (3.3 V logic, ≤ 8 mA per pin — use a transistor or relay module for anything bigger). Switches between the input pin and ground; the plugin requests internal pull-ups, but GPIO 9–27 default to pull-_down_ at boot, so add this to `/boot/firmware/config.txt` (older images: `/boot/config.txt`) and reboot:
 
@@ -1033,7 +1033,7 @@ gpio=5,16,26=pu
 
 **Backends** (`backend`): `auto` picks sysfs when `/sys/class/gpio` exists (every Raspberry Pi OS release so far) and otherwise the libgpiod tools (`gpioget`/`gpioset`/`gpiomon`, v1 or v2 — install with `sudo apt install gpiod`). `mock` keeps everything in memory; `POST /api/gpio/mock/input { "name": "pttIn", "level": 1 }` presses a virtual button so you can watch the ON AIR panel react.
 
-The browser tells the bridge what to show by posting its indicator state to `POST /api/indicators` (`{ satVisible, satAosInSec, satLosInSec, countdown: off|running|expired, alarm, lightning?: clear|warn|alarm, lightningRelay?: bool }`, token-protected, every 15 s and on change). Any plugin can subscribe with `pluginBus.on('indicators', fn)`. Physical button presses go the other way as `{ type:'plugin', event:'gpio-button' }` — the **ID Timer** panel restarts on `countdown-restart` and dismisses its reminder on `alarm-silence`.
+The browser tells the bridge what to show by posting its indicator state to `POST /api/indicators` (`{ satVisible, satAosInSec, satLosInSec, countdown: off|running|expired, alarm, lightning?: clear|warn|alarm, lightningRelay?: bool, lightningAllClearMin?, lightningOverride?: auto|on|off, displayId? }`, token-protected, every 15 s and on change; in Cloud Relay mode it arrives through the cloud-relay plugin). Any plugin can subscribe with `pluginBus.on('indicators', fn)`. Physical button presses go the other way as `{ type:'plugin', event:'gpio-button' }` — the **ID Timer** panel restarts on `countdown-restart` and dismisses its reminder on `alarm-silence`.
 
 API: `GET /api/gpio/status`, `POST /api/gpio/mock/input`, `POST /api/indicators`, `GET /api/indicators`.
 
@@ -1041,15 +1041,29 @@ API: `GET /api/gpio/status`, `POST /api/gpio/mock/input`, `POST /api/indicators`
 
 > ⚠️ **Safety first.** The lightning relay is a **convenience, not lightning protection.** Lightning data can arrive late or not at all, and the browser, network, Pi or relay can fail. A relay a few millimetres apart does not stop a direct or nearby strike. It does **not** replace a proper station ground, bonding, coax surge arrestors at the entry panel, and disconnecting antennas by hand when storms are forecast. Never use it to make outdoor work safe.
 
-The GPIO plugin can drive one more output, `lightningOut`, from the browser's **lightning guard** (OpenHamClock → Settings → Alerts → Lightning guard): the relay engages when strikes come inside the alarm radius (or the warning radius, if chosen there) and releases automatically after the all-clear time. The browser sends `lightningRelay: true|false` and the guard level `lightning` in the indicator payload above; a browser that does not drive the relay leaves both out, so a second display cannot release a relay the first one engaged.
+The GPIO plugin can drive one more output, `lightningOut`, from the **lightning guard** (OpenHamClock → Settings → Alerts → Lightning guard): the relay engages when strikes come inside the alarm radius (or the warning radius, if chosen there) and releases after the all-clear time.
 
-| Setting                  | Default | Description                                                                                                                    |
-| ------------------------ | ------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `pins.lightningOut`      | `-1`    | BCM line for the relay (`-1` = off). Suggested `25` (header 22) — free on a bare Pi. `P22` also works                          |
-| `lightningFailSafe`      | `false` | Invert this line only: energised = antenna **connected**. Power loss, a crash or a stopped bridge then disconnects the antenna |
-| `lightningHoldWhenStale` | `true`  | Keep the relay engaged when the browser stops reporting (90 s). Off: release with the other indicator lines                    |
+**Who decides.** Every OpenHamClock display that drives the relay sends `lightningRelay: true|false`, its guard level `lightning`, its all-clear time `lightningAllClearMin`, any manual override `lightningOverride` and a stable `displayId` in the indicator payload above — directly, or through Cloud Relay (the browser queues an `indicators` command; the cloud-relay plugin posts it to the local `/api/indicators`). Rig Bridge keeps one claim per display:
 
-Assign the line from OpenHamClock (**Settings → Rig Bridge → Lightning relay (GPIO)** → _Push to Rig Bridge_) or on the setup page (Plugins → Raspberry Pi GPIO). `GET /api/gpio/status` reports `lightning: { pin, relay, requested, level, reportAgeMs, failSafe, holdWhenStale }`. With the **mock** backend you can watch it work without hardware: enable the guard, click _Simulate alarm strike_, and `mockLevels` in the status shows the line switching.
+- the relay is **engaged while any display wants protection**, and released only when none does;
+- a display that asked for protection and then went quiet (tab closed, network gone) **keeps its claim for its own all-clear time** after its last request — Rig Bridge releases the relay on its own then, without waiting for the browser (`lightningHoldWhenStale: false` ends the claim with the 90 s stale window instead);
+- a manual override from a live display wins (_Force protect_ / _Hold connected_; the most recent one counts);
+- displays that don't drive the relay leave the fields out and change nothing.
+
+**Headless guard (no browser needed).** With `lightningHeadless.enabled` Rig Bridge connects to Blitzortung.org itself (`ws`) and runs the same guard logic as the browser — the code is generated from OpenHamClock's `src/utils/lightningGuard.js` into `lib/lightning-guard-logic.js` (`npm run lightning:sync` in the repository root; a test fails when the copy is stale). It counts as one more display. OpenHamClock's _Run the guard inside Rig Bridge_ box sends your location and guard settings with **Push to Rig Bridge**.
+
+| Setting                                | Default | Description                                                                                                                       |
+| -------------------------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `pins.lightningOut`                    | `-1`    | BCM line for the relay (`-1` = off). Suggested `25` (header 22) — free on a bare Pi. `P22` also works, here and on the setup page |
+| `lightningFailSafe`                    | `false` | Invert this line only: energised = antenna **connected**. Power loss, a crash or a stopped bridge then disconnects the antenna    |
+| `lightningHoldWhenStale`               | `true`  | A quiet display keeps its claim for its all-clear time. Off: the claim ends after 90 s without a report                           |
+| `lightningHeadless.enabled`            | `false` | Run the guard inside Rig Bridge                                                                                                   |
+| `lightningHeadless.lat` / `lon`        | —       | Station location for the headless guard                                                                                           |
+| `lightningHeadless.warnKm` / `alarmKm` | 50 / 25 | Radii (km)                                                                                                                        |
+| `lightningHeadless.allClearMin`        | 30      | All-clear time (min); also `minStrikes` (1) and `hysteresisPct` (20)                                                              |
+| `lightningHeadless.relayOn`            | `alarm` | Engage at `alarm` or already at `warn`                                                                                            |
+
+`GET /api/gpio/status` reports `lightning: { pin, relay, engaged, reason, holdUntil, reporters[], failSafe, holdWhenStale, headless }` — `reason` is `requested`, `hold` (only quiet displays' claims are left), `override-on`/`override-off` or `clear`. `POST /api/gpio/lightning/test { "distanceKm": 8, "bearingDeg": 90 }` (token-protected) places a synthetic strike for the headless guard. With the **mock** backend you can watch everything without hardware: `mockLevels` in the status shows the line switching.
 
 **Wiring:**
 
