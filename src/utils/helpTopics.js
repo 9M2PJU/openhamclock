@@ -42,6 +42,7 @@ export const HELP_TOPICS = {
   contest: 'contest-mode',
   alerts: 'alerts-and-notifications',
   offline: 'offline-mode-pwa',
+  'offline-map-areas': 'offline-map-areas',
   'layouts-themes-profiles': 'layouts-themes-and-profiles',
   languages: 'languages',
   settings: 'settings-reference',

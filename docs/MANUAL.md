@@ -35,6 +35,7 @@ Features tagged are already merged and will ship in the next monthly drop — yo
   - [Lightning guard](#lightning-guard)
 - [Home automation (MQTT and Home Assistant)](#home-automation-mqtt-and-home-assistant)
 - [Offline mode (PWA)](#offline-mode-pwa)
+  - [Offline map areas](#offline-map-areas)
 - [Layouts, themes, and profiles](#layouts-themes-and-profiles)
 - [Languages](#languages)
 - [Remote control and kiosk](#remote-control-and-kiosk)
@@ -90,7 +91,7 @@ All spot traffic (DX cluster, POTA/SOTA/WWFF/WWBOTA, PSKReporter, WSJT-X) and ma
 
 ### Basemap styles
 
-Pick the base tiles from the style dropdown on the map: **Dark** (default), **Satellite** (with real polar imagery on the globe), **Modis Truecolor** (NASA GIBS), **Terrain**, **Streets**, **Topo**, **Ocean**, **Hybrid**, **Gray**, **Nat Geo**, and **Countries**.
+Pick the base tiles from the style dropdown on the map: **Dark** (default), **Satellite** (with real polar imagery on the globe), **Modis Truecolor** (NASA GIBS), **Terrain**, **Streets**, **Topo**, **Ocean**, **Hybrid**, **Gray**, **USGS Topo** (U.S. Geological Survey topographic map — detailed for the United States, and the basemap [offline map areas](#offline-map-areas) are saved from), **Nat Geo**, and **Countries**.
 
 Two notes:
 
@@ -694,6 +695,7 @@ _The EmComm layout: map with range rings and alert polygons, and the operations 
   - **ICS 205 Incident Radio Communications Plan** — build the channel table from **Add from Repeaters** (the nearby repeaters, with output as RX, input as TX and the access tone), **Add from Nets** (your saved nets), and **Simplex channel** rows; edit zone/group, channel number, function, name, assignment, frequencies, tones, N/W, mode (A/D/M) and remarks, reorder rows, and add special instructions. It prints in landscape.
 - **Field Reports:** forms received at the station, newest first, each tagged with where it came from. **WINLINK:** Winlink Express at an EOC accumulates a CSV of received forms (Field Situation Reports, Damage Assessments) with embedded geolocation; point the rig-bridge `winlink-express-csv` plugin at that file and new rows appear. **NBEMS:** flmsg forms (ICS-213, radiograms, and other flmsg forms) picked up by the rig-bridge fldigi + flmsg plugin, listed as `ICS-213 (NBEMS)` and so on. Each entry shows form type, callsign, age, position, and text, and forms with a position become 📋 map markers. See the rig-bridge README for [Winlink Express](https://github.com/accius/openhamclock/blob/main/rig-bridge/README.md#winlink-express-csv-ingest-beta) and [NBEMS](https://github.com/accius/openhamclock/blob/main/rig-bridge/README.md#nbems-fldigi-and-flmsg-beta) setup.
 - **NBEMS (fldigi + flmsg):** with the rig-bridge `fldigi` plugin switched on, the **NBEMS** panel shows fldigi's connection, mode (with a picker to change it), dial frequency, audio offset and TX/RX state, a live tail of the receive pane, and a send box that transmits through fldigi and returns it to receive when done (**Stop TX** aborts). The **ICS-213** button opens a compact form (to, from, subject, message) that goes out as an flmsg ICS-213 in fldigi's current mode, dated now in UTC, so the other station's flmsg opens it as a normal form. Incoming flmsg forms are read from flmsg's folders (`NBEMS.files/ICS/messages` and `NBEMS.files/WRAP/recv` in your home directory) and land in Field Reports within seconds. An ICS-213 has no position field: write `GRID EM29qb` or `LAT 39.10 LON -94.58` in the message to put it on the map. Sending needs a direct (local or LAN) connection to Rig Bridge, and uses your Rig Bridge API token when one is set. Forms sent with flmsg's compression switched on are skipped (the Rig Bridge log says so); open them in flmsg and save, or ask stations to send uncompressed. Setup: [rig-bridge README](https://github.com/accius/openhamclock/blob/main/rig-bridge/README.md#nbems-fldigi-and-flmsg-beta).
+- **Working without internet:** the **Offline Map Area** section in the rail saves the map tiles and the NWS alerts, shelters, and repeaters for your area ahead of time, so the map still draws and the panels show last-known data (tagged _Offline — as of 14:32Z_) when the connection is gone. The rail also lists **Nearby Repeaters**. See [Offline map areas](#offline-map-areas).
 
 ### Net Control (voice nets)
 
@@ -874,6 +876,32 @@ OpenHamClock is an installable PWA with a real offline mode:
 **Install it on a phone or tablet.** In Safari use Share → **Add to Home Screen**; in Chrome use the menu → **Install app** (or **Add to Home screen**). The installed app opens full screen in its own window, and the [Mobile layout](#layouts-settings--display) is built to fit around the notch and home bar in that mode.
 
 Separately from the PWA, the app polls the server version and — on the hosted site — reloads automatically when a new release lands.
+
+### Offline map areas
+
+The app shell and panel data above survive an outage on their own, but the basemap normally comes from tile servers on the internet. An **offline map area** saves the map for an area ahead of time — together with the EmComm data for it — so the map still draws when the internet is gone.
+
+Find it in **Settings → Map Layers → Offline map areas**, or in the **Offline Map Area** section of the EmComm layout's rail. Both show the same control and the same saved list.
+
+1. **Area:** a radius around your DE location (**25**, **50**, or **100 km**), or **Map view** — whatever the flat map is showing right now.
+2. **Basemap and zoom:** only basemaps whose terms allow saving an area for offline use are offered; today that is **USGS Topo**, U.S. public-domain topographic tiles from the U.S. Geological Survey. It is detailed across the United States; outside it, only coarse world data shows. The other styles (Esri, Google, CARTO) do not permit bulk download, so they are not offered. Zoom defaults to **z6–z12** (region down to main roads and towns); z14–z15 adds street-level detail but multiplies the size by about four per extra level.
+3. **Check the estimate:** the tile count and approximate size appear before anything downloads (around Boulder, CO: 50 km at z6–z12 is about 300 tiles and 9 MB; 25 km at z6–z15 about 4,000 tiles and 110 MB). One area is capped at 10,000 tiles.
+4. **Download area for offline:** a progress bar shows tiles and bytes; **Cancel** stops and removes what that download fetched. The download keeps running if you close Settings. It is deliberately paced — a few tiles at a time — and tiles already saved by another area are not fetched again.
+
+Each saved area lists its name, basemap, zoom range, tile count, size, date, bounds, and what EmComm data it holds, with **Show** (switches the map to the area's basemap and centres it there), **Refresh data**, and **Delete**. Deleting keeps any tiles another saved area still uses.
+
+**What happens offline.** When a tile request fails, the browser reports no connection, or the tile server stops answering for a few seconds, the map is drawn from your saved areas, and a small **OFFLINE TILES** tag appears at the top of the map. When the connection returns, tiles come live again and the tag goes away. The map has to be on the basemap the area was saved with (USGS Topo) — use **Show** or the style dropdown. Zooming in past the area's top zoom, or panning outside it, shows blank tiles.
+
+**EmComm data in each area.** Every download also saves the current **NWS alerts** (with their polygons), **nearby shelters**, and **repeaters** within 200 km. When those requests fail, the EmComm layout's NWS Alerts and Nearby Shelters panels and the Repeaters panel show the newest copy available — either the last response the app cached or the area's saved copy — tagged **Offline — as of _time_** (UTC). **Refresh data** re-saves them; do it before an operation, since alerts in particular go stale quickly.
+
+**Storage.** Pick a budget for saved areas (100 MB to 2 GB, default 250 MB); a download that would exceed it is refused until you delete an area or raise the budget. The control also shows how much storage the browser allows this site, warns when a download would bring it close to the limit, and refuses when the browser is nearly full. The app asks the browser to keep this storage persistent; browsers may still clear site data under heavy disk pressure or when you clear browsing data, so check your areas before you rely on them.
+
+**Caveats.**
+
+- **Secure context required.** Offline map areas use the same browser features as offline mode: they work on the hosted site (HTTPS) and on `localhost`. A self-hosted install opened over **plain http on a LAN IP** cannot use them — the browser does not allow offline storage there. Put the install behind HTTPS (or open it on the machine itself as `localhost`) to use this feature.
+- **Served by the offline worker.** Areas can be downloaded as soon as the page is secure, but they are only drawn from once the offline worker is active — after one full load of the app. The control says so when it is not.
+- **Per browser.** Areas live in the browser that downloaded them; download them on the device you will operate from.
+- **`?nosw` keeps your areas.** The escape hatch clears the app's caches but not saved areas; delete those from the list.
 
 ---
 
@@ -1077,7 +1105,7 @@ _Settings → Integrations: basemap key, callbooks, rotator, N3FJP_
 | 📻 **Station**      | Callsign, grid/lat-lon (with "use my location"), timezone, units (distance/temperature/pressure), language, DX cluster source, callbook picker, propagation mode & TX power, performance mode, wake lock & display schedule, Active Users opt-out, legacy rig control, GPS (Rig Bridge: off / set once / follow), bearings (true / magnetic north) |
 | 🔌 **Integrations** | CARTO basemap key, QRZ.com and HamQTH callbook credentials, and local-only extras: Rotator, DX Weather popups, N3FJP bridge                                                                                                                                                                                                                        |
 | 🎨 **Display**      | Layout, theme (+ custom theme editor), monospace font, header size, clock order, What's New on startup, mutual-reception star, brightness slider & auto brightness (Rig Bridge light sensor)                                                                                                                                                       |
-| 🗺️ **Map Layers**   | Every overlay layer with enable + opacity, grouped by category; DE/DX markers, DX Target panel, and DX News ticker toggles                                                                                                                                                                                                                         |
+| 🗺️ **Map Layers**   | Every overlay layer with enable + opacity, grouped by category; DE/DX markers, DX Target panel, and DX News ticker toggles; offline map areas                                                                                                                                                                                                      |
 | 🛰️ **Satellites**   | Satellite selection, tracks/footprints, station altitude, minimum elevation, track duration; automation & alerts: max TLE age + Refresh TLEs, hams.at API key, Doppler retune step, rotator step / elevation travel / stop / pre-position                                                                                                          |
 | 👤 **Profiles**     | Save/load/rename/export/import named profiles; profile share codes and full backup/restore; weather source picker — Open-Meteo (default, keyless) or OpenWeatherMap with your own key; export current state                                                                                                                                        |
 | 🌐 **Community**    | GitHub, Facebook group, Reddit; core maintainers and the contributors wall; the privacy statement (no cookies, no tracking, anonymized stats)                                                                                                                                                                                                      |

@@ -69,6 +69,7 @@ const SettingsTabIcon = ({ tab }) => {
 };
 import HelpTab from './HelpTab.jsx';
 import HelpLink from './HelpLink.jsx';
+import OfflineAreaPacks from './OfflineAreaPacks.jsx';
 import WeatherSourceCard from './WeatherSourceCard.jsx';
 import WatchlistEditor from './WatchlistEditor.jsx';
 import {
@@ -5650,6 +5651,53 @@ export const SettingsPanel = ({
                     </div>
                   </div>
                 </label>
+              </div>
+
+              {/* Offline map areas — basemap tiles + EmComm data for use without internet */}
+              <div
+                style={{
+                  background: 'var(--bg-tertiary)',
+                  border: '1px solid var(--border-color)',
+                  borderRadius: '8px',
+                  padding: '14px',
+                  marginTop: '16px',
+                }}
+              >
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    marginBottom: '8px',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <span style={{ fontSize: '18px' }}>📦</span>
+                    <div>
+                      <div
+                        style={{
+                          color: 'var(--text-primary)',
+                          fontSize: '14px',
+                          fontWeight: '600',
+                          fontFamily: 'var(--font-mono)',
+                        }}
+                      >
+                        {t('offlinePacks.settings.title', { defaultValue: 'Offline map areas' })}
+                      </div>
+                      <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                        {t('offlinePacks.settings.description', {
+                          defaultValue:
+                            'Save the map and EmComm data for an area so the map still draws when the internet is gone',
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                  <HelpLink
+                    topic="offline-map-areas"
+                    label={t('offlinePacks.settings.title', { defaultValue: 'Offline map areas' })}
+                  />
+                </div>
+                <OfflineAreaPacks deLocation={config.location} />
               </div>
             </div>
           )}
