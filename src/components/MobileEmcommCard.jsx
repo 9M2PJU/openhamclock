@@ -2,14 +2,17 @@
  * MobileEmcommCard — the Mobile layout's opt-in EmComm summary: NWS alerts
  * near DE, the nearest shelters, and the APRS net roster.
  *
- * It owns its data: useEmcommData (alerts + shelters) and the net-roster
- * poll run only while this card is mounted, and the Mobile layout mounts a
+ * It owns its data: useEmcommData (alerts + FEMA shelters), the RF-heard
+ * APRS shelter reports (useAprsShelterReports, shared with the EmComm
+ * layout) and the net-roster poll run only while this card is mounted, and the Mobile layout mounts a
  * card only while it is on screen or next to it. Every other layout, and the
  * Mobile layout with the card switched off, makes no EmComm requests at all.
  */
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useEmcommData } from '../hooks/useEmcommData.js';
+import { useAprsShelterReports } from '../hooks/useAprsShelterReports.js';
+import { mergeShelters } from '../utils/emcommShelters.js';
 import { formatDistance } from '../utils/geo.js';
 import { summarizeEmcomm } from '../utils/mobileLayout.js';
 
@@ -69,6 +72,8 @@ const row = {
 export default function MobileEmcommCard({ location, allUnits }) {
   const { t } = useTranslation();
   const { alerts, shelters, loading } = useEmcommData({ location, enabled: true, includeDisasters: false });
+  const aprsShelterReports = useAprsShelterReports({ enabled: true });
+  const allShelters = useMemo(() => mergeShelters(shelters, aprsShelterReports), [shelters, aprsShelterReports]);
   const [roster, setRoster] = useState([]);
   const [openAlert, setOpenAlert] = useState(null);
 
@@ -94,8 +99,8 @@ export default function MobileEmcommCard({ location, allUnits }) {
   }, []);
 
   const sum = useMemo(
-    () => summarizeEmcomm({ alerts, shelters, roster, de: location }),
-    [alerts, shelters, roster, location],
+    () => summarizeEmcomm({ alerts, shelters: allShelters, roster, de: location }),
+    [alerts, allShelters, roster, location],
   );
   const dist = allUnits?.dist;
 
@@ -157,23 +162,57 @@ export default function MobileEmcommCard({ location, allUnits }) {
         {sum.shelters.length === 0 ? (
           <div style={muted}>{t('mobileLayout.emcomm.noShelters', { defaultValue: 'No open shelters nearby' })}</div>
         ) : (
-          sum.shelters.map((s) => (
-            <div key={s.id} style={{ ...row, display: 'flex', justifyContent: 'space-between', gap: '8px' }}>
-              <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {s.name || 'Shelter'}
-              </span>
-              <span style={{ flexShrink: 0, display: 'flex', gap: '8px' }}>
-                {s.distanceKm != null && (
-                  <span style={{ color: 'var(--text-muted)' }}>{formatDistance(s.distanceKm, dist)}</span>
+          sum.shelters.map((s) => {
+            // RF-heard APRS report: its own entry, or attached to the FEMA site it matches
+            const rf = s.source !== 'fema' ? s : s.aprsReport;
+            return (
+              <div
+                key={s.id}
+                data-shelter-source={s.source}
+                style={{ ...row, borderLeft: rf ? '2px solid #22c55e' : '2px solid transparent' }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px' }}>
+                  <span
+                    style={{
+                      minWidth: 0,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                      display: 'flex',
+                      gap: '6px',
+                      alignItems: 'baseline',
+                    }}
+                  >
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.name || 'Shelter'}</span>
+                    <span
+                      style={{ color: rf && s.source !== 'fema' ? '#22c55e' : 'var(--text-muted)', fontSize: '10px' }}
+                    >
+                      {s.source === 'fema' ? 'FEMA' : s.source === 'aprs-rf' ? 'RF' : 'APRS'}
+                    </span>
+                  </span>
+                  <span style={{ flexShrink: 0, display: 'flex', gap: '8px' }}>
+                    {s.distanceKm != null && (
+                      <span style={{ color: 'var(--text-muted)' }}>{formatDistance(s.distanceKm, dist)}</span>
+                    )}
+                    <span
+                      style={{
+                        color: SHELTER_STATUS_COLORS[String(s.status).toUpperCase()] || '#888',
+                        fontWeight: 600,
+                      }}
+                    >
+                      {s.status || '?'}
+                    </span>
+                  </span>
+                </div>
+                {rf?.text && (
+                  <div style={{ color: 'var(--text-secondary)', fontSize: '11px', marginTop: '2px' }}>
+                    {s.source === 'fema' ? `${rf.from}: ` : ''}
+                    {rf.text}
+                  </div>
                 )}
-                <span
-                  style={{ color: SHELTER_STATUS_COLORS[String(s.status).toUpperCase()] || '#888', fontWeight: 600 }}
-                >
-                  {s.status || '?'}
-                </span>
-              </span>
-            </div>
-          ))
+              </div>
+            );
+          })
         )}
       </Section>
 
