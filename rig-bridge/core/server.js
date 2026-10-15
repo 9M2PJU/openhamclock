@@ -1061,6 +1061,11 @@ function buildSetupHtml(version, firstRunToken = null) {
         { id: 'ohcApiKey', label: 'Server API_WRITE_KEY (if set)', type: 'text', default: '' },
         { id: 'verbose', label: 'Log every measurement', type: 'checkbox', default: false },
       ]},
+      { key: 'kiwiAudio', name: 'KiwiSDR Audio (Decoder panel)', maturity: 'alpha', desc: 'Streams the audio of a KiwiSDR to the OpenHamClock Decoder panel (CW decoder + waterfall). Connects only while the panel is listening, one receiver slot. Leave the host empty to use the Beacon Monitor KiwiSDR.', fields: [
+        { id: 'host', label: 'KiwiSDR Host (no http://, blank = Beacon Monitor host)', type: 'text', default: '' },
+        { id: 'port', label: 'KiwiSDR Port', type: 'number', default: 8073 },
+        { id: 'password', label: 'Kiwi Password (if required)', type: 'text', default: '' },
+      ]},
       { key: 'gps', name: 'GPS Receiver', maturity: 'alpha', desc: 'NMEA over serial, gpsd, or a fifo/file — drives DE location and rover mode in OpenHamClock', fields: [
         { id: 'source', label: 'Source', type: 'select', options: ['serial', 'gpsd', 'file', 'mock'], default: 'serial' },
         { id: 'serialPort', label: 'Serial Port (serial)', type: 'text', default: '' },
@@ -2352,6 +2357,16 @@ function createServer(registry, version) {
         return res.status(400).json({ success: false, error: 'beaconMonitor.bands must be an array or string' });
       }
     }
+    // KiwiSDR audio for the Decoder panel — same receiver validation
+    if (newConfig.kiwiAudio) {
+      const ka = newConfig.kiwiAudio;
+      if (ka.host !== undefined && ka.host !== '' && !isValidRemoteHost(ka.host)) {
+        return res.status(400).json({ success: false, error: 'Invalid host value for kiwiAudio.host' });
+      }
+      if (ka.port !== undefined && ka.port !== '' && !isValidPort(Number(ka.port))) {
+        return res.status(400).json({ success: false, error: 'Invalid port value for kiwiAudio.port' });
+      }
+    }
     for (const key of [
       'mshv',
       'jtdx',
@@ -2362,6 +2377,7 @@ function createServer(registry, version) {
       'winlink',
       'meshcom',
       'beaconMonitor',
+      'kiwiAudio',
       ...HW_KEYS,
       'mqtt',
       'hamalert',
@@ -2439,6 +2455,11 @@ function createServer(registry, version) {
     // the monitor picks up a new receiver without restarting the bridge.
     if (newConfig.beaconMonitor) {
       registry.restartIntegration('kiwi-beacon-monitor');
+    }
+    // KiwiSDR audio falls back to the beacon monitor's receiver, so either
+    // section changing restarts it (ends any live stream; the panel retries).
+    if (newConfig.kiwiAudio || newConfig.beaconMonitor) {
+      registry.restartIntegration('kiwi-audio');
     }
     // Hardware plugins restart in place — no rig-bridge restart needed
     const HW_PLUGIN_IDS = { gps: 'gps', envSensors: 'env-sensors', gpio: 'gpio', brightness: 'brightness' };
