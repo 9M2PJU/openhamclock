@@ -135,6 +135,11 @@ const CHANGELOG = [
         desc: 'With GPS follow on, a Rover panel shows your live six-character grid, distance and ETA to each grid line, VUCC status for the grid you are in, and plays a Grid Change alert when you cross a line. QSOs logged while roving carry the live grid.',
       },
       {
+        icon: '🎯',
+        title: 'Prediction Check, Rebuilt Around Your DX',
+        desc: 'The panel used to compare the model\'s "best continent" against a count of spots, which told you nothing about the path you were working. It now runs one P.533 prediction for the DE → DX circuit (re-run the moment you change DX), counts spots between your continent and the DX continent, folds in measured beacons near DX when the KiwiSDR monitor is running, and gives each band a plain status: OPEN · confirmed, OPEN · no spots yet, OPEN · model said closed, MARGINAL or CLOSED — with a one-line explanation per row and a "What am I looking at?" block. A race that could leave the old panel on its loading text for ten minutes is gone. History Playback also behaves now: scrubbing into the past hides the live DX paths so only the replayed spots show, and the control tells you when you have scrubbed past the start of the recording.',
+      },
+      {
         icon: '📚',
         title: 'Manual and API Docs',
         desc: 'Every item above has a section in the built-in manual and, where it adds endpoints, in API.md — including the full remote-control command table.',
