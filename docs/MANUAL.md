@@ -9,6 +9,7 @@ Features tagged are already merged and will ship in the next monthly drop — yo
 - [The basics](#the-basics)
 - [The map](#the-map)
   - [Projections: flat, azimuthal, 3D globe](#projections-flat-azimuthal-3d-globe)
+  - [Map controls on a phone](#map-controls-on-a-phone)
   - [Basemap styles](#basemap-styles)
   - [Map layers](#map-layers)
   - [DE and DX: markers, click-to-set, favorites](#de-and-dx-markers-click-to-set-favorites)
@@ -86,6 +87,10 @@ A projection toggle on the map switches between three views:
 </table>
 
 All spot traffic (DX cluster, POTA/SOTA/WWFF/WWBOTA, PSKReporter, WSJT-X) and map overlays render in all three projections. On the globe, zooming in on a satellite swaps its dot for a 3D model — the ISS uses NASA's actual station model; other birds get procedural models matched to their type. The globe's overlay coverage now includes the weather and hazard layers: NEXRAD radar, live lightning, earthquakes, wildfires, floods/severe storms, tornado warnings, live aircraft, and ATC sectors all paint onto the 3D globe (joining aurora, D-RAP, zones, Maidenhead, and worked grids). The **moon** also appears in the 3D scene — at its real position over the Earth, showing its actual current phase via NASA's Dial-A-Moon imagery, refreshed hourly. Size and distance are compressed so it's visible (a to-scale moon would be a sub-pixel dot thirty Earth-widths away); the Earth occludes it correctly as it sets. Both are skipped in Low Memory Mode.
+
+### Map controls on a phone
+
+On a screen narrower than 600 px — and always in the Mobile layout — the map's controls fold into a touch-sized set so they don't cover the map: the projection buttons and basemap list move behind one **map menu** button (top right), the night-shading slider becomes a **moon** button that opens a slider beside it, the band legend collapses to a **Bands** chip at the bottom (it shows how many bands you're filtering; tap it to open the band buttons), and the DX news ticker is hidden. The lock and zoom buttons get bigger. Wider screens keep the full controls.
 
 ### Basemap styles
 
@@ -843,11 +848,12 @@ The four focus layouts (Activator/Hunter/Weather/Air Traffic) fully reset the ov
 
 **Named dockable layouts.** The Dockable layout can hold more than one arrangement. In the sidebar's layout controls (next to the lock and reset buttons), **⧉ Duplicate** saves the current arrangement as a named preset — up to 10 — and the dropdown switches between them live. Rename (✎) and delete (✕) manage your presets; the built-in **Default** is your original layout and can't be renamed or deleted. Presets are included in profiles, backups, and settings sync like everything else.
 
-**Mobile layout.** Built for a phone or small tablet that _is_ the station display — in a go-box, on a picnic table at a park, or clipped to the dash. Pick **Mobile** in Settings → Display (on a phone-sized screen the app also offers it once on your first visit; answer either way and it won't ask again).
+**Mobile layout.** Built for a phone or small tablet that _is_ the station display — in a go-box, on a picnic table at a park, or clipped to the dash. Pick **Mobile** in Settings → Display. On a phone's very first visit the app picks it for you while the first-run Settings dialog is open (change it right there on the Display tab if you prefer another); if your station is already configured on the server, so Settings doesn't open, the app offers it once instead — answer either way and it won't ask again.
 
-- **Portrait.** A compact header on top: your callsign (tap it for Settings), UTC with seconds, a gear button, and on the second line your local time (tap it to flip 12/24-hour) followed by one line of chips — SFI, K (green, amber at 4, red at 5+), SSN, A, and the local temperature. If the chips don't fit, that one line scrolls sideways; the page itself never does. The map sits below at a usable height, with all its normal controls — the map lock, projection (flat, azimuthal or 3D globe) and the eye button that hides the map controls when you just want the picture.
+- **Portrait.** A compact header on top: your callsign (tap it for Settings), UTC with seconds, a gear button, and on the second line your local time (tap it to flip 12/24-hour) followed by one line of chips — SFI, K (green, amber at 4, red at 5+), SSN, A, and the local temperature. If the chips don't fit, that one line scrolls sideways; the page itself never does. The map sits below at a usable height with phone-sized controls (see [Map controls on a phone](#map-controls-on-a-phone)): the map lock, zoom, the moon button for night shading, the map menu for projection (flat, azimuthal or 3D globe) and basemap, a **Bands** chip for the band filter, and the eye button that hides the map controls when you just want the picture.
 - **Panel cards.** Under the map is a row of cards you swipe left and right: **DX Cluster**, **POTA / SOTA**, **Propagation**, **Solar**, **Satellites**, **Logbook** (with **+QSO**), **Weather**, **PSK / WSJT-X**, and **APRS** whenever the APRS map layer is on. Panels hidden in your saved configuration are left out, the same as in the Modern layout. The dots underneath show where you are — tap one to jump straight to that card. The app remembers the last card you looked at.
-- **Full screen.** Tap a card's title bar to open that panel full screen. **‹ Back** (or your phone's back gesture) returns to the map.
+- **Choose your cards.** The **☰** button left of the dots opens the card list: tick the cards you want and untick the ones you don't (the last card can't be switched off). **EmComm** is an extra card, off unless you tick it — or on by default if you came to the Mobile layout straight from the EmComm layout. It shows the NWS alerts near your location (worst first; tap one for its instructions), the nearest shelters with distance and open/full/closed status, and the APRS net roster with who is active. It only fetches while it is on screen or next to it, so leaving it off costs nothing.
+- **Full screen.** The **⤢** button right of the dots opens the card you're looking at full screen; on cards without their own heading (Satellites, Weather) tapping the card's title bar does the same. **‹ Back** (or your phone's back gesture) returns to the map.
 - **Landscape.** Turn the phone sideways and the header becomes a single row, with the map on the left and one card on the right — swipe or tap the dots to change it.
 - **Notches and home bars.** Content stays clear of the notch, the rounded corners and the home indicator, with 16 px side margins, and works down to 360 px wide. Installed to the home screen (see [Offline mode (PWA)](#offline-mode-pwa)) it runs full screen with no browser bars. On Android, outside the installed app, a full-screen button sits next to the gear.
 - To save data and battery on a phone, only the card you're looking at and its two neighbours are running; the others start when you swipe to them.
