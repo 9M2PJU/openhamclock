@@ -76,6 +76,8 @@ const PANEL_TOOL_BTN = {
   cursor: 'pointer',
 };
 import { winlinkModeLabel, winlinkModeColor } from '../utils/winlinkModes.js';
+import { useWinlinkReach, REACH_PRIORITY } from '../hooks/useWinlinkReach.js';
+import { STATUS_COLORS, STATUS_ORDER, reachColorKey } from '../utils/winlinkReach.js';
 import { stationAgeMinutes, formatStationAge } from '../utils/aprsStationAge.js';
 import { requestMapFocus } from '../utils/mapFocus.js';
 import {
@@ -322,6 +324,16 @@ export default function EmcommLayout(props) {
   // Nearby Winlink gateways
   const [winlinkRows, setWinlinkRows] = useState([]);
   const [winlinkServerHasKey, setWinlinkServerHasKey] = useState(true);
+  // Predicted HF reachability for the gateway list — the shared runner, so the
+  // Winlink panel and map layer reuse the same predictions (never a second run).
+  const winlinkReach = useWinlinkReach({
+    id: 'emcomm',
+    priority: REACH_PRIORITY.emcomm,
+    active: true,
+    deLocation: config.location,
+    propConfig: config.propagation,
+    throttleMs: 1000,
+  });
   // Field reports — Winlink Express forms ingested via rig-bridge CSV plugin
   const [fieldReports, setFieldReports] = useState([]);
   // Event log — session record for After Action Review
@@ -693,6 +705,22 @@ export default function EmcommLayout(props) {
     if (haveQth) list.sort((a, b) => a.distance - b.distance);
     return list;
   }, [winlinkRows, config.location]);
+
+  // Panel order: predicted status first (Good → Marginal → Closed → Off the
+  // air → not predicted), nearest first within a status. VHF/UHF gateways
+  // rank by line of sight. The map keeps the distance order above.
+  const winlinkPanelGateways = useMemo(() => {
+    const byCall = winlinkReach.byCall;
+    if (!byCall) return winlinkGateways;
+    return winlinkGateways
+      .map((gw) => ({ ...gw, reach: byCall[gw.callsign] || null }))
+      .sort((a, b) => {
+        const ka = STATUS_ORDER[reachColorKey(a.reach)] ?? 9;
+        const kb = STATUS_ORDER[reachColorKey(b.reach)] ?? 9;
+        if (ka !== kb) return ka - kb;
+        return (a.distance ?? Infinity) - (b.distance ?? Infinity);
+      });
+  }, [winlinkGateways, winlinkReach.byCall]);
 
   // Sort alerts by severity
   const sortedAlerts = useMemo(() => {
@@ -1662,7 +1690,7 @@ export default function EmcommLayout(props) {
             ) : winlinkGateways.length === 0 ? (
               <EmptyState text={winlinkRows.length ? 'No gateways within range' : 'Loading gateways…'} />
             ) : (
-              winlinkGateways.slice(0, 25).map((gw) => {
+              winlinkPanelGateways.slice(0, 25).map((gw) => {
                 // Show up to 3 channels closest to the operator (sorted by freq);
                 // the rest are summarized as "+N more". Avoids tall rows when a
                 // single gateway publishes 9+ channels.
@@ -1698,8 +1726,11 @@ export default function EmcommLayout(props) {
                         )}
                         <span style={{ color: '#888', marginLeft: '6px', fontSize: '10px' }}>{gw.gridsquare}</span>
                       </div>
-                      <span style={{ color: '#888', fontSize: '10px' }}>
-                        {formatDistance(gw.distance, config.allUnits?.dist || 'imperial')}
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                        {gw.reach && <EmcommReachChip entry={gw.reach} t={t} />}
+                        <span style={{ color: '#888', fontSize: '10px' }}>
+                          {formatDistance(gw.distance, config.allUnits?.dist || 'imperial')}
+                        </span>
                       </span>
                     </div>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '3px', marginTop: '3px' }}>
@@ -2455,5 +2486,46 @@ function EmptyState({ text }) {
     <div style={{ padding: '12px 8px', color: '#555', fontSize: '11px', textAlign: 'center', fontStyle: 'italic' }}>
       {text}
     </div>
+  );
+}
+
+/** Same status chip as the Winlink panel's Reachable view. */
+function EmcommReachChip({ entry, t }) {
+  const key = reachColorKey(entry);
+  let label;
+  if (entry.status === 'offair') label = t('winlinkReach.status.offair', { defaultValue: 'Off the air' });
+  else if (entry.kind === 'packet') {
+    label = {
+      los: t('winlinkReach.los.short.los', { defaultValue: 'LOS' }),
+      extended: t('winlinkReach.los.short.extended', { defaultValue: 'LOS?' }),
+      beyond: t('winlinkReach.los.short.beyond', { defaultValue: 'No LOS' }),
+    }[entry.los];
+  } else {
+    label = {
+      good: t('winlinkReach.status.good', { defaultValue: 'Good' }),
+      marginal: t('winlinkReach.status.marginal', { defaultValue: 'Marginal' }),
+      closed: t('winlinkReach.status.closed', { defaultValue: 'Closed' }),
+    }[entry.status];
+  }
+  if (!label) return null;
+  const title =
+    entry.kind === 'hf' && Number.isFinite(entry.reliability)
+      ? `${entry.reliability}%${entry.band ? ` · ${entry.band}` : ''}${entry.modeLabel ? ` · ${entry.modeLabel}` : ''}`
+      : undefined;
+  return (
+    <span
+      title={title}
+      data-status={key}
+      style={{
+        fontSize: '9px',
+        fontWeight: 700,
+        padding: '1px 5px',
+        borderRadius: '3px',
+        background: STATUS_COLORS[key],
+        color: key === 'offair' ? '#fff' : '#000',
+      }}
+    >
+      {label}
+    </span>
   );
 }

@@ -1,10 +1,10 @@
 /**
- * useWinlinkReach — Vitest + React 18
+ * useWinlinkReach + services/winlinkReachStore — Vitest + React 18
  *
  * Engine and network are mocked: predictInWorker returns a canned P.533
- * result, apiFetch serves a small gateway list. Covers ranking, the
- * per-gateway+hour cache (a remount does not re-run the engine), the REST
- * fallback when the WASM engine fails, and the map-layer broadcast.
+ * result, apiFetch serves a small gateway list, solar indices and the
+ * /api/propagation 24-hour series. The clock is pinned (Date only) so the
+ * display hour — and therefore who is on the air — is deterministic.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createRoot } from 'react-dom/client';
@@ -18,22 +18,30 @@ vi.mock('../services/p533/predictInWorker.js', () => ({
   predictInWorker: (...args) => mocks.predict(...args),
 }));
 
-import { useWinlinkReach, WINLINK_REACH_EVENT, __resetWinlinkReachForTests } from './useWinlinkReach.js';
+import { useWinlinkReach, REACH_PRIORITY } from './useWinlinkReach.js';
+import {
+  __resetWinlinkReachStoreForTests,
+  getReachState,
+  requestReach,
+  releaseReach,
+  setReachThresholds,
+} from '../services/winlinkReachStore.js';
+import { resetDisplayTime, setDisplayOffsetMs, HOUR_MS } from '../utils/displayTime.js';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 const GATEWAYS = [
-  { callsign: 'K0NEAR', gridsquare: 'DM79', frequency: 7101200, mode: 50, serviceCode: 'PUBLIC' },
-  { callsign: 'K0NEAR', gridsquare: 'DM79', frequency: 145050000, mode: 0, serviceCode: 'PUBLIC' },
-  { callsign: 'W1AW-10', gridsquare: 'FN31', frequency: 14108500, mode: 43, serviceCode: 'PUBLIC' },
-  { callsign: 'JA1FAR', gridsquare: 'PM95', frequency: 7101200, mode: 50, serviceCode: 'PUBLIC' },
+  { callsign: 'K0NEAR', gridsquare: 'DM79', frequency: 7101200, mode: 50, hours: '00-23' },
+  { callsign: 'K0NEAR', gridsquare: 'DM79', frequency: 145050000, mode: 0, hours: '00-23' },
+  { callsign: 'W1AW-10', gridsquare: 'FN31', frequency: 14108500, mode: 43, hours: '00-23' },
+  { callsign: 'K0NIGHT', gridsquare: 'DM78', frequency: 3590000, mode: 16, hours: '00-11' },
+  { callsign: 'JA1FAR', gridsquare: 'PM95', frequency: 7101200, mode: 50, hours: '00-23' },
 ];
 
 const DE = { lat: 39.75, lon: -104.99 };
 const PROP = { mode: 'SSB', power: 100, antenna: 'dipole' };
 
-let root;
-let container;
+let roots = [];
 let latest;
 
 function Harness(props) {
@@ -42,43 +50,60 @@ function Harness(props) {
 }
 
 function mount(props = {}) {
-  container = document.createElement('div');
+  const container = document.createElement('div');
   document.body.appendChild(container);
-  root = createRoot(container);
+  const root = createRoot(container);
   act(() => {
     root.render(<Harness active deLocation={DE} propConfig={PROP} ssn={120} {...props} />);
   });
+  roots.push({ root, container });
+  return root;
 }
 
-function unmount() {
-  act(() => root.unmount());
-  container.remove();
+function unmountAll() {
+  for (const { root, container } of roots) {
+    act(() => root.unmount());
+    container.remove();
+  }
+  roots = [];
 }
 
 const settle = async () => {
-  for (let i = 0; i < 10; i++) {
+  for (let i = 0; i < 15; i++) {
     await act(async () => {
       await Promise.resolve();
     });
   }
 };
 
+const restCalls = () => mocks.fetch.mock.calls.filter(([u]) => u.startsWith('/api/propagation?'));
+
 beforeEach(() => {
-  __resetWinlinkReachForTests();
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-10-15T15:20:00Z')); // 15z: K0NIGHT (00-11) is off the air
+  resetDisplayTime();
+  try {
+    localStorage.clear();
+  } catch {
+    /* ignore */
+  }
+  __resetWinlinkReachStoreForTests();
   mocks.fetch = vi.fn(async (url) => {
     if (url === '/api/winlink/gateways') {
       return { ok: true, status: 200, json: async () => ({ gateways: GATEWAYS }) };
     }
+    if (url === '/api/solar-indices') {
+      return { ok: true, status: 200, json: async () => ({ ssn: { current: 118 } }) };
+    }
     if (url.startsWith('/api/propagation?')) {
+      const series = (f) => Array.from({ length: 24 }, (_, h) => ({ hour: h, reliability: f(h) }));
       return {
         ok: true,
         status: 200,
         json: async () => ({
           model: 'Built-in estimation',
-          currentBands: [
-            { band: '40m', reliability: 35 },
-            { band: '20m', reliability: 70 },
-          ],
+          currentBands: [{ band: '40m', reliability: 1 }],
+          hourlyPredictions: { '40m': series((h) => h), '20m': series((h) => 3 * h) },
         }),
       };
     }
@@ -87,58 +112,88 @@ beforeEach(() => {
   // 40 m strong from Denver to anywhere, 20 m weak.
   mocks.predict = vi.fn(async (params) => ({
     frequencies: params.frequencies.map((f) =>
-      f < 10 ? { freq: f, snr: 12, reliability: 85 } : { freq: f, snr: -2, reliability: 10 },
+      f < 10 ? { freq: f, snr: 12, reliability: 85 } : { freq: f, snr: -9, reliability: 10 },
     ),
   }));
 });
 
 afterEach(() => {
-  if (root) unmount();
-  root = null;
+  unmountAll();
+  __resetWinlinkReachStoreForTests();
+  resetDisplayTime();
+  vi.useRealTimers();
 });
 
-describe('useWinlinkReach', () => {
-  it('predicts HF gateways in range and ranks them by status', async () => {
+describe('useWinlinkReach / shared store', () => {
+  it('predicts on-air HF gateways in range, ranks them, and marks off-air ones', async () => {
     mount();
     await settle();
     expect(latest.running).toBe(false);
-    // JA1FAR is out of the default 3,000 km range; the 2 m port is not predicted.
+    // JA1FAR out of range; K0NIGHT off the air (no engine run); 2 m port not predicted.
     expect(mocks.predict).toHaveBeenCalledTimes(2);
-    expect(latest.rows.map((r) => r.callsign)).toEqual(['K0NEAR', 'W1AW-10']);
+    expect(latest.rows.map((r) => r.callsign)).toEqual(['K0NEAR', 'W1AW-10', 'K0NIGHT']);
     expect(latest.rows[0]).toMatchObject({ status: 'good', reliability: 85, engine: 'wasm' });
-    expect(latest.rows[1].status).toBe('marginal'); // 10 % but within 6 dB of ARDOP's need
-    expect(latest.packet.map((p) => p.callsign)).toEqual(['K0NEAR']);
-    expect(latest.progress).toEqual({ done: 2, total: 2 });
-    expect(latest.engine).toBe('wasm');
-
-    // Station power/antenna reach the engine.
+    expect(latest.rows[1].status).toBe('marginal'); // 10 % but SNR −9 vs −5 floor → −4 dB margin
+    expect(latest.rows[2].status).toBe('offair');
+    expect(latest.byCall['K0NIGHT'].status).toBe('offair');
+    expect(latest.hour).toBe(15);
     const params = mocks.predict.mock.calls[0][0];
-    expect(params.txPower).toBe(100);
+    expect(params).toMatchObject({ txPower: 100, requiredSNR: -5, hour: 15, ssn: 120 });
     expect(params.txGain).toBeCloseTo(2.15);
   });
 
-  it('serves a remount from the per-gateway+hour cache', async () => {
+  it('runs once for several consumers (panel + layer + EmComm) and serves remounts from cache', async () => {
     mount();
+    mount({ id: 'emcomm', priority: REACH_PRIORITY.emcomm, throttleMs: 1000 });
+    requestReach('layer', { priority: REACH_PRIORITY.layer, deLocation: DE, propConfig: PROP });
     await settle();
     expect(mocks.predict).toHaveBeenCalledTimes(2);
-    unmount();
+    releaseReach('layer');
+    unmountAll();
     mount();
     await settle();
     expect(mocks.predict).toHaveBeenCalledTimes(2);
     expect(latest.rows[0].status).toBe('good');
   });
 
-  it('recomputes when station settings change', async () => {
+  it('lets the map layer run on its own, fetching the SSN first', async () => {
+    requestReach('layer', { priority: REACH_PRIORITY.layer, deLocation: DE, propConfig: PROP });
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+    await settle();
+    const s = getReachState();
+    expect(s.active).toBe(true);
+    expect(s.byCall['K0NEAR']).toMatchObject({ kind: 'hf', status: 'good' });
+    expect(mocks.fetch.mock.calls.some(([u]) => u === '/api/solar-indices')).toBe(true);
+    // Ran once, at the fetched SSN (118 → bucket 120) — not once at a guess and again.
+    expect(mocks.predict).toHaveBeenCalledTimes(2);
+    expect(mocks.predict.mock.calls[0][0].ssn).toBe(120);
+    releaseReach('layer');
+    await settle();
+    expect(getReachState().active).toBe(false);
+  });
+
+  it('re-classifies on a threshold change without new engine work', async () => {
+    mount();
+    await settle();
+    act(() => setReachThresholds({ goodReliability: 90, marginalReliability: 20, marginalSnrMargin: -6 }));
+    await settle();
+    expect(latest.rows[0].status).toBe('marginal');
+    expect(mocks.predict).toHaveBeenCalledTimes(2);
+  });
+
+  it('follows the display time: a shifted hour puts the night gateway back on the air', async () => {
     mount();
     await settle();
     act(() => {
-      root.render(<Harness active deLocation={DE} propConfig={{ ...PROP, power: 500 }} ssn={120} />);
+      setDisplayOffsetMs(-12 * HOUR_MS); // 03z
     });
     await settle();
-    expect(mocks.predict).toHaveBeenCalledTimes(4);
+    expect(latest.hour).toBe(3);
+    expect(latest.rows.find((r) => r.callsign === 'K0NIGHT').status).not.toBe('offair');
+    expect(mocks.predict.mock.calls.at(-1)[0].hour).toBe(3);
   });
 
-  it('falls back to the server estimate when the WASM engine fails', async () => {
+  it('falls back to the server series at the display hour when the WASM engine fails', async () => {
     mocks.predict = vi.fn(async () => {
       throw new Error('no wasm');
     });
@@ -146,40 +201,23 @@ describe('useWinlinkReach', () => {
     mount();
     await settle();
     warn.mockRestore();
-    const restCalls = mocks.fetch.mock.calls.filter(([u]) => u.startsWith('/api/propagation?'));
-    expect(restCalls.length).toBe(2);
+    expect(restCalls()).toHaveLength(2);
     expect(latest.engine).toBe('est');
-    const w1 = latest.rows.find((r) => r.callsign === 'W1AW-10');
-    expect(w1).toMatchObject({ status: 'good', reliability: 70, snrMargin: null });
-  });
-
-  it('broadcasts the result for the map layer and withdraws it on unmount', async () => {
-    vi.useFakeTimers();
-    const seen = [];
-    const onReach = (e) => seen.push(e.detail);
-    window.addEventListener(WINLINK_REACH_EVENT, onReach);
-    try {
-      mount();
-      await settle();
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(1500);
-      });
-      const last = seen.filter((d) => d.enabled).at(-1);
-      expect(last.byCall['K0NEAR']).toMatchObject({ kind: 'hf', status: 'good' });
-      unmount();
-      root = null;
-      expect(seen.at(-1)).toEqual({ enabled: false });
-    } finally {
-      window.removeEventListener(WINLINK_REACH_EVENT, onReach);
-      vi.useRealTimers();
-    }
+    // 20 m series is 3·h → 45 at 15z; no SNR from the server, so no margin.
+    expect(latest.rows.find((r) => r.callsign === 'W1AW-10')).toMatchObject({
+      reliability: 45,
+      snrMargin: null,
+      status: 'marginal',
+    });
+    // Server mode chosen from the −5 dB floor.
+    expect(restCalls()[0][0]).toMatch(/mode=OLIVIA/);
   });
 
   it('stays idle when inactive or without a station location', async () => {
     mount({ active: false });
     await settle();
     expect(mocks.fetch).not.toHaveBeenCalled();
-    unmount();
+    unmountAll();
     mount({ deLocation: null });
     await settle();
     expect(mocks.predict).not.toHaveBeenCalled();

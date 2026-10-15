@@ -3,36 +3,41 @@
  *
  * Ranked list of HF gateways within range by predicted P.533 circuit
  * reliability from the station to each gateway, on the gateway's own
- * frequencies, for the current (display-time) UTC hour; plus nearby
- * VHF/UHF gateways ranked by distance with a line-of-sight hint.
+ * frequencies, for the current (display-time) UTC hour; gateways outside
+ * their published operating hours are shown as Off the air. Nearby VHF/UHF
+ * gateways are ranked by distance with a line-of-sight hint.
  *
+ * Reads the shared runner (services/winlinkReachStore.js) — the map layer
+ * and the EmComm list use the same results, so nothing is predicted twice.
  * Kept mounted (hidden) after first use while the panel is open so the
- * Winlink Gateways map layer keeps its reachability colouring when the
- * operator flips to the inbox.
+ * map keeps its reachability colouring when the operator flips to the inbox.
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useRig } from '../contexts/RigContext.jsx';
-import { useWinlinkReach } from '../hooks/useWinlinkReach.js';
+import { useWinlinkReach, REACH_PRIORITY } from '../hooks/useWinlinkReach.js';
 import { ANTENNA_PROFILES } from '../utils/propagationAdjust.js';
 import { formatDistance } from '../utils/geo.js';
 import { winlinkModeColor } from '../utils/winlinkModes.js';
 import {
-  DEFAULT_RANGE_KM,
+  DEFAULT_THRESHOLDS,
   RANGE_OPTIONS_KM,
   STATUS_COLORS,
+  modeSnrInfo,
+  passesReachFilter,
   patConnectUrl,
   rigModeForChannel,
 } from '../utils/winlinkReach.js';
 
-const RANGE_STORAGE_KEY = 'ohc_winlinkReachRangeKm';
+const FILTER_STORAGE_KEY = 'ohc_winlinkReachFilter';
+const FILTERS = ['all', 'reachable', 'good'];
 
-function loadRange() {
+function loadFilter() {
   try {
-    const v = parseInt(localStorage.getItem(RANGE_STORAGE_KEY), 10);
-    return RANGE_OPTIONS_KM.includes(v) ? v : DEFAULT_RANGE_KM;
+    const v = localStorage.getItem(FILTER_STORAGE_KEY);
+    return FILTERS.includes(v) ? v : 'all';
   } catch {
-    return DEFAULT_RANGE_KM;
+    return 'all';
   }
 }
 
@@ -84,6 +89,27 @@ const smallBtn = {
   flexShrink: 0,
 };
 
+const selectStyle = {
+  padding: '2px 4px',
+  fontSize: '10px',
+  background: 'var(--bg-primary)',
+  border: '1px solid var(--border-color)',
+  borderRadius: '3px',
+  color: 'var(--text-primary)',
+  fontFamily: 'inherit',
+};
+
+const numberStyle = { ...selectStyle, width: '46px' };
+
+const headingStyle = {
+  padding: '4px 4px 2px',
+  fontSize: '10px',
+  fontWeight: 700,
+  color: 'var(--text-secondary)',
+  textTransform: 'uppercase',
+  letterSpacing: '0.04em',
+};
+
 export default function WinlinkReachView({
   hidden = false,
   deLocation,
@@ -94,20 +120,30 @@ export default function WinlinkReachView({
 }) {
   const { t } = useTranslation();
   const rig = useRig();
-  const [rangeKm, setRangeKm] = useState(loadRange);
   const [expanded, setExpanded] = useState(null);
   const [copied, setCopied] = useState(null);
-  const ssn = solarIndices?.data?.ssn?.current ?? 100;
+  const [filter, setFilter] = useState(loadFilter);
+  const [showThresholds, setShowThresholds] = useState(false);
+  const ssn = solarIndices?.data?.ssn?.current ?? null;
 
-  const reach = useWinlinkReach({ active: true, deLocation, rangeKm, propConfig, ssn });
+  const reach = useWinlinkReach({
+    id: 'panel',
+    priority: REACH_PRIORITY.panel,
+    active: true,
+    deLocation,
+    propConfig,
+    ssn,
+  });
+  const hasDe = Number.isFinite(deLocation?.lat) && Number.isFinite(deLocation?.lon);
+  const th = reach.thresholds || DEFAULT_THRESHOLDS;
 
   useEffect(() => {
     try {
-      localStorage.setItem(RANGE_STORAGE_KEY, String(rangeKm));
+      localStorage.setItem(FILTER_STORAGE_KEY, filter);
     } catch {
       /* storage unavailable */
     }
-  }, [rangeKm]);
+  }, [filter]);
 
   useEffect(() => {
     if (!copied) return undefined;
@@ -140,11 +176,27 @@ export default function WinlinkReachView({
     setCopied(ok ? url : null);
   }, []);
 
+  const visibleRows = useMemo(
+    () =>
+      reach.rows.filter((r) =>
+        passesReachFilter(reach.byCall?.[r.callsign] || { kind: 'hf', status: r.status }, filter),
+      ),
+    [reach.rows, reach.byCall, filter],
+  );
+  const visiblePacket = useMemo(
+    () =>
+      reach.packet.filter((p) =>
+        passesReachFilter({ kind: 'packet', los: p.los, status: p.onAir === false ? 'offair' : 'unknown' }, filter),
+      ),
+    [reach.packet, filter],
+  );
+
   const statusLabel = (s) =>
     ({
       good: t('winlinkReach.status.good', { defaultValue: 'Good' }),
       marginal: t('winlinkReach.status.marginal', { defaultValue: 'Marginal' }),
       closed: t('winlinkReach.status.closed', { defaultValue: 'Closed' }),
+      offair: t('winlinkReach.status.offair', { defaultValue: 'Off the air' }),
       unknown: t('winlinkReach.status.unknown', { defaultValue: '…' }),
     })[s] || s;
 
@@ -167,6 +219,21 @@ export default function WinlinkReachView({
   const antennaName = (ANTENNA_PROFILES[propConfig?.antenna] || ANTENNA_PROFILES.isotropic).name;
   const { done, total } = reach.progress;
 
+  const floorTitle = (c) => {
+    if (!c) return '';
+    const info = modeSnrInfo(c.mode);
+    return t('winlinkReach.floorTitle', {
+      defaultValue: '{{mode}} holds a link down to {{floor}} dB SNR (3 kHz) — {{source}}',
+      mode: c.modeLabel,
+      floor: info.floorDb,
+      source: info.estimated
+        ? `${t('winlinkReach.estimated', { defaultValue: 'estimate' })}: ${info.source}`
+        : info.source,
+    });
+  };
+
+  const bandText = (c) => (c?.band ? `${c.bandApprox ? '≈' : ''}${c.band}` : '—');
+
   const renderChip = (status) => (
     <span
       style={{
@@ -177,10 +244,11 @@ export default function WinlinkReachView({
         borderRadius: '3px',
         fontSize: '9px',
         fontWeight: 700,
-        color: status === 'unknown' ? 'var(--text-muted)' : '#000',
+        color: status === 'unknown' ? 'var(--text-muted)' : status === 'offair' ? '#fff' : '#000',
         background: status === 'unknown' ? 'var(--bg-tertiary)' : STATUS_COLORS[status],
         flexShrink: 0,
       }}
+      data-status={status}
     >
       {statusLabel(status)}
     </span>
@@ -190,14 +258,14 @@ export default function WinlinkReachView({
     const url = patConnectUrl(callsign, channel);
     return (
       <span style={{ display: 'inline-flex', gap: '3px' }} onClick={(e) => e.stopPropagation()}>
-        {canTune && (
+        {canTune && channel?.dialHz && (
           <button
             type="button"
             style={smallBtn}
             onClick={() => tune(channel)}
             title={t('winlinkReach.tuneTitle', {
               defaultValue: 'Tune the rig to {{dial}} kHz dial',
-              dial: (channel.dialHz / 1000).toFixed(1),
+              dial: String(channel.dialHz / 1000),
             })}
           >
             {t('winlinkReach.tune', { defaultValue: 'Tune' })}
@@ -217,6 +285,8 @@ export default function WinlinkReachView({
     );
   };
 
+  const setTh = (key, value) => reach.setThresholds({ ...th, [key]: value });
+
   return (
     <div style={{ display: hidden ? 'none' : 'block' }} aria-hidden={hidden}>
       {/* Controls */}
@@ -235,23 +305,30 @@ export default function WinlinkReachView({
         <label style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
           {t('winlinkReach.range', { defaultValue: 'Range' })}
           <select
-            value={rangeKm}
-            onChange={(e) => setRangeKm(parseInt(e.target.value, 10))}
-            style={{
-              padding: '2px 4px',
-              fontSize: '10px',
-              background: 'var(--bg-primary)',
-              border: '1px solid var(--border-color)',
-              borderRadius: '3px',
-              color: 'var(--text-primary)',
-              fontFamily: 'inherit',
-            }}
+            value={reach.rangeKm}
+            onChange={(e) => reach.setRange(parseInt(e.target.value, 10))}
+            style={selectStyle}
           >
             {RANGE_OPTIONS_KM.map((km) => (
               <option key={km} value={km}>
                 {formatDistance(km, units)}
               </option>
             ))}
+          </select>
+        </label>
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+          {t('winlinkReach.show', { defaultValue: 'Show' })}
+          <select
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            style={selectStyle}
+            aria-label={t('winlinkReach.showAria', { defaultValue: 'Which gateways to show' })}
+          >
+            <option value="all">{t('winlinkReach.layer.all', { defaultValue: 'All gateways' })}</option>
+            <option value="reachable">
+              {t('winlinkReach.layer.reachable', { defaultValue: 'Predicted reachable' })}
+            </option>
+            <option value="good">{t('winlinkReach.layer.good', { defaultValue: 'Good only' })}</option>
           </select>
         </label>
         <button
@@ -261,6 +338,15 @@ export default function WinlinkReachView({
           onClick={reach.refresh}
         >
           {t('winlinkReach.refresh', { defaultValue: 'Refresh' })}
+        </button>
+        <button
+          type="button"
+          style={smallBtn}
+          aria-expanded={showThresholds}
+          onClick={() => setShowThresholds((v) => !v)}
+          title={t('winlinkReach.thresholdsTitle', { defaultValue: 'Status cut-offs' })}
+        >
+          {t('winlinkReach.thresholds', { defaultValue: 'Cut-offs' })}
         </button>
         {reach.hour != null && (
           <span title={reach.timeShifted ? t('winlinkReach.shifted', { defaultValue: 'Display time is shifted' }) : ''}>
@@ -272,10 +358,66 @@ export default function WinlinkReachView({
             defaultValue: '{{power}} W · {{antenna}} · SSN {{ssn}}',
             power: parseFloat(propConfig?.power) || 100,
             antenna: antennaName,
-            ssn: Math.round(ssn),
+            ssn: Math.round(ssn ?? 100),
           })}
         </span>
       </div>
+
+      {/* Status cut-offs */}
+      {showThresholds && (
+        <div
+          style={{
+            display: 'flex',
+            gap: '8px',
+            alignItems: 'center',
+            flexWrap: 'wrap',
+            padding: '4px',
+            borderBottom: '1px solid var(--border-color)',
+            fontSize: '10px',
+            color: 'var(--text-muted)',
+          }}
+        >
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
+            {t('winlinkReach.thGood', { defaultValue: 'Good ≥' })}
+            <input
+              type="number"
+              min="1"
+              max="99"
+              value={th.goodReliability}
+              onChange={(e) => setTh('goodReliability', e.target.value)}
+              style={numberStyle}
+            />
+            %
+          </label>
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
+            {t('winlinkReach.thMarginal', { defaultValue: 'Marginal ≥' })}
+            <input
+              type="number"
+              min="0"
+              max="99"
+              value={th.marginalReliability}
+              onChange={(e) => setTh('marginalReliability', e.target.value)}
+              style={numberStyle}
+            />
+            %
+          </label>
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
+            {t('winlinkReach.thMargin', { defaultValue: 'or SNR margin ≥' })}
+            <input
+              type="number"
+              min="-30"
+              max="30"
+              value={th.marginalSnrMargin}
+              onChange={(e) => setTh('marginalSnrMargin', e.target.value)}
+              style={numberStyle}
+            />
+            dB
+          </label>
+          <button type="button" style={smallBtn} onClick={() => reach.setThresholds({ ...DEFAULT_THRESHOLDS })}>
+            {t('winlinkReach.thReset', { defaultValue: 'Defaults' })}
+          </button>
+        </div>
+      )}
 
       {/* Progress */}
       {reach.running && total > 0 && (
@@ -317,7 +459,7 @@ export default function WinlinkReachView({
       )}
 
       {/* Empty states */}
-      {!reach.hasDe ? (
+      {!hasDe ? (
         <div style={{ textAlign: 'center', padding: '16px', color: 'var(--text-muted)' }}>
           {t('winlinkReach.noDe', { defaultValue: 'Set your station location to predict gateway paths.' })}
         </div>
@@ -335,54 +477,45 @@ export default function WinlinkReachView({
       ) : (
         <>
           {/* HF list */}
-          <div
-            style={{
-              padding: '4px 4px 2px',
-              fontSize: '10px',
-              fontWeight: 700,
-              color: 'var(--text-secondary)',
-              textTransform: 'uppercase',
-              letterSpacing: '0.04em',
-            }}
-          >
+          <div style={headingStyle}>
             {t('winlinkReach.hfHeading', {
               defaultValue: 'HF gateways within {{range}} ({{count}})',
-              range: formatDistance(rangeKm, units),
-              count: reach.rows.length,
+              range: formatDistance(reach.rangeKm, units),
+              count: visibleRows.length,
             })}
           </div>
-          {reach.rows.length === 0 && (
+          {visibleRows.length === 0 && (
             <div style={{ padding: '8px', color: 'var(--text-muted)', fontSize: '11px' }}>
-              {t('winlinkReach.noneInRange', { defaultValue: 'No HF gateways in range. Try a larger range.' })}
+              {reach.rows.length
+                ? t('winlinkReach.noneMatch', { defaultValue: 'No gateways match this filter right now.' })
+                : t('winlinkReach.noneInRange', { defaultValue: 'No HF gateways in range. Try a larger range.' })}
             </div>
           )}
-          {reach.rows.map((row) => {
+          {visibleRows.map((row) => {
             const best = row.best;
             const isOpen = expanded === row.callsign;
             return (
-              <div key={row.callsign} style={{ borderBottom: '1px solid var(--border-color)' }}>
+              <div
+                key={row.callsign}
+                style={{ borderBottom: '1px solid var(--border-color)' }}
+                data-testid={`reach-row-${row.callsign}`}
+              >
                 <div
                   role="button"
                   tabIndex={0}
-                  onClick={() => select(row, best)}
+                  onClick={() => select(row, row.status === 'offair' ? null : best)}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' || e.key === ' ') {
                       e.preventDefault();
-                      select(row, best);
+                      select(row, row.status === 'offair' ? null : best);
                     }
                   }}
                   title={
-                    canTune
+                    canTune && row.status !== 'offair'
                       ? t('winlinkReach.rowTitleTune', { defaultValue: 'Set as DX and tune the rig' })
                       : t('winlinkReach.rowTitle', { defaultValue: 'Set as DX' })
                   }
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '6px',
-                    padding: '4px',
-                    cursor: 'pointer',
-                  }}
+                  style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '4px', cursor: 'pointer' }}
                 >
                   {renderChip(row.status)}
                   <div style={{ flex: 1, minWidth: 0 }}>
@@ -391,18 +524,25 @@ export default function WinlinkReachView({
                         {row.callsign}
                       </span>
                       {best && (
-                        <span style={{ fontSize: '10px', fontFamily: 'var(--font-mono)' }}>
-                          {best.band || ''} {(best.frequency / 1e6).toFixed(3)}{' '}
+                        <span style={{ fontSize: '10px', fontFamily: 'var(--font-mono)' }} title={floorTitle(best)}>
+                          {bandText(best)} {(best.frequency / 1e6).toFixed(3)}{' '}
                           <span style={{ color: winlinkModeColor(best.mode), fontWeight: 600 }}>{best.modeLabel}</span>
                         </span>
                       )}
                     </div>
                     <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
                       {row.bearing}° {compass(row.bearing)} · {formatDistance(row.distanceKm, units)}
+                      {row.status === 'offair' && best?.hours && (
+                        <>
+                          {' · '}
+                          {t('winlinkReach.hours', { defaultValue: 'on the air {{hours}} UTC', hours: best.hours })}
+                        </>
+                      )}
                       {row.reliability != null && (
                         <>
                           {' · '}
                           {t('winlinkReach.rel', { defaultValue: '{{rel}}% rel', rel: row.reliability })}
+                          {row.approx ? ' ≈' : ''}
                         </>
                       )}
                       {row.snrMargin != null && (
@@ -418,7 +558,7 @@ export default function WinlinkReachView({
                       {row.updatedAt && ` · ${utcHHMM(row.updatedAt)}`}
                     </div>
                   </div>
-                  {best && renderChannelActions(row.callsign, best)}
+                  {best && row.status !== 'offair' && renderChannelActions(row.callsign, best)}
                   {row.channels.length > 1 && (
                     <button
                       type="button"
@@ -461,16 +601,18 @@ export default function WinlinkReachView({
                           }}
                           title={statusLabel(c.status)}
                         />
-                        <span style={{ width: '34px' }}>{c.band || '—'}</span>
+                        <span style={{ width: '38px' }}>{bandText(c)}</span>
                         <span style={{ width: '58px' }}>{(c.frequency / 1e6).toFixed(3)}</span>
-                        <span style={{ color: winlinkModeColor(c.mode), flex: 1 }}>{c.modeLabel}</span>
+                        <span style={{ color: winlinkModeColor(c.mode), flex: 1 }} title={floorTitle(c)}>
+                          {c.modeLabel}
+                        </span>
                         <span style={{ width: '34px', textAlign: 'right' }}>
-                          {c.reliability != null ? `${c.reliability}%` : '—'}
+                          {c.status === 'offair' ? c.hours || '' : c.reliability != null ? `${c.reliability}%` : '—'}
                         </span>
                         <span style={{ width: '44px', textAlign: 'right' }}>
                           {c.snrMargin != null ? `${c.snrMargin >= 0 ? '+' : ''}${c.snrMargin}` : ''}
                         </span>
-                        {renderChannelActions(row.callsign, c)}
+                        {c.status !== 'offair' && renderChannelActions(row.callsign, c)}
                       </div>
                     ))}
                   </div>
@@ -489,43 +631,29 @@ export default function WinlinkReachView({
           )}
 
           {/* VHF/UHF */}
-          {reach.packet.length > 0 && (
+          {visiblePacket.length > 0 && (
             <>
-              <div
-                style={{
-                  padding: '8px 4px 2px',
-                  fontSize: '10px',
-                  fontWeight: 700,
-                  color: 'var(--text-secondary)',
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.04em',
-                }}
-              >
+              <div style={{ ...headingStyle, paddingTop: '8px' }}>
                 {t('winlinkReach.vhfHeading', {
                   defaultValue: 'VHF/UHF gateways nearby ({{count}})',
-                  count: reach.packet.length,
+                  count: visiblePacket.length,
                 })}
               </div>
-              {reach.packet.slice(0, 25).map((p) => {
-                const ch = p.channels[0];
+              {visiblePacket.slice(0, 25).map((p) => {
+                const ch = { ...p.channels[0], dialHz: p.channels[0].frequency };
+                const target = { lat: p.gateway.lat, lon: p.gateway.lon, callsign: p.callsign };
+                const offAir = p.onAir === false;
                 return (
                   <div
                     key={`pk-${p.callsign}`}
                     role="button"
                     tabIndex={0}
-                    onClick={() =>
-                      select(
-                        { lat: p.gateway.lat, lon: p.gateway.lon, callsign: p.callsign },
-                        { ...ch, dialHz: ch.frequency },
-                      )
-                    }
+                    data-testid={`reach-packet-${p.callsign}`}
+                    onClick={() => select(target, offAir ? null : ch)}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' || e.key === ' ') {
                         e.preventDefault();
-                        select(
-                          { lat: p.gateway.lat, lon: p.gateway.lon, callsign: p.callsign },
-                          { ...ch, dialHz: ch.frequency },
-                        );
+                        select(target, offAir ? null : ch);
                       }
                     }}
                     style={{
@@ -537,16 +665,20 @@ export default function WinlinkReachView({
                       borderBottom: '1px solid var(--border-color)',
                     }}
                   >
-                    <span
-                      style={{
-                        minWidth: '52px',
-                        fontSize: '9px',
-                        color: p.los === 'beyond' ? 'var(--text-muted)' : 'var(--accent-green)',
-                        flexShrink: 0,
-                      }}
-                    >
-                      {losLabel(p.los)}
-                    </span>
+                    {offAir ? (
+                      renderChip('offair')
+                    ) : (
+                      <span
+                        style={{
+                          minWidth: '52px',
+                          fontSize: '9px',
+                          color: p.los === 'beyond' ? 'var(--text-muted)' : 'var(--accent-green)',
+                          flexShrink: 0,
+                        }}
+                      >
+                        {losLabel(p.los)}
+                      </span>
+                    )}
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <span style={{ fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--text-primary)' }}>
                         {p.callsign}
@@ -557,9 +689,10 @@ export default function WinlinkReachView({
                       </span>
                       <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
                         {p.bearing}° {compass(p.bearing)} · {formatDistance(p.distanceKm, units)}
+                        {offAir && ch.hours ? ` · ${ch.hours} UTC` : ''}
                       </div>
                     </div>
-                    {renderChannelActions(p.callsign, { ...ch, dialHz: ch.frequency })}
+                    {!offAir && renderChannelActions(p.callsign, ch)}
                   </div>
                 );
               })}
@@ -568,9 +701,12 @@ export default function WinlinkReachView({
 
           <div style={{ padding: '6px 4px', fontSize: '9px', color: 'var(--text-muted)', lineHeight: 1.4 }}>
             {engineLabel && <div>{engineLabel}</div>}
-            {t('winlinkReach.footnote', {
+            {t('winlinkReach.footnote2', {
               defaultValue:
-                'Reliability is the share of days this hour the path meets the mode’s needed SNR (monthly median model). Good ≥ 50%, Marginal ≥ 20% or within 6 dB. VHF/UHF is by distance only. Click a gateway to set it as DX; with rig control connected it also tunes the dial frequency.',
+                'Reliability is the share of days this hour the path can hold a link in the gateway’s mode (monthly median model). Good ≥ {{good}}%; Marginal ≥ {{marginal}}% or SNR margin ≥ {{margin}} dB; Off the air = outside the gateway’s published hours. ≈ marks a band-level estimate for a 60 m or out-of-band channel. VHF/UHF is by distance only. Click a gateway to set it as DX; with rig control connected it also tunes the dial frequency.',
+              good: th.goodReliability,
+              marginal: th.marginalReliability,
+              margin: th.marginalSnrMargin,
             })}
           </div>
         </>
