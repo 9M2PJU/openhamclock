@@ -72,7 +72,7 @@ const CHANGELOG = [
       {
         icon: '🎛️',
         title: 'NEW: Remote Control API + Phone Remote',
-        desc: "HamClock's set_* commands, done our way: POST /api/control/de, dx, layout, theme, panels, mapview, satellite, time, title, alarm, stopwatch, rotator and capture, delivered to a display over SSE. Settings → Station shows the display id and a QR code; scan it and /remote gives you big touch buttons for DX, layouts, layers, satellites, time shift, alarms and rig tuning. Works with Stream Deck, Node-RED, or curl. Documented in API.md.",
+        desc: "HamClock's set_* commands, done our way: POST /api/control/de, dx, layout, theme, panels, mapview, satellite, time, title, alarm, stopwatch, rotator and capture, delivered to a display over SSE. Settings → Station shows the display id and a QR code; scan it and /remote gives you big touch buttons for DX, layouts, layers, satellites, time shift, alarms and rig tuning. The QR code carries a per-display pairing key, so the phone works on the hosted site too without ever seeing the server\'s admin key, and nobody else can drive or listen to your display. Works with Stream Deck, Node-RED, or curl. Documented in API.md.",
       },
       {
         icon: '🖥️',
