@@ -106,6 +106,7 @@ export const DEFAULT_CONFIG = {
   callsignTitles: '', // up to six ';'-separated titles rotating in the callsign box (HamClock set_title)
   grayscale: 'off', // 'off' | 'map' | 'all' — filter: grayscale(1) on the map or the whole display
   autoSpaceWxLayers: false, // Auto-enable Aurora / D-RAP map layers when space weather warrants (Settings → Map Layers)
+  bearings: 'true', // 'true' = true north, 'magnetic' = corrected by WMM2025 declination at DE (suffix "M")
 };
 
 // Cache for server config

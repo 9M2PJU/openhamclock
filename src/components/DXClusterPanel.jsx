@@ -18,6 +18,7 @@ import { apiFetch } from '../utils/apiFetch';
 import { getListenUrl, loadNearbyReceivers } from '../utils/webSdr.js';
 import { requestLogQso } from '../services/logbookStore.js';
 import { useCompiledWatchlist } from '../hooks/useWatchlists.js';
+import { spotIota, iotaName } from '../utils/iota.js';
 
 // Mirrors the server-side validator — good enough to gate the Spot button.
 const isValidCallsign = (call) =>
@@ -244,6 +245,7 @@ export const DXClusterPanel = ({
     if (filters?.commentText?.length) count++;
     if (filters?.callsign) count++;
     if (filters?.dxpeditionsOnly) count++;
+    if (filters?.iotaOnly) count++;
     if (filters?.contest) count++;
     if (filters?.excludeContinents) count += filters.excludeContinents.length;
     if (filters?.excludeCqZones) count += filters.excludeCqZones.length;
@@ -446,6 +448,29 @@ export const DXClusterPanel = ({
           >
             <IconSearch size={10} style={{ verticalAlign: 'middle', marginRight: '3px' }} />
             {filterCount > 0 ? filterCount : ''}
+          </button>
+          <button
+            type="button"
+            onClick={() => onFilterChange?.({ ...filters, iotaOnly: filters?.iotaOnly ? undefined : true })}
+            title={t('dxClusterPanel.iota.toggleTooltip', {
+              defaultValue: 'Show only spots with an IOTA reference (panel and map)',
+            })}
+            aria-label={t('dxClusterPanel.iota.toggleTooltip', {
+              defaultValue: 'Show only spots with an IOTA reference (panel and map)',
+            })}
+            aria-pressed={!!filters?.iotaOnly}
+            style={{
+              background: filters?.iotaOnly ? 'rgba(0, 221, 255, 0.25)' : 'rgba(100, 100, 100, 0.3)',
+              border: `1px solid ${filters?.iotaOnly ? 'var(--accent-cyan)' : '#666'}`,
+              color: filters?.iotaOnly ? 'var(--accent-cyan)' : '#888',
+              padding: '2px 6px',
+              borderRadius: '4px',
+              fontSize: '9px',
+              fontFamily: 'var(--font-mono)',
+              cursor: 'pointer',
+            }}
+          >
+            {t('dxClusterPanel.iota.badge', { defaultValue: 'IOTA' })}
           </button>
           <button
             onClick={toggleSpotter}
@@ -739,6 +764,8 @@ export const DXClusterPanel = ({
               const listen = freqMHz > 0 ? getListenUrl(freqMHz * 1000, modeInfo?.mode) : null;
               // Red watch-list match: tinted row + red callsign (Red mode only).
               const watchRed = isWatchRed(spot);
+              // IOTA reference from the comment ("EU-005") — badge + island group tooltip.
+              const iota = spotIota(spot);
 
               return (
                 <div
@@ -892,6 +919,26 @@ export const DXClusterPanel = ({
                         }}
                       >
                         ✓
+                      </span>
+                    )}
+                    {iota && (
+                      <span
+                        title={`IOTA ${iota}${iotaName(iota) ? ` — ${iotaName(iota)}` : ''}`}
+                        aria-label={`IOTA ${iota}${iotaName(iota) ? `, ${iotaName(iota)}` : ''}`}
+                        style={{
+                          marginLeft: '4px',
+                          padding: '0 3px',
+                          fontSize: '8px',
+                          fontWeight: '700',
+                          letterSpacing: '0.5px',
+                          color: 'var(--accent-cyan)',
+                          background: 'rgba(0, 221, 255, 0.12)',
+                          border: '1px solid rgba(0, 221, 255, 0.5)',
+                          borderRadius: '2px',
+                          verticalAlign: 'middle',
+                        }}
+                      >
+                        {iota}
                       </span>
                     )}
                   </div>

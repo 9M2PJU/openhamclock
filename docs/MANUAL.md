@@ -121,11 +121,12 @@ _Settings → Map Layers: every overlay grouped by category, each with an opacit
 
 **Amateur radio**
 
-| Layer            | What it shows                                                       | Key |
-| ---------------- | ------------------------------------------------------------------- | --- |
-| Contest QSOs     | Recent QSOs from contest loggers (N1MM/DXLog) as band-colored arcs  | Q   |
-| Meshtastic Nodes | Mesh network nodes from your Meshtastic device                      | —   |
-| Worked Grids     | Shades Maidenhead squares you've worked, straight from your logbook | —   |
+| Layer               | What it shows                                                                                                                                                                                       | Key |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --- |
+| Contest QSOs        | Recent QSOs from contest loggers (N1MM/DXLog) as band-colored arcs                                                                                                                                  | Q   |
+| Meshtastic Nodes    | Mesh network nodes from your Meshtastic device                                                                                                                                                      | —   |
+| Worked Grids        | Shades Maidenhead squares you've worked, straight from your logbook                                                                                                                                 | —   |
+| Balloons (HAB/Pico) | Amateur high-altitude and pico balloons from SondeHub Amateur — altitude-coloured markers with 6-hour trails, APRS-gated picos dashed; click → details and Set as DX. Pairs with the Balloons panel | —   |
 
 **Weather / space weather / hazards / geology**
 
@@ -281,6 +282,7 @@ _The DX Cluster panel: band-coloured spots with age, mode, and the tune / listen
 - **DX News ticker** — headlines merged from DXNews.com, DX-World, and NG3K, deduplicated over 24 hours, with adjustable text size and scroll speed (« » buttons, 0.5×–2.5×).
 - **DX News** — the same merged three-source feed as the ticker, but as a full reader panel: newest-first list with source badges and relative ages, expandable summaries with a link to the original article, per-source filter chips, and a read/unread dot that remembers what you've already seen (stored locally, capped at 200 items).
 - **POTA Activator** — self-spotting for park activations. Enter the park reference (verified live against the POTA park directory, so you see the park name before you post), frequency in kHz, and mode; the spot posts to pota.app under your callsign. POTA's response is shown verbatim, and a 30-second cooldown prevents accidental double-spots. Re-spot after a QSY to stay on the hunters' active list.
+- **HamAlert** — your own [HamAlert](https://hamalert.org) triggers as a live list: age, callsign, frequency, mode, source (RBN, PSKReporter, SOTA, POTA, cluster…) and comment, newest first, up to 200; **CLR** empties it. Click a row to set the DX target and tune the rig, exactly like a DX Cluster spot. The feed needs your HamAlert login, so it is per-user: enable the **HamAlert** plugin in Rig Bridge (Plugins tab → username/password) and alerts stream to the browser over the bridge's local connection or Cloud Relay. A self-hosted server can instead hold one shared session with `HAMALERT_USER` / `HAMALERT_PASS` in `.env`. Settings → Alerts has a matching **HamAlert** tone/notification feed. Tip: in HamAlert, add a _Telnet_ destination to the triggers you want here.
 
 ### Propagation and space weather
 
@@ -323,12 +325,12 @@ _The Solar panel cycling through live imagery, indices, X-ray flux, and the moon
 
 ### Station and rig
 
-- **DE Location / DX Target** — station info panels: grid, coordinates, sun times, weather (collapsible), and for DX: bearing and distance (handy for aiming a beam).
+- **DE Location / DX Target** — station info panels: grid, coordinates, sun times, weather (collapsible), and for DX: bearing and distance (handy for aiming a beam). **Settings → Station → Bearings** switches every bearing in the app between **True north** (default) and **Magnetic north**: magnetic bearings are corrected by the World Magnetic Model (WMM2025, computed in the browser from your station location — no network) and carry an **M** suffix ("116°M"), so what you read here matches a compass or a rotator calibrated to magnetic. Applies to the DX panel SP/LP readouts, the Classic layout, callsign lookup, the Map Data text view, the azimuthal map tooltip, the Rotator readout, and the IBP, Repeaters, Aircraft Nearby and Balloons lists.
 - **Analog Clock** — a classic clock face with date, sunrise, and sunset. Also available in the Classic layout via `CLASSIC_ANALOG_CLOCK=true`.
 - **Ambient Weather** — your own AmbientWeather.net station's live data (appears only when `VITE_AMBIENT_*` keys are configured).
 - **Rig Control** — current frequency and mode from your radio via Rig Bridge, with a band plan overlay on the frequency display and PTT status. Set your US license class in Settings → Station and the band plan bar hatches out the ranges outside your privileges (Technician/General/Amateur Extra, per the FCC Part 97 / ARRL band chart); leave it on Other for no restriction display.
 - **Frequencies** — your own named channel list: calling frequencies, repeaters, club nets, whatever you keep going back to. Each entry has a name, frequency, optional mode and notes, and a band chip; with rig control enabled, clicking a row tunes the radio (same click-to-tune path as spots). A "From rig" button grabs the current frequency and mode from a connected rig, and up/down buttons reorder the list. Synced, profiled, and backed up with the rest of your settings.
-- **Nets** — a recurring net schedule you define: name, day (or daily), start time in UTC, optional frequency/mode/duration/notes. The list sorts by next occurrence with a live countdown ("in 2h 14m"), highlights nets that are **ON NOW**, shows each start in your local time, and click-to-tunes when a frequency is set. All the occurrence math is done in UTC, so daylight-saving shifts never move your net.
+- **Nets** — two tabs. **My nets** is a recurring net schedule you define: name, day (or daily), start time in UTC, optional frequency/mode/duration/notes. The list sorts by next occurrence with a live countdown ("in 2h 14m"), highlights nets that are **ON NOW**, shows each start in your local time, and click-to-tunes when a frequency is set. All the occurrence math is done in UTC, so daylight-saving shifts never move your net. **Live** shows what is actually on the air right now according to [NetLogger](https://www.netlogger.org) — every net currently being logged, with frequency, mode, band, net control and check-in count, refreshed every minute through the server (one upstream request per minute for everyone). Expand a net to see its check-ins (callsign, name, city/state, grid — never street addresses) and click the frequency to tune the rig.
 - **On Air** — a big red ON AIR light driven by your rig's PTT. Point a webcam at it, or don't — it looks great either way.
 - **ID Timer** — 10-minute countdown that beeps and pops a reminder to identify; dismissing restarts it.
 - **Rotator** — compass rose, live bearing, and controls for a PSTRotator-compatible rotator (self-hosted only).
@@ -365,6 +367,7 @@ The full EmComm _layout_ is described in [The EmComm layout](#the-emcomm-layout)
 - **Repeaters** — the nearest repeaters to your DE location from the open [hearham.com](https://hearham.com) directory: frequency, offset, tone, mode, distance, and bearing, at a selectable radius. Set DE to wherever you're traveling and the list follows.
 - **Aircraft Nearby** — live aircraft within a selectable radius of your DE location (ADS-B via adsb.lol), nearest first: flight, aircraft type, operator, altitude (flight levels above 18,000 ft), speed, heading, distance, and bearing. The list half of the Air Traffic layout, where it appears by default alongside the aircraft map overlay.
 - **Space Launches** — the next twenty orbital launches worldwide (Launch Library 2): name, provider, status, pad and location, launch window and a live **T-0 countdown**, plus distance and bearing from DE. Click a row to set the DX target to the launch pad; the **MAP** button toggles the matching _Launch Sites_ map layer. The server fetches the schedule once every 30 minutes for everyone (LL2 is rate limited) and keeps serving the last good list, flagged _stale_, if the upstream is down.
+- **Balloons (HAB)** — amateur high-altitude and pico balloons heard in the last six hours, from [SondeHub Amateur](https://amateur.sondehub.org) (Horus, LoRa and APRS-gated trackers alike — APRS-reported picos are tagged). Each row: payload callsign, altitude with a climb/descend arrow, ground speed, tracker frequency, who received it, last-heard age, and distance/bearing from DE; sort by nearest, newest or highest. Click a balloon to set the DX target on it; the 🗺 button toggles the matching **Balloons** map layer (markers with 6-hour trails). The server fetches SondeHub once every two minutes for everyone and caps the list at 500 payloads.
 - **Keyboard Shortcuts** — the `?` help, dockable as a permanent panel if you like.
 
 ---
@@ -402,6 +405,7 @@ The funnel icon opens the DX Filter Manager. Filters combine with AND:
 - **Text** — search spot comments for keywords (TEST, SKCC, POTA…) with OR logic
 - **Watchlist / Exclude** — always-show and never-show callsign lists
 - **Contest / DXpeditions** — a contest filter and a one-click "show only DXpeditions" toggle cross-referenced against the DXpedition list
+- **IOTA** — "show only IOTA spots" keeps spots whose comment names an Islands On The Air reference (EU-005, NA-067, "na067"…). The same filter is one click away on the **IOTA** button in the panel header, and because the map draws from the same filtered list it doubles as an IOTA map toggle. Tagged spots get a cyan **EU-005** badge in the DX Cluster and activation panels (hover for the island group name, from the bundled RSGB IOTA list) and an "IOTA EU-005 · Great Britain" line in their map popup.
 
 All filter state persists in your browser.
 
@@ -725,7 +729,7 @@ DX-side Doppler is deliberately not shown — that belongs to the other operator
 
 _Settings → Alerts: pick what wakes you and how_
 
-**Settings → Alerts** plays a tone when new items appear in a feed. Feeds: POTA, SOTA, WWFF, WWBOTA, DX Cluster, Watchlist Hits, DXpeditions, Contests, Contest Starts, Satellite Passes, Band Openings, Lightning Proximity, Space Weather, Beacon Openings, Grid Change (Rover), and Alarm Clock — all off by default, each with its own tone (nine Web Audio presets — no sound files) and a master volume. (The Alarm Clock entry only picks the alarm's tone and notification; an armed alarm always rings.)
+**Settings → Alerts** plays a tone when new items appear in a feed. Feeds: POTA, SOTA, WWFF, WWBOTA, DX Cluster, Watchlist Hits, DXpeditions, Contests, Contest Starts, Satellite Passes, Band Openings, Lightning Proximity, Space Weather, Beacon Openings, Grid Change (Rover), HamAlert, and Alarm Clock — all off by default, each with its own tone (nine Web Audio presets — no sound files) and a master volume. (The Alarm Clock entry only picks the alarm's tone and notification; an armed alarm always rings.)
 
 Five event feeds go beyond "new item in a panel":
 
@@ -958,18 +962,18 @@ _Settings → Station: callsign, location, units, language, cluster source, prop
 
 _Settings → Integrations: basemap key, callbooks, rotator, N3FJP_
 
-| Tab                 | What's in it                                                                                                                                                                                                                                                                                                     |
-| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 📻 **Station**      | Callsign, grid/lat-lon (with "use my location"), timezone, units (distance/temperature/pressure), language, DX cluster source, callbook picker, propagation mode & TX power, performance mode, wake lock & display schedule, Active Users opt-out, legacy rig control, GPS (Rig Bridge: off / set once / follow) |
-| 🔌 **Integrations** | CARTO basemap key, QRZ.com and HamQTH callbook credentials, and local-only extras: Rotator, DX Weather popups, N3FJP bridge                                                                                                                                                                                      |
-| 🎨 **Display**      | Layout, theme (+ custom theme editor), monospace font, header size, clock order, What's New on startup, mutual-reception star, brightness slider & auto brightness (Rig Bridge light sensor)                                                                                                                     |
-| 🗺️ **Map Layers**   | Every overlay layer with enable + opacity, grouped by category; DE/DX markers, DX Target panel, and DX News ticker toggles                                                                                                                                                                                       |
-| 🛰️ **Satellites**   | Satellite selection, tracks/footprints, station altitude, minimum elevation, track duration; automation & alerts: max TLE age + Refresh TLEs, hams.at API key, Doppler retune step, rotator step / elevation travel / stop / pre-position                                                                        |
-| 👤 **Profiles**     | Save/load/rename/export/import named profiles; profile share codes and full backup/restore; weather source picker — Open-Meteo (default, keyless) or OpenWeatherMap with your own key; export current state                                                                                                      |
-| 🌐 **Community**    | GitHub, Facebook group, Reddit; core maintainers and the contributors wall; the privacy statement (no cookies, no tracking, anonymized stats)                                                                                                                                                                    |
-| 🔔 **Alerts**       | Per-feed audio alerts, tones, master volume, browser notifications                                                                                                                                                                                                                                               |
-| 📻 **Rig Bridge**   | Enable/connect, downloads for each OS, API token, click-to-tune and auto-mode, plugin overview, Cloud Relay                                                                                                                                                                                                      |
-| ❓ **Help**         | This manual, rendered in-app with a searchable contents sidebar; the ❓ icons throughout the app deep-link here                                                                                                                                                                                                  |
+| Tab                 | What's in it                                                                                                                                                                                                                                                                                                                                       |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 📻 **Station**      | Callsign, grid/lat-lon (with "use my location"), timezone, units (distance/temperature/pressure), language, DX cluster source, callbook picker, propagation mode & TX power, performance mode, wake lock & display schedule, Active Users opt-out, legacy rig control, GPS (Rig Bridge: off / set once / follow), bearings (true / magnetic north) |
+| 🔌 **Integrations** | CARTO basemap key, QRZ.com and HamQTH callbook credentials, and local-only extras: Rotator, DX Weather popups, N3FJP bridge                                                                                                                                                                                                                        |
+| 🎨 **Display**      | Layout, theme (+ custom theme editor), monospace font, header size, clock order, What's New on startup, mutual-reception star, brightness slider & auto brightness (Rig Bridge light sensor)                                                                                                                                                       |
+| 🗺️ **Map Layers**   | Every overlay layer with enable + opacity, grouped by category; DE/DX markers, DX Target panel, and DX News ticker toggles                                                                                                                                                                                                                         |
+| 🛰️ **Satellites**   | Satellite selection, tracks/footprints, station altitude, minimum elevation, track duration; automation & alerts: max TLE age + Refresh TLEs, hams.at API key, Doppler retune step, rotator step / elevation travel / stop / pre-position                                                                                                          |
+| 👤 **Profiles**     | Save/load/rename/export/import named profiles; profile share codes and full backup/restore; weather source picker — Open-Meteo (default, keyless) or OpenWeatherMap with your own key; export current state                                                                                                                                        |
+| 🌐 **Community**    | GitHub, Facebook group, Reddit; core maintainers and the contributors wall; the privacy statement (no cookies, no tracking, anonymized stats)                                                                                                                                                                                                      |
+| 🔔 **Alerts**       | Per-feed audio alerts, tones, master volume, browser notifications                                                                                                                                                                                                                                                                                 |
+| 📻 **Rig Bridge**   | Enable/connect, downloads for each OS, API token, click-to-tune and auto-mode, plugin overview, Cloud Relay                                                                                                                                                                                                                                        |
+| ❓ **Help**         | This manual, rendered in-app with a searchable contents sidebar; the ❓ icons throughout the app deep-link here                                                                                                                                                                                                                                    |
 
 Settings save to your browser; **Save Settings** applies them. Most `.env` variables mirror a Settings option — the browser value wins.
 
@@ -979,18 +983,22 @@ Settings save to your browser; **Save Settings** applies them. Most `.env` varia
 
 Both run the same code; the differences come down to hardware access and being a good neighbor on a shared server:
 
-| Capability                                                    | openhamclock.com (hosted)                               | Self-hosted                                  |
-| ------------------------------------------------------------- | ------------------------------------------------------- | -------------------------------------------- |
-| All panels, layers, propagation, logbook                      | ✅                                                      | ✅                                           |
-| DX cluster source                                             | OpenHamClock Cluster (locked)                           | Your choice, including custom telnet and UDP |
-| Rig control                                                   | ✅ via Rig Bridge + Cloud Relay                         | ✅ via Rig Bridge directly                   |
-| WSJT-X decodes                                                | ✅ via Rig Bridge / relay agent                         | ✅ direct UDP                                |
-| Rotator, N3FJP bridge, DX weather popups, Global Clouds layer | ❌ (local-only)                                         | ✅                                           |
-| Callbook credentials (QRZ/HamQTH)                             | Per-user, verified then stored **in your browser only** | Server-wide via Settings or `.env`           |
-| Settings sync across devices                                  | ❌ (use profile export)                                 | ✅ optional `SETTINGS_SYNC=true`             |
-| APRS-IS feed                                                  | Shared server connection                                | Your own connection, your own filter         |
+| Capability                                                    | openhamclock.com (hosted)                               | Self-hosted                                                                    |
+| ------------------------------------------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| All panels, layers, propagation, logbook                      | ✅                                                      | ✅                                                                             |
+| DX cluster source                                             | OpenHamClock Cluster (locked)                           | Your choice, including custom telnet and UDP                                   |
+| Rig control                                                   | ✅ via Rig Bridge + Cloud Relay                         | ✅ via Rig Bridge directly                                                     |
+| WSJT-X decodes                                                | ✅ via Rig Bridge / relay agent                         | ✅ direct UDP                                                                  |
+| Rotator, N3FJP bridge, DX weather popups, Global Clouds layer | ❌ (local-only)                                         | ✅                                                                             |
+| Callbook credentials (QRZ/HamQTH)                             | Per-user, verified then stored **in your browser only** | Server-wide via Settings or `.env`                                             |
+| Settings sync across devices                                  | ❌ (use profile export)                                 | ✅ optional `SETTINGS_SYNC=true`                                               |
+| APRS-IS feed                                                  | Shared server connection                                | Your own connection, your own filter                                           |
+| HamAlert feed                                                 | Per-user via Rig Bridge + Cloud Relay                   | Rig Bridge, or one shared server session via `HAMALERT_USER` / `HAMALERT_PASS` |
+| Message of the day banner                                     | Set by the site admins                                  | Your own: `MOTD` env or `POST /api/admin/motd`                                 |
 
 Local-install detection is automatic (localhost, LAN IPs, `.local`/`.lan` hostnames); a self-hosted server can force it with `SERVERLOCAL=true` — useful behind a reverse proxy with a public domain name.
+
+**Message of the day (self-hosters):** put a one-line notice in front of everyone using your instance — planned downtime, a club net reminder, a new feature. Set `MOTD="Text with https://links.example"` in `.env`, or change it live without a restart with `curl -X POST -H "Authorization: Bearer $API_WRITE_KEY" -H 'Content-Type: application/json' -d '{"text":"Server restart at 0200z"}' http://localhost:3000/api/admin/motd` (an empty `text` clears it; an admin message overrides the env one). Browsers show it as a dismissible bar across the top; bare URLs become links, and once a user dismisses a message it stays hidden in that browser until the text changes. Details in [API.md](API.md#message-of-the-day).
 
 ---
 

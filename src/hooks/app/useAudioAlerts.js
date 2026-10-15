@@ -55,6 +55,9 @@ function itemKey(feedId, item) {
     case 'opportunity':
       // One alert per station+band entering the top 5 (re-spots stay quiet).
       return `${item.call || ''}-${item.band || ''}`;
+    case 'hamalert':
+      // One alert per HamAlert line: call + frequency + minute.
+      return `${item.call || ''}-${item.freqKhz || item.freq || ''}-${item.time || ''}`;
     default:
       return JSON.stringify(item).substring(0, 80);
   }
@@ -157,5 +160,6 @@ export default function useAudioAlerts(feeds) {
     feeds.swpc,
     feeds['beacon-opening'],
     feeds.opportunity,
+    feeds.hamalert,
   ]);
 }

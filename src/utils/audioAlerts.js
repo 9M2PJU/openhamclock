@@ -54,6 +54,7 @@ export const ALERT_FEEDS = {
   'grid-change': { label: 'Grid Change (Rover)', defaultTone: 'two-tone', eventful: true },
   // Opportunity feed (#P8): a new top-5 entry that is at least a new DXCC.
   opportunity: { label: 'Opportunities (new DXCC)', defaultTone: 'two-tone', eventful: true },
+  hamalert: { label: 'HamAlert', defaultTone: 'two-tone', eventful: true },
 };
 
 const LS_KEY = 'ohc_audio_alerts';

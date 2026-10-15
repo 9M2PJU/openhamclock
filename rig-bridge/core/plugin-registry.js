@@ -84,6 +84,7 @@ class PluginRegistry {
       'gpio',
       'brightness',
       'mqtt-publish',
+      'hamalert',
     ]) {
       try {
         const p = require(`../plugins/${file}`);

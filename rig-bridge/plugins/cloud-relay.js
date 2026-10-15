@@ -71,6 +71,7 @@ const descriptor = {
     let pendingDecodes = []; // Batched decodes to push
     let pendingAprs = []; // Batched APRS packets to push
     let pendingMeshCom = []; // Batched MeshCom packets to push
+    let pendingHamAlerts = []; // Batched HamAlert spots to push
 
     function makeRequest(urlStr, method, body, callback, timeoutMs) {
       let parsed;
@@ -162,6 +163,7 @@ const descriptor = {
       const hasDecodes = pendingDecodes.length > 0;
       const hasAprs = pendingAprs.length > 0;
       const hasMeshCom = pendingMeshCom.length > 0;
+      const hasHamAlerts = pendingHamAlerts.length > 0;
       const stateChanged =
         currentState.freq !== lastState.freq ||
         currentState.mode !== lastState.mode ||
@@ -169,7 +171,7 @@ const descriptor = {
         currentState.connected !== lastState.connected;
 
       // Only push if state changed or there's data to send
-      if (!stateChanged && !hasDecodes && !hasAprs && !hasMeshCom) return;
+      if (!stateChanged && !hasDecodes && !hasAprs && !hasMeshCom && !hasHamAlerts) return;
       lastState = { ...currentState };
 
       // Include batched data in the push
@@ -184,6 +186,9 @@ const descriptor = {
       if (hasMeshCom) {
         payload.meshcomPackets = pendingMeshCom.splice(0, 50);
       }
+      if (hasHamAlerts) {
+        payload.hamAlerts = pendingHamAlerts.splice(0, 50);
+      }
 
       makeRequest(`${serverUrl}/api/rig-bridge/relay/state`, 'POST', payload, (err, status, data) => {
         if (err) {
@@ -194,6 +199,7 @@ const descriptor = {
           if (payload.decodes) pendingDecodes.unshift(...payload.decodes);
           if (payload.aprsPackets) pendingAprs.unshift(...payload.aprsPackets);
           if (payload.meshcomPackets) pendingMeshCom.unshift(...payload.meshcomPackets);
+          if (payload.hamAlerts) pendingHamAlerts.unshift(...payload.hamAlerts);
           return;
         }
         if (status === 200) {
@@ -389,6 +395,13 @@ const descriptor = {
             if (pendingMeshCom.length > 200) pendingMeshCom.splice(0, pendingMeshCom.length - 200);
           });
           subscribed.push('MeshCom');
+        }
+        if (cfg.relayHamAlert !== false) {
+          pluginBus.on('hamalert', (alert) => {
+            pendingHamAlerts.push(alert);
+            if (pendingHamAlerts.length > 200) pendingHamAlerts.splice(0, pendingHamAlerts.length - 200);
+          });
+          subscribed.push('HamAlert');
         }
         console.log(`[CloudRelay] Subscribed to plugin bus (${subscribed.join(', ')})`);
       }

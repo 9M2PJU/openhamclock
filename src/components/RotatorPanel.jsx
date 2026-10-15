@@ -1,5 +1,6 @@
 import React, { useRef, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
+import { displayBearing, useBearingMode } from '../utils/bearing.js';
 import useRotator from '../hooks/useRotator';
 import { useSatAutomation, setRotatorMode, setLongPath, setAutomationSat } from '../utils/satAutomationStore.js';
 
@@ -23,7 +24,12 @@ export default function RotatorPanel({
   controlsEnabled = true,
   // Auto-track: names of satellites with orbital elements, for the SAT target picker
   satOptions = [],
+  // Station location — lets the digital readout show a magnetic bearing
+  // (Settings → Station → Bearings) via the WMM2025 declination at DE.
+  deLat = null,
+  deLon = null,
 }) {
+  const bearingMode = useBearingMode();
   const {
     azimuth,
     lastGoodAzimuth,
@@ -60,9 +66,13 @@ export default function RotatorPanel({
   const bearingText = useMemo(() => {
     if (status !== 'connected') return '---';
     if (azimuth == null || Number.isNaN(azimuth)) return '--';
-    const a = ((Math.round(azimuth) % 360) + 360) % 360;
+    // Rotators report true azimuth; in magnetic mode show it corrected by
+    // the local declination (suffix M on the degree sign below).
+    const shown = displayBearing(azimuth, deLat, deLon, bearingMode);
+    const a = shown ? shown.deg : ((Math.round(azimuth) % 360) + 360) % 360;
     return String(a).padStart(3, '0');
-  }, [azimuth, status]);
+  }, [azimuth, status, deLat, deLon, bearingMode]);
+  const magneticReadout = bearingMode === 'magnetic' && Number.isFinite(deLat) && Number.isFinite(deLon);
 
   const [showCompass, setShowCompass] = React.useState(() => {
     try {
@@ -304,8 +314,9 @@ export default function RotatorPanel({
                 position: 'relative',
                 top: -4, // optional: nudges ° up
               }}
+              title={magneticReadout ? 'Magnetic bearing (WMM2025)' : 'True bearing'}
             >
-              °
+              °{magneticReadout ? 'M' : ''}
             </span>
           </div>
         </div>

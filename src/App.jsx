@@ -80,6 +80,7 @@ import useIdleClock from './hooks/app/useIdleClock';
 import useAutoSpaceWxLayers from './hooks/app/useAutoSpaceWxLayers';
 import WhatsNew from './components/WhatsNew.jsx';
 import StarTrekDayModal from './components/StarTrekDayModal.jsx';
+import MotdBanner from './components/MotdBanner.jsx';
 import CommandPalette from './components/CommandPalette.jsx';
 import { LogQsoPopupController } from './components/LogQsoPopup.jsx';
 import { initCtyLookup } from './utils/ctyLookup.js';
@@ -1234,6 +1235,8 @@ const App = () => {
       />
       <KioskUnlockDialog open={kiosk.unlockPrompt} onCancel={kiosk.cancelUnlock} onSubmit={kiosk.tryUnlock} />
       <WhatsNew showWhatsNew={config.showWhatsNew} />
+      {/* Server admin's message of the day — fixed top bar, dismissible per message id */}
+      <MotdBanner />
       {/* Star Trek Day 2026 (Sept 7-9) — one-shot event notice, ?stday previews */}
       <StarTrekDayModal />
       {/* Scene rotation indicator — unobtrusive dot while rotating, with the

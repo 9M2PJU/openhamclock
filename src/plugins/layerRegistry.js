@@ -44,6 +44,7 @@ import * as TropicalCyclonesPlugin from './layers/useTropicalCyclones.js';
 import * as FireWeatherAlertsPlugin from './layers/useFireWeatherAlerts.js';
 import * as BuoysPlugin from './layers/useBuoys.js';
 import * as BoundariesPlugin from './layers/useBoundaries.js';
+import * as BalloonsPlugin from './layers/useBalloons.js';
 
 // Auto-discover local/custom plugins (gitignored — survive updates)
 const localPluginModules = import.meta.glob('./local/*.js', { eager: true });
@@ -101,6 +102,7 @@ const layerPlugins = [
   FireWeatherAlertsPlugin,
   BuoysPlugin,
   BoundariesPlugin,
+  BalloonsPlugin,
   ...localPlugins,
 ];
 

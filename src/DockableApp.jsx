@@ -79,6 +79,8 @@ import {
   MarinePanel,
   WindyPanel,
   WefaxPanel,
+  HamAlertPanel,
+  BalloonsPanel,
 } from './components';
 import MeshtasticPanel from './components/MeshtasticPanel.jsx';
 import LogbookPanel from './components/LogbookPanel.jsx';
@@ -119,6 +121,9 @@ import { useSatAutomation, setSatAutomationLive, setRotatorMode } from './utils/
 import { useGps } from './hooks/useGps.js';
 import { useNOAAScales } from './hooks/useNOAAScales.js';
 import { useDst } from './hooks/useDst.js';
+import { useHamAlert } from './hooks/useHamAlert.js';
+import useAudioAlerts from './hooks/app/useAudioAlerts';
+import { formatBearing, useBearingMode } from './utils/bearing.js';
 import { useCallsignPopup } from './components/CallsignPopupManager.jsx';
 
 // Icons
@@ -430,6 +435,17 @@ export const DockableApp = ({
   // stamped with the live GPS grid (MY_GRIDSQUARE) rather than the saved one.
   const { fix: gpsFix } = useGps();
   const liveGrid = config.gpsFollow === 'follow' && gpsFix?.grid6 ? gpsFix.grid6 : null;
+  // HamAlert feed (Rig Bridge plugin stream and/or self-hosted server feed)
+  // plus its audio/notification alert feed. Lives here rather than App.jsx
+  // so the panel works with props the factory already has.
+  const rigBridgeUrl =
+    config.rigControl?.enabled && config.rigControl?.host
+      ? `${config.rigControl.host}:${config.rigControl.port || 5555}`
+      : null;
+  const hamAlert = useHamAlert({ rigBridgeUrl });
+  useAudioAlerts({ hamalert: hamAlert.alerts });
+  // True vs magnetic bearings (Settings → Station) for the DX panel readouts
+  const bearingMode = useBearingMode();
 
   // Unified Spot Click Handler (Tune + Set DX)
   const handleSpotClick = useCallback(
@@ -808,11 +824,21 @@ export const DockableApp = ({
             </div>
             <div style={{ fontSize: '13px', marginBottom: '4px' }}>
               <span style={{ color: 'var(--text-secondary)' }}>{t?.('app.dxLocation.sp') || 'SP:'} </span>
-              <span style={{ color: 'var(--accent-cyan)', fontWeight: '700' }}>{spBearing}°</span>
+              <span
+                style={{ color: 'var(--accent-cyan)', fontWeight: '700' }}
+                title={bearingMode === 'magnetic' ? 'Magnetic bearing (WMM2025)' : 'True bearing'}
+              >
+                {formatBearing(spBearing, config.location.lat, config.location.lon, bearingMode)}
+              </span>
             </div>
             <div style={{ fontSize: '13px', marginBottom: '8px' }}>
               <span style={{ color: 'var(--text-secondary)' }}>{t?.('app.dxLocation.lp') || 'LP:'} </span>
-              <span style={{ color: 'var(--accent-purple)', fontWeight: '700' }}>{lpBearing}°</span>
+              <span
+                style={{ color: 'var(--accent-purple)', fontWeight: '700' }}
+                title={bearingMode === 'magnetic' ? 'Magnetic bearing (WMM2025)' : 'True bearing'}
+              >
+                {formatBearing(lpBearing, config.location.lat, config.location.lon, bearingMode)}
+              </span>
             </div>
             <div style={{ fontSize: '13px', paddingTop: '6px', borderTop: '1px solid var(--border-color)' }}>
               <span style={{ color: 'var(--accent-cyan)', fontWeight: '700' }}>
@@ -1423,6 +1449,8 @@ export const DockableApp = ({
               onStop={stopAnyRotator}
               controlsEnabled={!rotatorView.isStale}
               satOptions={trackedSatNames}
+              deLat={config.location?.lat ?? null}
+              deLon={config.location?.lon ?? null}
             />
           );
 
@@ -1668,6 +1696,33 @@ export const DockableApp = ({
           content = <WefaxPanel onTune={handleSpotClick} rigEnabled={enabled} />;
           break;
 
+        case 'hamalert':
+          content = (
+            <HamAlertPanel
+              alerts={hamAlert.alerts}
+              onClear={hamAlert.clear}
+              onSpotClick={handleSpotClick}
+              onHoverSpot={setHoveredSpot}
+              configured={hamAlert.configured}
+              serverEnabled={hamAlert.serverEnabled}
+              bridgeActive={hamAlert.bridgeActive}
+              error={hamAlert.error}
+              isLocalInstall={isLocalInstall}
+            />
+          );
+          break;
+
+        case 'balloons':
+          content = (
+            <BalloonsPanel
+              deLat={config.location?.lat ?? null}
+              deLon={config.location?.lon ?? null}
+              units={config.allUnits?.dist ?? 'imperial'}
+              onSpotClick={handleSpotClick}
+            />
+          );
+          break;
+
         default: {
           // Auto-discovered panel plugins (src/plugins/local/panels/*.jsx).
           // v1 props contract: { config, t } only — see docs/PLUGINS.md.
@@ -1734,6 +1789,9 @@ export const DockableApp = ({
       noaaScales,
       dst,
       use12Hour,
+      hamAlert,
+      isLocalInstall,
+      bearingMode,
       pskFilters,
       wsjtx,
       handleDXChange,

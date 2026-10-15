@@ -84,3 +84,5 @@ export { default as MarinePanel } from './MarinePanel.jsx';
 export { default as WindyPanel } from './WindyPanel.jsx';
 export { default as WefaxPanel } from './WefaxPanel.jsx';
 export { default as MapCursorReadout } from './MapCursorReadout.jsx';
+export { default as HamAlertPanel } from './HamAlertPanel.jsx';
+export { default as BalloonsPanel } from './BalloonsPanel.jsx';

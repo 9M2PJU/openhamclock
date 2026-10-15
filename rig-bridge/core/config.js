@@ -278,6 +278,14 @@ const DEFAULT_CONFIG = {
     calBrightPct: 100,
     backlightPath: '', // '' = auto-detect /sys/class/backlight/*
     powerMethod: 'auto', // auto | backlight | vcgencmd | xset | none
+  },
+  // HamAlert spot feed — persistent telnet session to hamalert.org:7300
+  hamalert: {
+    enabled: false,
+    username: '', // HamAlert username
+    password: '', // HamAlert password
+    host: 'hamalert.org',
+    port: 7300,
     verbose: false,
   },
   // TLS/HTTPS — enables HTTPS to avoid mixed-content errors when OHC is served over HTTPS
@@ -324,6 +332,7 @@ function loadConfig() {
           ...(raw.winlink || {}),
           pat: { ...DEFAULT_CONFIG.winlink.pat, ...((raw.winlink || {}).pat || {}) },
         },
+        hamalert: { ...DEFAULT_CONFIG.hamalert, ...(raw.hamalert || {}) },
         tls: { ...DEFAULT_CONFIG.tls, ...(raw.tls || {}) },
         gps: { ...DEFAULT_CONFIG.gps, ...(raw.gps || {}) },
         envSensors: {
@@ -364,6 +373,7 @@ function loadConfig() {
           'rotator',
           'cloudRelay',
           'winlink',
+          'hamalert',
           'tls',
           'gps',
           'envSensors',

@@ -1128,6 +1128,10 @@ function buildSetupHtml(version, firstRunToken = null) {
         { id: 'calBrightPct', label: 'Bright calibration: brightness %', type: 'number', default: 100 },
         { id: 'backlightPath', label: 'Backlight sysfs path (blank = auto)', type: 'text', default: '' },
         { id: 'powerMethod', label: 'Display power method', type: 'select', options: ['auto', 'backlight', 'vcgencmd', 'xset', 'none'], default: 'auto' },
+      ]},
+      { key: 'hamalert', name: 'HamAlert', maturity: 'alpha', desc: 'Your HamAlert triggers as a live spot feed (telnet to hamalert.org:7300) — shown in the HamAlert panel', fields: [
+        { id: 'username', label: 'HamAlert Username', type: 'text', default: '' },
+        { id: 'password', label: 'HamAlert Password', type: 'text', default: '' },
         { id: 'verbose', label: 'Verbose logging', type: 'checkbox', default: false },
       ]},
     ];
@@ -2360,6 +2364,7 @@ function createServer(registry, version) {
       'beaconMonitor',
       ...HW_KEYS,
       'mqtt',
+      'hamalert',
     ]) {
       if (newConfig[key]) {
         const incoming = newConfig[key];

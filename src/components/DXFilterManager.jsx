@@ -91,6 +91,7 @@ export const DXFilterManager = ({ filters, onFilterChange, isOpen, onClose, onCl
     if (dxWatchlist.mode !== 'off' && dxWatchlist.text.trim()) count += 1;
     if (filters?.commentText?.length) count += filters.commentText.length;
     if (filters?.dxpeditionsOnly) count += 1;
+    if (filters?.iotaOnly) count += 1;
     if (filters?.contest) count += 1;
 
     /* excludes */
@@ -419,6 +420,29 @@ export const DXFilterManager = ({ filters, onFilterChange, isOpen, onClose, onCl
         </label>
         <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px', marginLeft: '24px' }}>
           Keeps spots whose callsign matches an active or upcoming DXpedition (NG3K list).
+        </div>
+      </div>
+      <div style={{ marginTop: '12px' }}>
+        <label
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            color: 'var(--text-secondary)',
+            fontSize: '12px',
+            cursor: 'pointer',
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={filters?.iotaOnly || false}
+            onChange={(e) => onFilterChange({ ...filters, iotaOnly: e.target.checked || undefined })}
+          />
+          Show only IOTA spots
+        </label>
+        <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px', marginLeft: '24px' }}>
+          Keeps spots whose comment names an Islands On The Air reference (EU-005, NA-067…). Applies to the panel and
+          the map; the IOTA button in the panel header toggles the same filter.
         </div>
       </div>
     </div>

@@ -889,6 +889,41 @@ describe('dxClusterFilters', () => {
       expect(collapseDuplicateSpots(spots)).toHaveLength(2);
     });
   });
+
+  describe('IOTA-only filter', () => {
+    it('keeps only spots whose comment carries a real IOTA reference', () => {
+      const filters = { iotaOnly: true };
+      expect(
+        applyDXFilters({ dxCall: 'GM0ABC', spotter: 'K1AA', freq: '14.200', comment: 'IOTA EU-005' }, filters),
+      ).toBe(true);
+      expect(applyDXFilters({ dxCall: 'GM0ABC', spotter: 'K1AA', freq: '14.200', comment: 'eu005 tnx' }, filters)).toBe(
+        true,
+      );
+      expect(applyDXFilters({ dxCall: 'W1AW', spotter: 'K1AA', freq: '14.200', comment: 'FT8 -10 dB' }, filters)).toBe(
+        false,
+      );
+      expect(applyDXFilters({ dxCall: 'W1AW', spotter: 'K1AA', freq: '14.200', comment: 'AS-999 fake' }, filters)).toBe(
+        false,
+      );
+      expect(applyDXFilters({ dxCall: 'W1AW', spotter: 'K1AA', freq: '14.200' }, filters)).toBe(false);
+    });
+
+    it('is inert when off', () => {
+      expect(
+        applyDXFilters({ dxCall: 'W1AW', spotter: 'K1AA', freq: '14.200', comment: '' }, { iotaOnly: false }),
+      ).toBe(true);
+    });
+
+    it('combines with the other filters (AND)', () => {
+      const filters = { iotaOnly: true, bands: ['40m'] };
+      expect(applyDXFilters({ dxCall: 'GM0ABC', spotter: 'K1AA', freq: '14.200', comment: 'EU-005' }, filters)).toBe(
+        false,
+      );
+      expect(applyDXFilters({ dxCall: 'GM0ABC', spotter: 'K1AA', freq: '7.150', comment: 'EU-005' }, filters)).toBe(
+        true,
+      );
+    });
+  });
 });
 
 describe('applyDXFilters — HamClock watch list context', () => {

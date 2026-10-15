@@ -996,6 +996,15 @@ export const LiFax = glyph(
  * deliberately absent: plugins keep their emoji string (documented
  * contract) via the PanelIcon fallback below.
  */
+// Balloon on a string — HAB / pico-balloon panel and layer
+export const LiBalloon = glyph(
+  <>
+    <path d="M12 3.5a5.5 6.5 0 0 1 5.5 6.5c0 3.6-3 6.5-5.5 7.5-2.5-1-5.5-3.9-5.5-7.5A5.5 6.5 0 0 1 12 3.5z" />
+    <path d="M11 17.5h2l-.6 1.3h-.8z" />
+    <path d="M12 18.8c-.8 1 .8 1.6 0 2.7" />
+  </>,
+);
+
 export const PANEL_ICONS = {
   'world-map': LiMapFold,
   'map-list-view': LiEye,
@@ -1079,6 +1088,8 @@ export const PANEL_ICONS = {
   marine: LiBuoy,
   windy: LiWind,
   wefax: LiFax,
+  hamalert: LiBell,
+  balloons: LiBalloon,
 };
 
 /**

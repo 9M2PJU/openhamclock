@@ -135,6 +135,8 @@ export const PANEL_HELP = {
   marine: 'weather-panels',
   windy: 'weather-panels',
   wefax: 'weather-panels',
+  hamalert: 'spots-activity',
+  balloons: 'utility',
 };
 
 /**
@@ -164,6 +166,7 @@ export const LAYER_HELP = {
   'fire-weather-alerts': 'weather-panels',
   'ndbc-buoys': 'weather-panels',
   boundaries: 'map-layers',
+  balloons: 'utility',
 };
 
 /** Settings tab id → topic key */

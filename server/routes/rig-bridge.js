@@ -365,6 +365,23 @@ module.exports = function (app, ctx) {
         }
       }
 
+      // HamAlert spots from the rig-bridge hamalert plugin — fan out to this
+      // session's SSE clients with the same envelope the local /stream uses,
+      // so useHamAlert handles both paths identically. Bounded per push.
+      if (Array.isArray(req.body.hamAlerts) && req.body.hamAlerts.length > 0 && sseClients && sseClients.size > 0) {
+        for (const alert of req.body.hamAlerts.slice(0, 50)) {
+          if (!alert || typeof alert !== 'object' || typeof alert.call !== 'string') continue;
+          const sseMsg = `data: ${JSON.stringify({ type: 'plugin', event: 'hamalert', source: 'hamalert', data: alert })}\n\n`;
+          for (const client of sseClients) {
+            try {
+              client.write(sseMsg);
+            } catch (e) {
+              sseClients.delete(client);
+            }
+          }
+        }
+      }
+
       res.json({ ok: true });
     } catch (err) {
       logWarn(`[RigBridge] relay/state push error: ${err.message}`);

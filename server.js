@@ -325,6 +325,10 @@ require('./server/routes/tropical')(app, ctx); // NHC + JTWC tropical cyclones (
 require('./server/routes/fire-weather')(app, ctx); // NWS Red Flag / Fire Weather Watch alerts
 require('./server/routes/ndbc')(app, ctx); // NDBC buoy observations (Marine panel + layer)
 require('./server/routes/wefax')(app, ctx); // NWS radiofax chart catalogue + GIF proxy (WEFAX panel)
+require('./server/routes/motd')(app, ctx); // Message of the day (env MOTD or /api/admin/motd)
+require('./server/routes/netlogger')(app, ctx); // NetLogger live nets proxy (60 s cache)
+require('./server/routes/hamalert')(app, ctx); // HamAlert server feed (dormant without HAMALERT_USER/PASS)
+require('./server/routes/balloons')(app, ctx); // SondeHub Amateur balloon telemetry proxy (2 min cache)
 
 // Subsystem health background refresher (read by /api/health).
 const health = require('./server/health');

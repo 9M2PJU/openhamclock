@@ -94,6 +94,14 @@ export function formatAlertBody(feedId, item) {
       }
       break;
     }
+    case 'hamalert': {
+      // HamAlert alert: { call, freq (MHz string), mode, source, comment }
+      const call = item.call || '';
+      const detail = [item.freq, item.mode, item.source ? `(${item.source})` : ''].filter(Boolean).join(' ');
+      if (call) parts.push(detail ? `${call} ${detail}` : call);
+      if (typeof item.comment === 'string' && item.comment.trim()) parts.push(item.comment.trim());
+      break;
+    }
     case 'contest-start': {
       // Contest reminder: { name, start (ISO) } — minutes computed at display time
       const name = item.name || '';
