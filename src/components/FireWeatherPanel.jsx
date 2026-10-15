@@ -30,7 +30,8 @@ export const FireWeatherPanel = ({ deLocation = null, units = 'metric', onSetDX 
   const [expanded, setExpanded] = useState(null);
   const [radiusKm, setRadiusKm] = useState(() => {
     try {
-      const v = Number(localStorage.getItem(RADIUS_KEY));
+      const raw = localStorage.getItem(RADIUS_KEY);
+      const v = raw == null ? NaN : Number(raw);
       return RADIUS_OPTIONS_KM.includes(v) ? v : 1000;
     } catch {
       return 1000;
