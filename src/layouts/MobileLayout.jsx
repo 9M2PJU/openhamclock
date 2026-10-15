@@ -629,6 +629,7 @@ export default function MobileLayout(props) {
         allUnits={config.allUnits}
         mouseZoom={config.mouseZoom}
         onSpotClick={tuneTo}
+        compactControls
       />
     </div>
   );
