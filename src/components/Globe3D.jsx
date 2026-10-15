@@ -21,7 +21,7 @@ import { getBandColor, getBandFromFreq } from '../utils/callsign.js';
 import { getBandColorForBand, getEffectiveBandColors } from '../utils/bandColors.js';
 import { getSunPosition, getMoonPosition, getMoonAzEl, densifyGeoJson } from '../utils/geo.js';
 import { displayNow, subscribeDisplayTime } from '../utils/displayTime.js';
-import { lzwDecode } from '../plugins/layers/useLightning.js';
+import { subscribeStrikes } from '../utils/lightningFeed.js';
 import { MAP_STYLES } from '../utils/config.js';
 import { MAP_FOCUS_EVENT, MAP_FOCUS_PULSE_MS } from '../utils/mapFocus.js';
 import { buildGlobeTexture, buildGlobeDetailPatch, chooseGlobeTileZoom } from '../utils/globeTexture.js';
@@ -2091,21 +2091,14 @@ export default function Globe3D({
     };
   }, [wxradarOverlayOn]);
 
-  // Lightning: own Blitzortung socket (the Leaflet layer's socket never runs
-  // in globe mode). Strikes are buffered and flushed to state every 10 s —
-  // a deliberate cadence compromise between liveness and the globe's
-  // render-on-change design (each flush repaints the whole overlay canvas).
+  // Lightning: the shared Blitzortung feed (utils/lightningFeed.js — the
+  // Leaflet layer hook never mounts in globe mode). Strikes are buffered and
+  // flushed to state every 10 s — a deliberate cadence compromise between
+  // liveness and the globe's render-on-change design (each flush repaints
+  // the whole overlay canvas).
   useEffect(() => {
     if (!lightningOverlayOn) return undefined;
     let alive = true;
-    let ws = null;
-    let serverIdx = 0;
-    const servers = [
-      'wss://ws8.blitzortung.org',
-      'wss://ws7.blitzortung.org',
-      'wss://ws2.blitzortung.org',
-      'wss://ws1.blitzortung.org',
-    ];
     const buffer = [];
     const flush = setInterval(() => {
       if (!alive || !buffer.length) return;
@@ -2115,44 +2108,14 @@ export default function Globe3D({
       buffer.push(...kept);
       setOverlayLightning([...kept]);
     }, 10_000);
-    const connect = () => {
-      if (!alive) return;
-      try {
-        ws = new WebSocket(servers[serverIdx % servers.length]);
-        ws.onopen = () => ws.send(JSON.stringify({ a: 111 }));
-        ws.onmessage = (event) => {
-          try {
-            const data = JSON.parse(lzwDecode(event.data));
-            if (data.time && data.lat != null && data.lon != null) {
-              buffer.push({
-                lat: parseFloat(data.lat),
-                lon: parseFloat(data.lon),
-                timestamp: parseInt(data.time / 1000000, 10),
-              });
-            }
-          } catch {}
-        };
-        ws.onerror = () => {
-          serverIdx++;
-          try {
-            ws.close();
-          } catch {}
-        };
-        ws.onclose = () => {
-          if (alive) setTimeout(connect, 5000);
-        };
-      } catch {
-        serverIdx++;
-        if (alive) setTimeout(connect, 5000);
-      }
-    };
-    connect();
+    const unsubscribe = subscribeStrikes((batch) => {
+      for (const s of batch) buffer.push({ lat: s.lat, lon: s.lon, timestamp: s.timestamp });
+      if (buffer.length > 2000) buffer.splice(0, buffer.length - 2000);
+    });
     return () => {
       alive = false;
       clearInterval(flush);
-      try {
-        ws?.close();
-      } catch {}
+      unsubscribe();
       setOverlayLightning(null);
     };
   }, [lightningOverlayOn]);
