@@ -1081,7 +1081,12 @@ export default function EmcommLayout(props) {
   }, [config.callsign, config.location, incidentJoined, incident.events]);
 
   const clearEventLog = useCallback(() => {
-    if (!window.confirm('Clear the entire EmComm event log? This cannot be undone.')) return;
+    if (
+      !window.confirm(
+        'Clear the entire EmComm event log? This cannot be undone. Station message numbers keep counting — reset them under ICS Forms → 309.',
+      )
+    )
+      return;
     clearEvents();
     // Two earlier behaviours were both wrong. Leaving the diff snapshots
     // alone meant nothing could log again until a brand-new station appeared

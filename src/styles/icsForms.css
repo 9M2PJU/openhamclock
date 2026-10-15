@@ -26,6 +26,9 @@
   background: #fff;
   border: 1.5pt solid #000;
   min-width: 640px;
+  /* The border must sit inside width: 100%, or it overflows the page box and
+     Firefox / WebKit clip the right-hand edge of the form */
+  box-sizing: border-box;
 }
 .ics-form * {
   color: #000;

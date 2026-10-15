@@ -141,28 +141,61 @@ export function messageNumbers(evts) {
   return out;
 }
 
-function nextMsgNo() {
-  if (msgSeq == null) {
-    let stored = NaN;
-    const ls = safeStorage();
-    try {
-      stored = Number(ls?.getItem(MSG_SEQ_KEY));
-    } catch {
-      /* unreadable — derive below */
-    }
-    // Seed from the log so legacy (unnumbered) events keep their derived numbers
-    let derivedMax = 0;
-    for (const n of messageNumbers(events).values()) derivedMax = Math.max(derivedMax, n);
-    msgSeq = Math.max(Number.isFinite(stored) ? stored : 0, derivedMax);
-  }
-  msgSeq += 1;
-  const ls = safeStorage();
+/**
+ * Load the message-number sequence once per session. The stored value wins
+ * whenever there is one — including 0 right after an explicit reset — so a
+ * reset survives a reload. Only when nothing has ever been stored (logs from
+ * before numbering existed) is the sequence seeded from the log, so legacy
+ * events keep their derived numbers and new ones continue after them.
+ */
+function ensureMsgSeq() {
+  if (msgSeq != null) return msgSeq;
+  let raw = null;
   try {
-    ls?.setItem(MSG_SEQ_KEY, String(msgSeq));
+    raw = safeStorage()?.getItem(MSG_SEQ_KEY) ?? null;
+  } catch {
+    /* unreadable — derive below */
+  }
+  const stored = raw == null || raw === '' ? NaN : Number(raw);
+  if (Number.isInteger(stored) && stored >= 0) {
+    msgSeq = stored;
+  } else {
+    let derivedMax = 0;
+    for (const n of messageNumbers(load()).values()) derivedMax = Math.max(derivedMax, n);
+    msgSeq = derivedMax;
+  }
+  return msgSeq;
+}
+
+function storeMsgSeq() {
+  try {
+    safeStorage()?.setItem(MSG_SEQ_KEY, String(msgSeq));
   } catch {
     /* number still unique for this session */
   }
+}
+
+function nextMsgNo() {
+  ensureMsgSeq();
+  msgSeq += 1;
+  storeMsgSeq();
   return msgSeq;
+}
+
+/** The number the next message-type event will get (does not consume it). */
+export function peekNextMsgNo() {
+  return ensureMsgSeq() + 1;
+}
+
+/**
+ * Restart station message numbering at 1. Deliberately separate from
+ * clearEvents(): clearing the log between operations keeps the numbers
+ * running, and only this explicit action (the UI confirms first) restarts them.
+ */
+export function resetMessageNumbers() {
+  msgSeq = 0;
+  storeMsgSeq();
+  notify();
 }
 
 /** Return a copy of all events, oldest first. */
@@ -213,15 +246,12 @@ export function recordEvent(type, data = {}) {
 /** Clear the entire log (UI calls this after confirmation). */
 export function clearEvents() {
   load();
+  // Message numbers keep running across a clear: settle the sequence (seeding
+  // it from the log first if it was never stored) before the events go.
+  ensureMsgSeq();
+  storeMsgSeq();
   events = [];
   dedupeIndex = new Set();
-  // A cleared log starts a new operation — message numbers restart at 1
-  msgSeq = 0;
-  try {
-    safeStorage()?.setItem(MSG_SEQ_KEY, '0');
-  } catch {
-    /* ignore */
-  }
   persist();
   notify();
 }
