@@ -29,6 +29,119 @@ const ANNOUNCEMENT = {
 
 const CHANGELOG = [
   {
+    version: '26.11.0',
+    date: '2026-11-03',
+    heading:
+      'The parity release. We went through the original HamClock 4.x manual and its 4.25–4.32 release notes line by line, built every pane, planning tool, hardware hook and control command it had that we did not, and then added the things nobody has: an opportunity feed that ranks what to chase right now, measured beacon SNR through a KiwiSDR, a 27-day outlook on the contest calendar, a station benchmark, spoken alerts, and Home Assistant integration. Twenty-two new panels, seven new map layers, seven Rig Bridge plugins, a write API with a phone remote — and a time scrubber for the whole dashboard.',
+    features: [
+      {
+        icon: '⏱️',
+        title: 'NEW: Time Shift',
+        desc: 'Drag the whole dashboard up to ±30 days in either direction. The terminator, gray line, sun and moon, satellite positions, tracks and footprints, the DE/DX rise-set tables and the VOACAP now-column all follow; live spots do not. A floating scrubber on the map (Map Layers → Time Shift), a red NOT REAL TIME badge in the header that snaps you back, and keys [ ] for an hour, { } for a day, 0 for now. The HamClock feature people asked for most.',
+      },
+      {
+        icon: '🎯',
+        title: 'NEW: Opportunities',
+        desc: 'A ranked list of what is worth working right now: every cluster and activation spot from the last 15 minutes scored by what it does for your awards (NEW DXCC, NEW BAND, NEW ZONE, NEW GRID, NEW STATE from your native logbook), how many people are spotting it, and the ITU-R P.533 reliability from your QTH to that station this hour. Click a row to tune and set DX, 📓 to log it. Optional alert when a new DXCC enters the top five.',
+      },
+      {
+        icon: '📡',
+        title: 'NEW: Measured Beacon SNR (KiwiSDR monitor)',
+        desc: 'A Rig Bridge plugin follows the NCDXF/IBP schedule on a KiwiSDR you choose, retunes every ten seconds, reads the S-meter and logs real SNR for all 18 beacons on 20–10 m. The IBP panel gains a MEASURED view with a 24-hour heat strip per beacon and a measured-vs-P.533 column; Prediction Check gets a third, honest bar. Beacon Openings is a new alert feed. Pick the nearest public receiver from Settings → Rig Bridge.',
+      },
+      {
+        icon: '📅',
+        title: 'NEW: Contest Weekend Outlook',
+        desc: "NOAA SWPC's 27-day outlook now rides on the Contests panel: each contest inside the window shows a Quiet / Unsettled / Active / Storm pill with the predicted SFI, so you can see which weekends look good before you plan. A 27-Day Solar Outlook panel shows the full table with sparklines.",
+      },
+      {
+        icon: '📶',
+        title: 'NEW: Station Benchmark',
+        desc: 'How well is your station heard compared with everyone within 300 km? The server watches the RBN stream and, per skimmer, band and hour, compares your SNR against the median of your neighbours. Per-band ± dB bars with sample counts and a seven-day trend. RBN only for now — PSK Reporter does not carry SNR through our proxy.',
+      },
+      {
+        icon: '🗣️',
+        title: 'NEW: Spoken Alerts',
+        desc: 'Settings → Alerts can now speak: "Watchlist: Victor Kilo Nine Mike Alfa on 20 metres CW". Master toggle, per-feed toggles, voice and rate, and optional ITU phonetics for callsigns. Queued and de-duplicated so a burst of spots does not stack.',
+      },
+      {
+        icon: '🏠',
+        title: 'NEW: Home Assistant / MQTT',
+        desc: 'Self-hosted servers publish space weather, SWPC alerts, band openings and status to an MQTT broker, with Home Assistant discovery so the sensors appear by themselves. Rig Bridge publishes rig frequency, mode and PTT plus rotator position the same way. Set MQTT_PUBLISH_URL on the server; the bridge has a setup card.',
+      },
+      {
+        icon: '🎛️',
+        title: 'NEW: Remote Control API + Phone Remote',
+        desc: "HamClock's set_* commands, done our way: POST /api/control/de, dx, layout, theme, panels, mapview, satellite, time, title, alarm, stopwatch, rotator and capture, delivered to a display over SSE. Settings → Station shows the display id and a QR code; scan it and /remote gives you big touch buttons for DX, layouts, layers, satellites, time shift, alarms and rig tuning. Works with Stream Deck, Node-RED, or curl. Documented in API.md.",
+      },
+      {
+        icon: '🖥️',
+        title: 'Kiosk: Demo Mode, Grayscale, Rotating Titles, PIN Lock',
+        desc: 'Demo mode makes a harmless random change every 30 seconds for a show booth; grayscale desaturates the map or the whole display; up to six titles rotate through the callsign box; and a kiosk PIN lock blocks Settings, layout changes and the palette on a touch screen (`?lock=1` on the kiosk URL, or `setup-pi.sh --lock-pin`).',
+      },
+      {
+        icon: '🛰️',
+        title: 'Satellites: Rotator Auto-Track, Doppler Tuning, hams.at, Sky View',
+        desc: 'The Rotator panel gains AUTO (DX bearing or the selected satellite, with pre-positioning before AOS and flip mode for rotators that go past 90°). Doppler tuning keeps the rig on the corrected downlink from the SatNOGS transmitter you pick. A SKY tab draws the next pass on a polar plot; an ALERTS tab lists your hams.at alerted passes with co-visibility. Stale TLEs are flagged and drawn dashed, with a Refresh TLEs button. New feed: Satellite Alerts.',
+      },
+      {
+        icon: '🌅',
+        title: 'NEW: Grayline, EME and Satellite Planners',
+        desc: 'Three planning panels in the HamClock spirit. Grayline Planner finds the next seven days of mutual twilight between DE and DX. EME Planner plots moon elevation at both ends for 48 hours with mutual windows and echo delay. Satellite Planner does the same for any tracked bird over 24 hours. Click a window and the map jumps to that moment.',
+      },
+      {
+        icon: '⏰',
+        title: 'NEW: Alarm Clock',
+        desc: 'A daily alarm and a once-only alarm, DE local or UTC, with a header bell, a tone, a notification and a banner. The ⏰ button on any upcoming contest sets the once-only alarm to its start.',
+      },
+      {
+        icon: '📻',
+        title: 'DX Cluster: Watch Lists, Login Commands, a Console',
+        desc: "HamClock's watch-list grammar, in full: bands (20-10M), sub-bands (40CW, 30FT8), MHz ranges, portable-call prefixes (VK/), and NADXCC / NAPREF / NAGRID / NABAND checked against your native logbook — in Off / Red / Only / Not modes, with separate lists for cluster spots, activations and the logbook. Custom telnet nodes can send your own commands after login, and a Cluster Console panel shows the raw session and lets you type to the node. The list no longer jumps while you scroll (a NEW button catches you up), map spot labels are configurable, IOTA references get badges and a filter, and UDP spots can set DX.",
+      },
+      {
+        icon: '🌀',
+        title: 'NEW: Tropical Cyclones, Fire Weather, Marine Buoys, Windy, WEFAX',
+        desc: 'Five weather panels and four layers from HamClock 4.25–4.32: active storms worldwide with NHC and JTWC forecast tracks and cones; NWS Red Flag Warnings with their zone outlines; the nearest NDBC buoys with wind, waves and water temperature; an embedded Windy view centred on DE or DX; and NOAA radiofax charts from every station, with the broadcast frequencies one click from the rig.',
+      },
+      {
+        icon: '🗺️',
+        title: 'NEW: Political Boundaries, Nearest City, Launch Sites, Balloons',
+        desc: 'Country borders with US state and Canadian province lines in your own two colours. The cursor readout now names the nearest city. Launch pads with an upcoming orbital launch appear as rockets, and amateur high-altitude and pico balloons from SondeHub draw with six-hour trails.',
+      },
+      {
+        icon: '☀️',
+        title: 'NEW: NOAA Scales, Dst, Electron Flux, Eclipses, Planets, Space Launches',
+        desc: 'The R/S/G scales with a three-day forecast (also in the Space Wx Alerts header); the Kyoto Dst index with the 160 m interpretation; GOES electron flux in Solar Indices and Space Wx Trends; every solar and lunar eclipse through 2040 with local circumstances for your QTH; the seven classical planets with rise, set, azimuth and elevation (checked against JPL Horizons); and the next twenty orbital launches with countdowns. Plus an auto space-weather layer that turns Aurora or D-RAP on by itself when it matters.',
+      },
+      {
+        icon: '🧭',
+        title: 'Magnetic Bearings',
+        desc: 'Settings → Station → Bearings: True or Magnetic north. A full WMM2025 implementation computes the declination at DE; every bearing readout shows °M when magnetic.',
+      },
+      {
+        icon: '🔔',
+        title: 'NEW: HamAlert, Live Nets, Message of the Day',
+        desc: 'Your HamAlert triggers arrive as a live spot feed through a Rig Bridge plugin (or server-side on a self-hosted install) with their own panel and alert tone. The Nets panel gains a Live tab fed by NetLogger: active nets, NCS, check-in counts and the roster. Self-hosters can set a message of the day (env MOTD or the admin API) that shows as a dismissible banner.',
+      },
+      {
+        icon: '🥧',
+        title: 'Raspberry Pi Hardware: GPS, Sensors, GPIO, Brightness',
+        desc: "Four Rig Bridge plugins close HamClock's hardware gap. GPS (NMEA serial, gpsd, or a fifo) can set or follow your DE location; a BME280/BMP280 or any HTTP JSON sensor feeds an Environment panel with 24-hour history; GPIO lines on HamClock's pinout give you a PTT/ON-AIR input, countdown and alarm buttons, and ON-AIR, alarm, countdown and satellite-visible outputs; an LTR-329 light sensor drives the backlight with two-point calibration. Alpha: none of it has been on real hardware yet, so field reports are very welcome.",
+      },
+      {
+        icon: '🚙',
+        title: 'NEW: Rover Mode',
+        desc: 'With GPS follow on, a Rover panel shows your live six-character grid, distance and ETA to each grid line, VUCC status for the grid you are in, and plays a Grid Change alert when you cross a line. QSOs logged while roving carry the live grid.',
+      },
+      {
+        icon: '📚',
+        title: 'Manual and API Docs',
+        desc: 'Every item above has a section in the built-in manual and, where it adds endpoints, in API.md — including the full remote-control command table.',
+      },
+    ],
+  },
+  {
     version: '26.10.1',
     date: '2026-10-14',
     heading:
