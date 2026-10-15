@@ -155,7 +155,7 @@ const CHANGELOG = [
       {
         icon: '🌙',
         title: 'FIX: Moon Image Missing from the Lunar Panel and the 3D Globe',
-        desc: 'The Lunar panel shows NASA\'s photo-real render of today\'s moon and the 3D globe places it at its true position with the real phase. NASA\'s Dial-A-Moon API started returning plain http:// links for those images; the server\'s safety check only accepted https:// and rejected every one, so the image endpoint answered "temporarily unavailable" and the panel fell back to a drawn sliver. The check now accepts either scheme for a nasa.gov address and always fetches over https. Self-hosted: pull the update and restart; the hosted site is already fixed. Reported by K0CJH.',
+        desc: "The Lunar panel shows NASA's photo-real render of today's moon and the 3D globe places it at its true position with the real phase. NASA's Dial-A-Moon API started returning plain http:// links for those images; the server's safety check only accepted https:// and rejected every one, so the image endpoint answered \"temporarily unavailable\" and the panel fell back to a drawn sliver. The check now accepts either scheme for a nasa.gov address and always fetches over https. Self-hosted: pull the update and restart; the hosted site is already fixed. Reported by K0CJH.",
       },
     ],
   },
