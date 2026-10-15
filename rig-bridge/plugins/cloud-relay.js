@@ -26,12 +26,32 @@
  *   relayWsjtx:     boolean  Relay WSJT-X decodes (default: true)
  *   relayAprs:      boolean  Relay APRS packets (default: true)
  *   verbose:        boolean  Log all relay activity (default: false)
+ *   commandKey:     string   64-hex key shared with the browser that pressed
+ *                            Connect Cloud Relay (never sent to the server).
+ *                            When set, every command must carry a valid
+ *                            HMAC (lib/relay-sign.js) or it is refused.
+ *   allowUnsigned:  boolean  Accept unsigned commands of every kind, as before
+ *                            command signing existed (default: false — unsafe)
+ *   unsignedGraceUntil: string  Without a commandKey, unsigned tuning
+ *                            (setFreq / setMode) is still accepted until this
+ *                            date (default '2027-01-31'); PTT and anything that
+ *                            transmits never is.
+ *
+ * Command authentication: the hosted server only queues commands, and anyone
+ * who learns a session id can queue one, so Rig Bridge decides. See
+ * authorizeCommand() below.
  */
 
 const http = require('http');
 const https = require('https');
 const { URL } = require('url');
 const { nextLongPollDelay, heartbeatDue } = require('../lib/relay-timing');
+const { createCommandVerifier, isValidKey } = require('../lib/relay-sign');
+
+// Unsigned commands a bridge that has not been re-paired still accepts during
+// the grace period: they tune, they never transmit.
+const LEGACY_UNSIGNED_TYPES = new Set(['setFreq', 'setMode']);
+const DEFAULT_UNSIGNED_GRACE_UNTIL = '2027-01-31';
 
 let _currentInstance = null;
 
@@ -54,6 +74,54 @@ const descriptor = {
     const apiKey = cfg.apiKey || '';
     const session = cfg.session || '';
     const pushInterval = cfg.pushInterval || 2000; // Fallback interval for data batches
+
+    // ── Command authentication ─────────────────────────────────────────────
+    // Read live so a key pasted into the setup page applies without a restart
+    const live = () => config.cloudRelay || cfg;
+    const commandKey = () =>
+      String(live().commandKey || '')
+        .trim()
+        .toLowerCase();
+    const verifier = createCommandVerifier({ key: commandKey, session: () => session });
+    const graceUntil = (() => {
+      const t = Date.parse(cfg.unsignedGraceUntil || DEFAULT_UNSIGNED_GRACE_UNTIL);
+      return Number.isFinite(t) ? t : Date.parse(DEFAULT_UNSIGNED_GRACE_UNTIL);
+    })();
+    const warnedAt = new Map(); // reason → last log time
+    let refusedCommands = 0;
+    function warnOnce(key, msg, everyMs = 3600000) {
+      const t = Date.now();
+      if (t - (warnedAt.get(key) || 0) < everyMs) return;
+      warnedAt.set(key, t);
+      console.warn(`[CloudRelay] ${msg}`);
+    }
+
+    /**
+     * Decide whether a relayed command may run.
+     *  - paired (commandKey set): only a valid, fresh, unreplayed signature.
+     *  - not paired: allowUnsigned restores the old accept-everything
+     *    behaviour; otherwise tuning only, and only until unsignedGraceUntil.
+     * @returns {{ ok: boolean, reason?: string }}
+     */
+    function authorizeCommand(cmd) {
+      const paired = isValidKey(commandKey());
+      const r = verifier.verify(cmd);
+      if (r.ok) return r;
+      if (paired) return r;
+      if (live().allowUnsigned === true) {
+        warnOnce('allow', 'allowUnsigned is on — relay commands are accepted without proof they came from you');
+        return { ok: true };
+      }
+      if (LEGACY_UNSIGNED_TYPES.has(cmd?.type) && Date.now() < graceUntil) {
+        warnOnce(
+          'grace',
+          `Accepting unsigned ${cmd.type} until ${new Date(graceUntil).toISOString().slice(0, 10)} — ` +
+            're-run Connect Cloud Relay in OpenHamClock and paste the new settings (they include a command key)',
+        );
+        return { ok: true };
+      }
+      return { ok: false, reason: 'unsigned-refused' };
+    }
     const { state, pluginBus, onStateChange, removeStateChangeListener } = services;
 
     let pushTimer = null;
@@ -178,7 +246,12 @@ const descriptor = {
       lastState = { ...currentState };
 
       // Include batched data in the push
-      const payload = { ...currentState, session };
+      // commandAuth tells the server to refuse unsigned commands for this session
+      const payload = {
+        ...currentState,
+        session,
+        commandAuth: isValidKey(commandKey()) ? 'hmac-sha256' : 'none',
+      };
       if (hasDecodes) {
         payload.decodes = pendingDecodes.splice(0, 50);
         totalDecodes += payload.decodes.length;
@@ -265,6 +338,29 @@ const descriptor = {
     // All requests have an error handler to prevent unhandled-error crashes.
     function executeCommand(cmd) {
       totalCommands++;
+      const verdict = authorizeCommand(cmd);
+      if (!verdict.ok) {
+        refusedCommands++;
+        warnOnce(
+          `refused-${verdict.reason}`,
+          `Refused relay command ${cmd?.type} (${verdict.reason})` +
+            (verdict.reason === 'unsigned-refused' || verdict.reason === 'unsigned'
+              ? ' — re-run Connect Cloud Relay in OpenHamClock and paste the new settings into Rig Bridge'
+              : ''),
+          60000,
+        );
+        if (cmd?.type === 'fldigi' && pluginBus && cmd.payload?.requestId) {
+          pluginBus.emit('fldigi-cmd-result', {
+            requestId: String(cmd.payload.requestId)
+              .replace(/[^A-Za-z0-9-]/g, '')
+              .slice(0, 40),
+            ok: false,
+            status: 401,
+            error: `Relay command refused by Rig Bridge (${verdict.reason})`,
+          });
+        }
+        return;
+      }
       if (cfg.verbose) console.log(`[CloudRelay] Command: ${cmd.type} ${JSON.stringify(cmd.payload || {})}`);
 
       const localMod = config.tls?.enabled ? https : http;
@@ -321,6 +417,17 @@ const descriptor = {
       }
 
       console.log(`[CloudRelay] Starting relay to ${serverUrl}`);
+      if (commandKey() && !isValidKey(commandKey())) {
+        console.warn(
+          '[CloudRelay] commandKey is not 64 hex characters — ignored; paste it again from Connect Cloud Relay',
+        );
+      } else if (!commandKey()) {
+        console.warn(
+          '[CloudRelay] No commandKey: PTT and transmit commands from the relay are refused, tuning is accepted until ' +
+            new Date(graceUntil).toISOString().slice(0, 10) +
+            ' — re-run Connect Cloud Relay in OpenHamClock and paste the new settings',
+        );
+      }
       console.log(`[CloudRelay] Push interval: ${pushInterval}ms, Command delivery: long-poll`);
 
       // Initial health check
@@ -438,10 +545,17 @@ const descriptor = {
         consecutiveErrors,
         pushInterval,
         commandDelivery: 'long-poll',
+        commandAuth: isValidKey(commandKey())
+          ? 'hmac-sha256'
+          : live().allowUnsigned === true
+            ? 'unsigned-allowed'
+            : 'legacy',
+        unsignedGraceUntil: new Date(graceUntil).toISOString().slice(0, 10),
+        refusedCommands,
       };
     }
 
-    const instance = { connect, disconnect, getStatus };
+    const instance = { connect, disconnect, getStatus, _pushState: pushState, _executeCommand: executeCommand };
     _currentInstance = instance;
     return instance;
   },
