@@ -147,6 +147,19 @@ const CHANGELOG = [
     ],
   },
   {
+    version: '26.10.2',
+    date: '2026-10-14',
+    heading:
+      'Hotfix for 26.10.1: the EmComm layout crashed on open for everyone, hosted and self-hosted. Reported by Michael, KE8PLM, within hours of the release — thank you.',
+    features: [
+      {
+        icon: '🚨',
+        title: 'FIX: EmComm Layout Crashed on Open',
+        desc: 'Opening EmComm mode showed "OpenHamClock hit an error — Cannot access \'xt\' before initialization" and the whole layout went down. The per-station message history added in 26.10.1 registered its "Messages ↗" listener above the function it calls, which React evaluates during render. Moved it below. If you were stuck on the error page, a hard refresh (Ctrl+F5) is all you need. Reported by KE8PLM (#1223).',
+      },
+    ],
+  },
+  {
     version: '26.10.1',
     date: '2026-10-14',
     heading:
