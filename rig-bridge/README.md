@@ -871,17 +871,17 @@ API: `GET /api/gps/status`.
 
 Temperature, humidity, dew point and station pressure, shown in the **Environment Sensors** panel with the two-sensor split HamClock uses and a 24 h history graph (one sample per minute is kept in the bridge and served from `GET /api/env/history`).
 
-| Setting                            | Default                | Description                                                                            |
-| ---------------------------------- | ---------------------- | -------------------------------------------------------------------------------------- |
-| `pollInterval`                     | `10` s                 | Sensor read interval                                                                   |
-| `i2cBus`                           | `1`                    | `/dev/i2c-1` on every Pi since the B+                                                  |
-| `sensorA.enabled/address/name`     | on / `0x76` / Indoor   | First BME280/BMP280 (chip id read from register 0xD0)                                  |
-| `sensorB.enabled/address/name`     | off / `0x77` / Outdoor | Second sensor — tie SDO high for 0x77                                                  |
-| `sensorX.dTemp` / `dPres` / `dHum` | `0`                    | Corrections added to the reading (HamClock dTemp/dPres), e.g. −1.5 °C for self-heating |
-| `http.enabled/url`                 | off                    | Any JSON URL: ESPHome `/sensor/…`, Tasmota `cm?cmnd=Status%2010`, Home Assistant …     |
-| `http.tempPath/humPath/presPath`   | `temperature` …        | Dotted field paths, e.g. `StatusSNS.BME280.Temperature`, `list[0].value`               |
-| `http.tempUnit` / `presUnit`       | `C` / `hPa`            | Convert from `F`, `Pa`, `kPa`, `inHg`, `mmHg`                                          |
-| `mock`                             | `false`                | Two simulated sensors — try the panel without hardware                                 |
+| Setting                            | Default                | Description                                                                        |
+| ---------------------------------- | ---------------------- | ---------------------------------------------------------------------------------- |
+| `pollInterval`                     | `10` s                 | Sensor read interval                                                               |
+| `i2cBus`                           | `1`                    | `/dev/i2c-1` on every Pi since the B+                                              |
+| `sensorA.enabled/address/name`     | on / `0x76` / Indoor   | First BME280/BMP280 (chip id read from register 0xD0)                              |
+| `sensorB.enabled/address/name`     | off / `0x77` / Outdoor | Second sensor — tie SDO high for 0x77                                              |
+| `sensorX.dTemp` / `dPres` / `dHum` | `0`                    | Corrections added to the reading (dTemp/dPres), e.g. −1.5 °C for self-heating      |
+| `http.enabled/url`                 | off                    | Any JSON URL: ESPHome `/sensor/…`, Tasmota `cm?cmnd=Status%2010`, Home Assistant … |
+| `http.tempPath/humPath/presPath`   | `temperature` …        | Dotted field paths, e.g. `StatusSNS.BME280.Temperature`, `list[0].value`           |
+| `http.tempUnit` / `presUnit`       | `C` / `hPa`            | Convert from `F`, `Pa`, `kPa`, `inHg`, `mmHg`                                      |
+| `mock`                             | `false`                | Two simulated sensors — try the panel without hardware                             |
 
 **Wiring (I2C, 3.3 V only):** BME280 VCC → pin 1 (3V3), GND → pin 6, SDA → pin 3 (GPIO 2), SCL → pin 5 (GPIO 3). For two sensors on one bus pull SDO of the second one to 3V3 (address 0x77). Keep I2C leads short (< 30 cm) or use a bus extender.
 
@@ -889,19 +889,19 @@ The compensation math is Bosch's double-precision reference implementation (`lib
 
 API: `GET /api/env/status`, `GET /api/env/history`.
 
-### GPIO plugin (HamClock header lines)
+### GPIO plugin (Pi header lines)
 
 Drives indicator and switch lines on the Pi header, plus a PTT sense input. Pin numbers below are **BCM GPIO numbers** (what `gpioinfo` shows); the header position is in brackets. You may also type a header pin as `P37` in the config.
 
 | Function            | Direction | Default BCM (header) | Notes                                                                         |
 | ------------------- | --------- | -------------------- | ----------------------------------------------------------------------------- |
 | `pttIn`             | input     | 16 (36)              | PTT / ON-AIR sense, active low → bridge `onAir` state → browser shows ON AIR  |
-| `countdownResetIn`  | input     | 26 (37)              | Button to restart the ID / countdown timer (HamClock CD switch; pin 17 = 3V3) |
-| `alarmSilenceIn`    | input     | 5 (29)               | Button to silence the alarm line (HamClock AL reset)                          |
-| `onAirOut`          | output    | 21 (40)              | ON-AIR LED — rig PTT (CAT) or `pttIn` active (HamClock OA)                    |
-| `alarmOut`          | output    | 6 (31)               | Alarm ringing — the ID timer has expired (HamClock AL)                        |
-| `countdownGreenOut` | output    | 13 (33)              | Countdown running (HamClock CD green)                                         |
-| `countdownRedOut`   | output    | 19 (35)              | Countdown expired (HamClock CD red)                                           |
+| `countdownResetIn`  | input     | 26 (37)              | Button to restart the ID / countdown timer                                    |
+| `alarmSilenceIn`    | input     | 5 (29)               | Button to silence the alarm line                                              |
+| `onAirOut`          | output    | 21 (40)              | ON-AIR LED — rig PTT (CAT) or `pttIn` active                                  |
+| `alarmOut`          | output    | 6 (31)               | Alarm ringing — the ID timer has expired                                      |
+| `countdownGreenOut` | output    | 13 (33)              | Countdown running                                                             |
+| `countdownRedOut`   | output    | 19 (35)              | Countdown expired                                                             |
 | `satOut`            | output    | 20 (38)              | 1 Hz the minute before AOS, steady during the pass, 2 Hz the last minute (SA) |
 
 Set a pin to `-1` to disable that function. `activeLow` (default on) means switches pull the input to ground; `outputActiveLow` inverts the outputs for sink-driven LEDs.

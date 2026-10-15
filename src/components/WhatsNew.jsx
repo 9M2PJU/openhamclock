@@ -87,7 +87,7 @@ const CHANGELOG = [
       {
         icon: '🌅',
         title: 'NEW: Grayline, EME and Satellite Planners',
-        desc: 'Three planning panels in the HamClock spirit. Grayline Planner finds the next seven days of mutual twilight between DE and DX. EME Planner plots moon elevation at both ends for 48 hours with mutual windows and echo delay. Satellite Planner does the same for any tracked bird over 24 hours. Click a window and the map jumps to that moment.',
+        desc: 'Three planning panels. Grayline Planner finds the next seven days of mutual twilight between DE and DX. EME Planner plots moon elevation at both ends for 48 hours with mutual windows and echo delay. Satellite Planner does the same for any tracked bird over 24 hours. Click a window and the map jumps to that moment.',
       },
       {
         icon: '⏰',
