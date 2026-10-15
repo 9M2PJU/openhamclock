@@ -6,6 +6,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { APRS_HISTORY_EVENT } from '../utils/aprsSelect.js';
 import { useTranslation } from 'react-i18next';
 import { WorldMap, APRSTelemetryPanel } from '../components';
+import NbemsPanel from '../components/NbemsPanel.jsx';
 import { useAPRSTelemetry } from '../hooks/useAPRSTelemetry.js';
 import { calculateDistance, formatDistance, maidenheadToLatLon, latLonToMaidenhead } from '../utils/geo.js';
 import { esc } from '../utils/escapeHtml.js';
@@ -186,6 +187,9 @@ const SHELTER_STATUS_COLORS = {
 const FIELD_REPORTS_DOCS_URL =
   'https://github.com/accius/openhamclock/blob/main/rig-bridge/README.md#winlink-express-csv-ingest-beta';
 
+/** Field reports from the fldigi plugin's flmsg watcher (vs Winlink Express CSV). */
+const isNbemsReport = (r) => r?.source === 'nbems-flmsg' || /\(NBEMS\)/.test(r?.formType || '');
+
 const EVENT_BTN_STYLE = {
   background: '#1a1f2e',
   border: '1px solid #2a3040',
@@ -364,7 +368,9 @@ export default function EmcommLayout(props) {
     return () => clearInterval(timer);
   }, []);
 
-  // Poll field reports (Winlink Express forms via rig-bridge CSV plugin)
+  // Poll field reports (Winlink Express CSV and NBEMS flmsg forms via rig-bridge).
+  // An flmsg form announced on the bridge stream triggers an early refresh, a
+  // moment later so the bridge's POST to the server has landed.
   useEffect(() => {
     const fetchReports = async () => {
       try {
@@ -377,7 +383,18 @@ export default function EmcommLayout(props) {
     };
     fetchReports();
     const timer = setInterval(fetchReports, 30000);
-    return () => clearInterval(timer);
+    let soon = null;
+    const onPluginData = (e) => {
+      if (e?.detail?.event !== 'nbems-form') return;
+      clearTimeout(soon);
+      soon = setTimeout(fetchReports, 1500);
+    };
+    window.addEventListener('rig-plugin-data', onPluginData);
+    return () => {
+      clearInterval(timer);
+      clearTimeout(soon);
+      window.removeEventListener('rig-plugin-data', onPluginData);
+    };
   }, []);
 
   // Event log: live subscription to the shared session log
@@ -821,7 +838,7 @@ export default function EmcommLayout(props) {
       const when = r.timestamp ? new Date(r.timestamp).toISOString().replace('T', ' ').substring(0, 16) + 'Z' : '';
       marker.bindPopup(
         `<b style="color:#f472b6">📋 ${esc(r.callsign || 'Unknown')}</b> ` +
-          `<span style="color:#888;font-size:9px;font-weight:700">WINLINK</span><br>` +
+          `<span style="color:#888;font-size:9px;font-weight:700">${isNbemsReport(r) ? 'NBEMS' : 'WINLINK'}</span><br>` +
           `${esc(r.formType || 'Field Report')}<br>` +
           (r.text ? `<span style="color:#aaa">${esc(r.text.substring(0, 200))}</span><br>` : '') +
           `<span style="color:#888;font-size:10px">${when}</span>`,
@@ -1619,15 +1636,21 @@ export default function EmcommLayout(props) {
             )}
           </PanelSection>
 
-          {/* Field Reports Panel — Winlink Express forms via rig-bridge CSV ingest */}
+          {/* NBEMS — fldigi status / RX / send and ICS-213 via the rig-bridge fldigi plugin */}
+          <PanelSection title="NBEMS" color="#38bdf8" panels={panels}>
+            <NbemsPanel apiToken={config.rigControl?.apiToken || ''} />
+          </PanelSection>
+
+          {/* Field Reports Panel — Winlink Express CSV ingest and NBEMS flmsg forms via rig-bridge */}
           <PanelSection title="Field Reports" count={fieldReports.length} color="#f472b6" panels={panels}>
             {fieldReports.length === 0 ? (
               <div style={{ padding: '12px 8px', color: '#555', fontSize: '11px', lineHeight: 1.5 }}>
-                No field reports received. Run the <span style={{ color: '#888' }}>winlink-express-csv</span> rig-bridge
-                plugin to ingest Winlink Express form exports (Field Situation Reports, Damage Assessments) from your
-                EOC.{' '}
+                {t('emcomm.fieldReports.empty', {
+                  defaultValue:
+                    'No field reports received. Rig Bridge forwards Winlink Express form exports (winlink-express-csv plugin) and flmsg forms such as ICS-213 received through fldigi (fldigi + flmsg plugin).',
+                })}{' '}
                 <a href={FIELD_REPORTS_DOCS_URL} target="_blank" rel="noreferrer" style={{ color: '#f472b6' }}>
-                  Setup guide
+                  {t('emcomm.fieldReports.setupGuide', { defaultValue: 'Setup guide' })}
                 </a>
               </div>
             ) : (
@@ -1650,6 +1673,19 @@ export default function EmcommLayout(props) {
                       <span style={{ color: '#f472b6', fontWeight: 600 }}>{r.callsign || 'Unknown'}</span>
                       <span style={{ color: '#888', marginLeft: '6px', fontSize: '10px' }}>
                         {r.formType || 'Field Report'}
+                      </span>
+                      <span
+                        style={{
+                          marginLeft: '6px',
+                          fontSize: '8px',
+                          fontWeight: 700,
+                          padding: '0 4px',
+                          borderRadius: '2px',
+                          border: `1px solid ${isNbemsReport(r) ? '#38bdf8' : '#3b82f6'}`,
+                          color: isNbemsReport(r) ? '#38bdf8' : '#3b82f6',
+                        }}
+                      >
+                        {isNbemsReport(r) ? 'NBEMS' : 'WINLINK'}
                       </span>
                     </div>
                     <span style={{ color: '#888', fontSize: '10px', flexShrink: 0 }}>
