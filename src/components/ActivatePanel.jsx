@@ -12,6 +12,7 @@ import { useWorkedBefore } from '../hooks/useWorkedBefore.js';
 import { useAwards } from '../hooks/useAwards.js';
 import { spotBadge } from '../utils/awards.js';
 import { requestLogQso } from '../services/logbookStore.js';
+import { spotIota, iotaName } from '../utils/iota.js';
 
 export const ActivatePanel = ({
   mapDefs,
@@ -504,6 +505,26 @@ export const ActivatePanel = ({
                   <div
                     style={{ textAlign: 'center', fontStyle: 'italic', color: 'var(--text-muted)', fontSize: '11px' }}
                   >
+                    {spotIota(spot) && (
+                      <span
+                        title={`IOTA ${spotIota(spot)}${iotaName(spotIota(spot)) ? ` — ${iotaName(spotIota(spot))}` : ''}`}
+                        style={{
+                          marginRight: '5px',
+                          padding: '0 3px',
+                          fontSize: '8px',
+                          fontStyle: 'normal',
+                          fontWeight: '700',
+                          letterSpacing: '0.5px',
+                          color: 'var(--accent-cyan)',
+                          background: 'rgba(0, 221, 255, 0.12)',
+                          border: '1px solid rgba(0, 221, 255, 0.5)',
+                          borderRadius: '2px',
+                          verticalAlign: 'middle',
+                        }}
+                      >
+                        {spotIota(spot)}
+                      </span>
+                    )}
                     {spot.comments}
                   </div>
                 )}

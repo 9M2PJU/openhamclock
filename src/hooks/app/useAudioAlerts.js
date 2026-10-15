@@ -41,6 +41,9 @@ function itemKey(feedId, item) {
       return `${item.band || ''}-${item.from_continent || ''}-${item.to_zone != null ? `Z${item.to_zone}` : item.to_continent || ''}-${item.firstSeenHour ?? ''}`;
     case 'swpc':
       return `${item.productId || ''}-${item.serial || ''}`;
+    case 'hamalert':
+      // One alert per HamAlert line: call + frequency + minute.
+      return `${item.call || ''}-${item.freqKhz || item.freq || ''}-${item.time || ''}`;
     default:
       return JSON.stringify(item).substring(0, 80);
   }
@@ -136,5 +139,6 @@ export default function useAudioAlerts(feeds) {
     feeds['sat-pass'],
     feeds['band-openings'],
     feeds.swpc,
+    feeds.hamalert,
   ]);
 }

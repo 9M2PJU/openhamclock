@@ -125,19 +125,25 @@ These are the endpoints third-party tools may reasonably consume. They are all
 upstream), and their response shapes change rarely — breaking changes will be
 called out in release notes.
 
-| Endpoint               | What it returns                                                                                                   | Server cache |
-| ---------------------- | ----------------------------------------------------------------------------------------------------------------- | ------------ |
-| `/api/pota/spots`      | Current POTA activation spots                                                                                     | ~1 min       |
-| `/api/sota/spots`      | Current SOTA activation spots                                                                                     | ~1 min       |
-| `/api/wwff/spots`      | Current WWFF activation spots                                                                                     | ~1 min       |
-| `/api/solar-indices`   | SFI, sunspot number, A/K indices, X-ray flux                                                                      | ~5 min       |
-| `/api/solar-cycle`     | Solar cycle history/prediction series                                                                             | hours        |
-| `/api/propagation`     | Point-to-point HF path prediction. Query: `deLat`, `deLon`, `dxLat`, `dxLon`, optional `mode`, `power`, `antenna` | ~10 min      |
-| `/api/band-openings`   | Detected band openings from live spot analysis                                                                    | ~1 min       |
-| `/api/satellites/data` | Tracked amateur satellite orbital elements (OMM)                                                                  | ~1 h         |
-| `/api/ionosonde`       | Live ionosonde soundings (foF2/MUF from GIRO via KC2G)                                                            | ~15 min      |
-| `/api/contests`        | Contest calendar (WA7BNM iCal, RSS fallback). Returns `{ contests, source, fetchedAt }`                           | ~30 min      |
-| `/api/health`          | Instance health/uptime probe                                                                                      | none         |
+| Endpoint                  | What it returns                                                                                                                                                                                                                                                                | Server cache       |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------ |
+| `/api/pota/spots`         | Current POTA activation spots                                                                                                                                                                                                                                                  | ~1 min             |
+| `/api/sota/spots`         | Current SOTA activation spots                                                                                                                                                                                                                                                  | ~1 min             |
+| `/api/wwff/spots`         | Current WWFF activation spots                                                                                                                                                                                                                                                  | ~1 min             |
+| `/api/solar-indices`      | SFI, sunspot number, A/K indices, X-ray flux                                                                                                                                                                                                                                   | ~5 min             |
+| `/api/solar-cycle`        | Solar cycle history/prediction series                                                                                                                                                                                                                                          | hours              |
+| `/api/propagation`        | Point-to-point HF path prediction. Query: `deLat`, `deLon`, `dxLat`, `dxLon`, optional `mode`, `power`, `antenna`                                                                                                                                                              | ~10 min            |
+| `/api/band-openings`      | Detected band openings from live spot analysis                                                                                                                                                                                                                                 | ~1 min             |
+| `/api/satellites/data`    | Tracked amateur satellite orbital elements (OMM)                                                                                                                                                                                                                               | ~1 h               |
+| `/api/ionosonde`          | Live ionosonde soundings (foF2/MUF from GIRO via KC2G)                                                                                                                                                                                                                         | ~15 min            |
+| `/api/contests`           | Contest calendar (WA7BNM iCal, RSS fallback). Returns `{ contests, source, fetchedAt }`                                                                                                                                                                                        | ~30 min            |
+| `/api/netlogger/nets`     | Nets being logged on NetLogger right now: `{ nets: [{ server, name, freq (MHz), mode, band, ncs, started, checkins }], servers, fetchedAt }`                                                                                                                                   | 60 s               |
+| `/api/netlogger/checkins` | Check-ins for one net. Query: `server`, `net` (from `/nets`). Returns `{ server, net, count, checkins: [{ serial, call, name, state, city, county, country, grid, status, remarks }] }` — postal addresses are stripped                                                        | 60 s per net       |
+| `/api/balloons`           | Amateur HAB / pico balloons from SondeHub Amateur, last 6 h, ≤ 500 payloads: `{ balloons: [{ call, lat, lon, alt (m), speedKmh, ascentRate, lastHeard, frequency, modulation, aprs, uploader, trail: [[lat, lon, alt, epochMs]…] }], count, fetchedAt }`                       | 2 min              |
+| `/api/balloons/listeners` | SondeHub Amateur receiving stations, last 6 h: `{ listeners: [{ call, lat, lon, alt, lastSeen, radio, antenna, mobile }], count }`                                                                                                                                             | 5 min              |
+| `/api/hamalert/alerts`    | Self-hosted only, dormant unless `HAMALERT_USER`/`HAMALERT_PASS` are set: `{ enabled, connected, alerts: [{ call, freq (MHz string), freqKhz, mode, source, comment, time, timestamp }], status }`; `?since=<epoch ms>` for increments. `{ enabled: false }` when unconfigured | live (ring of 200) |
+| `/api/motd`               | Message of the day: `{ text, id, links: [{ label, url }], source: 'env' \| 'admin' \| null }` — `text` is `''` when there is none                                                                                                                                              | 60 s               |
+| `/api/health`             | Instance health/uptime probe                                                                                                                                                                                                                                                   | none               |
 
 ```bash
 curl -s http://localhost:3000/api/solar-indices | jq .
@@ -150,6 +156,34 @@ upstream request — please keep it that way by pointing your tools at your own
 self-hosted instance rather than scraping someone else's, and by respecting
 the cache durations above (polling faster than the cache refreshes just burns
 your own rate limit).
+
+---
+
+## Message of the day
+
+A one-line notice every browser on the instance shows as a dismissible top
+bar (bare URLs become links; dismissals are remembered per message `id`, so a
+changed message re-appears).
+
+- `GET /api/motd` → `{ text, id, links, source, updatedAt }` (see the table above).
+- `POST /api/admin/motd` — set or clear the admin message. Body
+  `{ "text": "Server restart at 0200z, see https://example.org/status", "links": [{ "label": "Status", "url": "https://example.org/status" }] }`.
+  `text` is capped at 1000 characters; `links` is optional (http/https only,
+  five max) and is merged with URLs found in the text. An empty `text` clears
+  the admin message, after which the `MOTD` environment variable (if set)
+  applies again. The admin message persists in `motd.json` (`MOTD_FILE`, or
+  the usual `/data` → `./data` → `/tmp` waterfall) across restarts.
+
+```bash
+curl -X POST -H "Authorization: Bearer $API_WRITE_KEY" -H 'Content-Type: application/json' \
+  -d '{"text":"Club net tonight 0100z on 7.272 — https://example.org/net"}' \
+  http://localhost:3000/api/admin/motd
+curl -X POST -H "Authorization: Bearer $API_WRITE_KEY" -H 'Content-Type: application/json' \
+  -d '{"text":""}' http://localhost:3000/api/admin/motd   # clear
+```
+
+The write endpoint uses the same `API_WRITE_KEY` bearer auth and write rate
+limit as the other admin endpoints (next section).
 
 ---
 

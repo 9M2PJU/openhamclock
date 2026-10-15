@@ -11,6 +11,7 @@ import { useRef, useEffect, useState, useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { getBandColor, getBandFromFreq } from '../utils/callsign.js';
 import { latLonToMaidenhead } from '../utils/geo.js';
+import { formatBearing } from '../utils/bearing.js';
 import { MAP_STYLES } from '../utils/config.js';
 import { createTileReprojector } from '../utils/tileReproject.js';
 import { createAzimuthalCRS } from '../utils/azimuthalCRS.js';
@@ -238,7 +239,7 @@ export default function AzimuthalMap({
       setTooltip({
         x: e.containerPoint.x,
         y: e.containerPoint.y,
-        text: `${e.latlng.lat.toFixed(1)}°, ${e.latlng.lng.toFixed(1)}°  ${latLonToMaidenhead({ lat: e.latlng.lat, lon: e.latlng.lng })}  ${Math.round(p.dist)} km  ${Math.round(bearing)}°`,
+        text: `${e.latlng.lat.toFixed(1)}°, ${e.latlng.lng.toFixed(1)}°  ${latLonToMaidenhead({ lat: e.latlng.lat, lon: e.latlng.lng })}  ${Math.round(p.dist)} km  ${formatBearing(bearing, lat0, lon0)}`,
       });
     });
     map.on('mouseout', () => setTooltip(null));

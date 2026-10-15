@@ -85,6 +85,8 @@ export function buildPanelDefs({ isLocalInstall = false } = {}) {
     'world-clocks': { name: 'World Clocks', icon: '🌐' },
     stopwatch: { name: 'Stopwatch', icon: '⏱️' },
     'aircraft-nearby': { name: 'Aircraft Nearby', icon: '✈️' },
+    hamalert: { name: 'HamAlert', icon: '🔔' },
+    balloons: { name: 'Balloons (HAB)', icon: '🎈' },
   };
 
   // Append auto-discovered panel plugins (src/plugins/local/panels/*.jsx).

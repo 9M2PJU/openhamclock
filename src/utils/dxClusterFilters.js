@@ -1,4 +1,5 @@
 import { detectMode, getBandFromFreq, getCallsignInfo } from './callsign';
+import { extractIota } from './iota.js';
 
 /**
  * dxClusterFilters.js : DXCluster Filtering Utilities
@@ -279,6 +280,13 @@ export const applyDXFilters = (item, filters) => {
   // DXpedition list (NG3K data). Untagged items (e.g. from sources that skip
   // the paths enrichment) are treated as non-DXpeditions.
   if (filters.dxpeditionsOnly && !item.isDXpedition) {
+    return false;
+  }
+
+  // IOTA-only: keep spots whose comment names a real IOTA reference
+  // ("EU-005", "na067"). Cluster spots carry no IOTA field, so the comment
+  // is the only signal — see utils/iota.js.
+  if (filters.iotaOnly && !extractIota(item.comment)) {
     return false;
   }
 

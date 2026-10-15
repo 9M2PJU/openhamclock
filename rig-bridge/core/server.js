@@ -1041,6 +1041,11 @@ function buildSetupHtml(version, firstRunToken = null) {
         { id: 'bindHost', label: 'Bind Address', type: 'text', default: '0.0.0.0' },
         { id: 'verbose', label: 'Verbose logging', type: 'checkbox', default: false },
       ]},
+      { key: 'hamalert', name: 'HamAlert', maturity: 'alpha', desc: 'Your HamAlert triggers as a live spot feed (telnet to hamalert.org:7300) — shown in the HamAlert panel', fields: [
+        { id: 'username', label: 'HamAlert Username', type: 'text', default: '' },
+        { id: 'password', label: 'HamAlert Password', type: 'text', default: '' },
+        { id: 'verbose', label: 'Verbose logging', type: 'checkbox', default: false },
+      ]},
     ];
 
     function maturityBadge(level) {
@@ -2244,7 +2249,7 @@ function createServer(registry, version) {
       config.rtltcp = { ...config.rtltcp, ...newConfig.rtltcp };
     }
     // Deep-merge plugin config sections
-    for (const key of ['mshv', 'jtdx', 'js8call', 'aprs', 'rotator', 'cloudRelay', 'winlink', 'meshcom']) {
+    for (const key of ['mshv', 'jtdx', 'js8call', 'aprs', 'rotator', 'cloudRelay', 'winlink', 'meshcom', 'hamalert']) {
       if (newConfig[key]) {
         config[key] = { ...(config[key] || {}), ...newConfig[key] };
         // Handle nested objects (e.g. winlink.pat)

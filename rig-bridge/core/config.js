@@ -205,6 +205,15 @@ const DEFAULT_CONFIG = {
     ohcUrl: 'http://localhost:8080', // URL of the OpenHamClock server
     verbose: false,
   },
+  // HamAlert spot feed — persistent telnet session to hamalert.org:7300
+  hamalert: {
+    enabled: false,
+    username: '', // HamAlert username
+    password: '', // HamAlert password
+    host: 'hamalert.org',
+    port: 7300,
+    verbose: false,
+  },
   // TLS/HTTPS — enables HTTPS to avoid mixed-content errors when OHC is served over HTTPS
   tls: {
     enabled: false, // false = plain HTTP (backward-compatible default)
@@ -249,6 +258,7 @@ function loadConfig() {
           ...(raw.winlink || {}),
           pat: { ...DEFAULT_CONFIG.winlink.pat, ...((raw.winlink || {}).pat || {}) },
         },
+        hamalert: { ...DEFAULT_CONFIG.hamalert, ...(raw.hamalert || {}) },
         tls: { ...DEFAULT_CONFIG.tls, ...(raw.tls || {}) },
         // Coerce logging to boolean in case the stored value is a string
         logging: raw.logging !== undefined ? !!raw.logging : DEFAULT_CONFIG.logging,
@@ -271,6 +281,7 @@ function loadConfig() {
           'rotator',
           'cloudRelay',
           'winlink',
+          'hamalert',
           'tls',
         ]) {
           if (DEFAULT_CONFIG[section] && raw[section]) {

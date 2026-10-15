@@ -118,6 +118,7 @@ export const SettingsPanel = ({
   const [propMode, setPropMode] = useState(config?.propagation?.mode || 'SSB');
   const [propPower, setPropPower] = useState(config?.propagation?.power || 100);
   const [licenseClass, setLicenseClass] = useState(config?.licenseClass || 'other');
+  const [bearings, setBearings] = useState(config?.bearings === 'magnetic' ? 'magnetic' : 'true');
   const [rigEnabled, setRigEnabled] = useState(config?.rigControl?.enabled || false);
   const [rigHost, setRigHost] = useState(config?.rigControl?.host || 'http://localhost');
   const [rigPort, setRigPort] = useState(normalizeRigPort(config?.rigControl?.port));
@@ -446,6 +447,7 @@ export const SettingsPanel = ({
       setPropMode(config.propagation?.mode || 'SSB');
       setPropPower(config.propagation?.power || 100);
       setLicenseClass(config.licenseClass || 'other');
+      setBearings(config.bearings === 'magnetic' ? 'magnetic' : 'true');
       setRigEnabled(config.rigControl?.enabled || false);
       setRigHost(config.rigControl?.host || 'http://localhost');
       setRigPort(normalizeRigPort(config.rigControl?.port));
@@ -718,6 +720,7 @@ export const SettingsPanel = ({
       // next load (N3DD report).
       propagation: { ...config.propagation, mode: propMode, power: parseFloat(propPower) || 100 },
       licenseClass,
+      bearings,
       wsjtxRelayMulticast: { enabled: wsjtxMulticastEnabled, address: wsjtxMulticastAddress },
       rigControl: {
         enabled: rigEnabled,
@@ -2828,6 +2831,57 @@ export const SettingsPanel = ({
                       {lang.name}
                     </button>
                   ))}
+                </div>
+              </div>
+
+              {/* Bearings: true vs magnetic north (WMM2025 declination at DE) */}
+              <div style={{ marginBottom: '20px' }}>
+                <label
+                  style={{
+                    display: 'block',
+                    marginBottom: '8px',
+                    color: 'var(--text-muted)',
+                    fontSize: '11px',
+                    textTransform: 'uppercase',
+                    letterSpacing: '1px',
+                  }}
+                >
+                  🧭 {t('station.settings.bearings.title')}
+                </label>
+                <div
+                  style={{ display: 'flex', gap: '8px' }}
+                  role="radiogroup"
+                  aria-label={t('station.settings.bearings.title')}
+                >
+                  {[
+                    ['true', t('station.settings.bearings.true')],
+                    ['magnetic', t('station.settings.bearings.magnetic')],
+                  ].map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      role="radio"
+                      aria-checked={bearings === value}
+                      onClick={() => setBearings(value)}
+                      style={{
+                        flex: 1,
+                        padding: '10px',
+                        background: bearings === value ? 'var(--accent-amber)' : 'var(--bg-tertiary)',
+                        border: `1px solid ${bearings === value ? 'var(--accent-amber)' : 'var(--border-color)'}`,
+                        borderRadius: '6px',
+                        color: bearings === value ? '#000' : 'var(--text-secondary)',
+                        fontSize: '12px',
+                        fontFamily: 'var(--font-mono)',
+                        fontWeight: bearings === value ? '700' : '400',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '6px' }}>
+                  {t('station.settings.bearings.hint')}
                 </div>
               </div>
             </>

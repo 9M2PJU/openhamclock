@@ -311,6 +311,10 @@ require('./server/routes/config-routes')(app, ctx);
 require('./server/routes/geo-time')(app, ctx);
 require('./server/routes/admin')(app, ctx);
 require('./server/routes/push')(app, ctx); // Web Push (dormant without VAPID keys); needs swpc-alerts exports
+require('./server/routes/motd')(app, ctx); // Message of the day (env MOTD or /api/admin/motd)
+require('./server/routes/netlogger')(app, ctx); // NetLogger live nets proxy (60 s cache)
+require('./server/routes/hamalert')(app, ctx); // HamAlert server feed (dormant without HAMALERT_USER/PASS)
+require('./server/routes/balloons')(app, ctx); // SondeHub Amateur balloon telemetry proxy (2 min cache)
 
 // Subsystem health background refresher (read by /api/health).
 const health = require('./server/health');

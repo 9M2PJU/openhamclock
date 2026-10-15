@@ -70,6 +70,7 @@ export const DEFAULT_CONFIG = {
   customDxCluster: { enabled: false, host: '', port: 7300 },
   udpDxCluster: { host: '', port: 12060 },
   wsjtxRelayMulticast: { enabled: false, address: '224.0.0.1' },
+  bearings: 'true', // 'true' = true north, 'magnetic' = corrected by WMM2025 declination at DE (suffix "M")
 };
 
 // Cache for server config

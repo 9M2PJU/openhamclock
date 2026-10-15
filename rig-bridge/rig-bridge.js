@@ -238,6 +238,12 @@ pluginBus.on('aprs', (pkt) => {
   broadcast({ type: 'plugin', event: 'aprs', source: 'aprs-tnc', data: pkt });
 });
 
+pluginBus.on('hamalert', (alert) => {
+  // HamAlert spots → browsers on the local /stream (useHamAlert listens for
+  // event:'hamalert'). Cloud relay mode batches these as `hamAlerts` instead.
+  broadcast({ type: 'plugin', event: 'hamalert', source: 'hamalert', data: alert });
+});
+
 pluginBus.on('meshcom', (pkt) => {
   // Bridge MeshCom packets to the SSE /stream for browsers in local/direct mode.
   // In cloud relay mode, cloud-relay.js batches and POSTs these to the OHC server

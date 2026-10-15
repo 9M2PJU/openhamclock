@@ -112,6 +112,8 @@ export const PANEL_HELP = {
   'world-clocks': 'utility',
   stopwatch: 'utility',
   'aircraft-nearby': 'utility',
+  hamalert: 'spots-activity',
+  balloons: 'utility',
 };
 
 /**
@@ -135,6 +137,7 @@ export const LAYER_HELP = {
   'winlink-gateways': 'emcomm-mesh',
   'worked-grids': 'logbook',
   'active-users': 'map-layers',
+  balloons: 'utility',
 };
 
 /** Settings tab id → topic key */

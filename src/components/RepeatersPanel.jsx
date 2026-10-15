@@ -5,6 +5,7 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { apiFetch } from '../utils/apiFetch';
+import { formatBearing, useBearingMode } from '../utils/bearing.js';
 
 const RADIUS_OPTIONS_KM = [25, 50, 100, 200, 500];
 const RADIUS_KEY = 'ohc_repeaters_radius';
@@ -16,6 +17,7 @@ export const RepeatersPanel = ({ config }) => {
   const lat = config?.location?.lat ?? null;
   const lon = config?.location?.lon ?? null;
   const useMiles = (config?.allUnits?.dist ?? 'metric') === 'imperial';
+  const bearingMode = useBearingMode();
 
   const [radiusKm, setRadiusKm] = useState(() => {
     try {
@@ -144,7 +146,7 @@ export const RepeatersPanel = ({ config }) => {
                   {r.city && <span> · {r.city}</span>}
                 </span>
                 <span style={{ flexShrink: 0, color: 'var(--text-secondary)' }}>
-                  {dist(r.km)} {compass(r.bearing)}
+                  {dist(r.km)} {compass(r.bearing)} {formatBearing(r.bearing, lat, lon, bearingMode)}
                 </span>
               </div>
             </div>

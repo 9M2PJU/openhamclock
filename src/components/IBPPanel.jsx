@@ -18,6 +18,7 @@ import { useIBPRBN } from '../hooks/useIBPRBN';
 import { useIBPHistory } from '../hooks/useIBPHistory';
 import { useRig } from '../contexts/RigContext';
 import { formatDistance } from '../utils/geo';
+import { formatBearing as formatBearingDeg, useBearingMode } from '../utils/bearing.js';
 import { DEFAULT_BAND_COLORS } from '../utils/bandColors';
 import {
   IBP_BEACONS,
@@ -28,12 +29,12 @@ import {
   getUpcomingSchedule,
 } from '../utils/ibp';
 
-/** Format a bearing in degrees as a compact cardinal+degrees string. */
-const formatBearing = (deg) => {
+/** Format a bearing in degrees as a compact cardinal+degrees string ("NE 47°", or "NE 40°M" in magnetic mode). */
+const formatBearing = (deg, deLat, deLon, mode) => {
   if (deg == null) return null;
   const dirs = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
   const card = dirs[Math.round((((deg % 360) + 360) % 360) / 45) % 8];
-  return `${card} ${Math.round(deg)}°`;
+  return `${card} ${formatBearingDeg(deg, deLat, deLon, mode)}`;
 };
 
 /** Format seconds as m:ss. */
@@ -56,6 +57,7 @@ const VIEWS = ['live', 'log'];
 export const IBPPanel = ({ deLat = null, deLon = null, units = 'metric' }) => {
   const { t } = useTranslation();
   const { slot, schedule, secondsLeft, cycleSecondsLeft, slotProgress } = useIBP(deLat, deLon);
+  const bearingMode = useBearingMode();
   const { enabled: rigEnabled, tuneTo } = useRig();
   const rbnData = useIBPRBN();
   // Accumulate regardless of active view so the log is populated on switch.
@@ -284,7 +286,7 @@ export const IBPPanel = ({ deLat = null, deLon = null, units = 'metric' }) => {
                         whiteSpace: 'nowrap',
                       }}
                     >
-                      {formatBearing(bearing)}
+                      {formatBearing(bearing, deLat, deLon, bearingMode)}
                     </div>
                     <div style={{ fontSize: '9px', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
                       {formatDistance(distanceKm, units)}

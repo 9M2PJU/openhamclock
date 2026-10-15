@@ -57,6 +57,7 @@ import { use630mBandEnabled } from '../hooks/use630mBandEnabled.js';
 // DX cluster data, POTA/SOTA spots, and WSJT-X decodes come from external sources
 // and could contain malicious HTML/script tags in callsigns, comments, or park names.
 import { esc } from '../utils/escapeHtml.js';
+import { extractIota, iotaName } from '../utils/iota.js';
 import { LiEye, LiEyeOff, LiLock, LiUnlock, LiPlus, LiMinus, LiRotate } from './Icons.jsx';
 
 // Lightweight error boundary for the non-Leaflet projections (azimuthal canvas,
@@ -1731,7 +1732,12 @@ export const WorldMap = ({
           });
 
           // Render circleMarker on all 3 world copies
-          const dxPopupHtml = `<b data-map-call="${esc(dxCall)}" data-loc-lat="${path.dxLat}" data-loc-lon="${path.dxLon}" style="color: ${color}" onmouseenter="this.style.color='var(--accent-white)';this.style.fontWeight='bold'" onmouseleave="this.style.color='${color}';this.style.fontWeight=''">${esc(dxCall)}</b><br>${esc(path.freq)} MHz<br>by <span data-map-call="${esc(path.spotter)}" data-loc-lat="${path.spotterLat}" data-loc-lon="${path.spotterLon}">${esc(path.spotter)}</span>`;
+          // IOTA reference from the comment → "IOTA EU-005 · Great Britain" line in the popup
+          const pathIota = extractIota(path.comment);
+          const iotaHtml = pathIota
+            ? `<br><span style="color: var(--accent-cyan); font-size: 11px">IOTA ${esc(pathIota)}${iotaName(pathIota) ? ' · ' + esc(iotaName(pathIota)) : ''}</span>`
+            : '';
+          const dxPopupHtml = `<b data-map-call="${esc(dxCall)}" data-loc-lat="${path.dxLat}" data-loc-lon="${path.dxLon}" style="color: ${color}" onmouseenter="this.style.color='var(--accent-white)';this.style.fontWeight='bold'" onmouseleave="this.style.color='${color}';this.style.fontWeight=''">${esc(dxCall)}</b><br>${esc(path.freq)} MHz<br>by <span data-map-call="${esc(path.spotter)}" data-loc-lat="${path.spotterLat}" data-loc-lon="${path.spotterLon}">${esc(path.spotter)}</span>${iotaHtml}`;
           replicatePoint(path.dxLat, path.dxLon).forEach(([lat, lon]) => {
             const dxCircle = L.circleMarker([lat, lon], {
               radius: isHovered ? 12 : 6,
