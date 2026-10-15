@@ -40,6 +40,7 @@ const SNAPSHOT_KEYS = [
   'openhamclock_contestSession',
   'openhamclock_freqMemories',
   'openhamclock_netSchedule',
+  'openhamclock_netControlScript',
   'openhamclock_pskPanelMode',
   'openhamclock_bandColors',
   'openhamclock_satelliteFilters',

@@ -11,6 +11,8 @@ import { calculateDistance, formatDistance, maidenheadToLatLon, latLonToMaidenhe
 import { esc } from '../utils/escapeHtml.js';
 import { apiFetch } from '../utils/apiFetch.js';
 import { mergeShelters } from '../utils/emcommShelters.js';
+import NetControlPanel from '../components/NetControlPanel.jsx';
+import { getNetControlRoster, mergeRosters, NET_CONTROL_ROSTER_EVENT } from '../utils/netControl.js';
 
 // Sidebar panel collapse state (#1188). Mode decides what a fresh visit to
 // the layout starts with: 'remember' restores each section's last state,
@@ -257,6 +259,21 @@ export default function EmcommLayout(props) {
   const [aprsSource, setAprsSource] = useState('all');
   // Net operations
   const [netRoster, setNetRoster] = useState([]);
+  // Voice-net check-ins from the Net Control panel, in the same roster entry
+  // shape. Merged into the roster for display and the EmComm-only map filter
+  // only — the event-log diff below keeps watching the APRS roster alone,
+  // because Net Control records its own check-ins.
+  const [voiceRoster, setVoiceRoster] = useState(getNetControlRoster);
+  useEffect(() => {
+    const refresh = () => setVoiceRoster(getNetControlRoster());
+    window.addEventListener(NET_CONTROL_ROSTER_EVENT, refresh);
+    window.addEventListener('storage', refresh);
+    return () => {
+      window.removeEventListener(NET_CONTROL_ROSTER_EVENT, refresh);
+      window.removeEventListener('storage', refresh);
+    };
+  }, []);
+  const displayRoster = useMemo(() => mergeRosters(netRoster, voiceRoster), [netRoster, voiceRoster]);
   // RF-heard APRS shelter reports (kept alongside FEMA data — still works
   // via local TNC when internet infrastructure is down)
   const [aprsShelterReports, setAprsShelterReports] = useState([]);
@@ -426,7 +443,7 @@ export default function EmcommLayout(props) {
     // list but whose position the roster still knows is put back on the map
     // from the roster entry, so checking in never makes a station vanish.
     const rosterKeys = new Set();
-    for (const op of netRoster) {
+    for (const op of displayRoster) {
       if (!op?.call) continue;
       rosterKeys.add(op.call.toUpperCase());
       rosterKeys.add(op.call.toUpperCase().split('-')[0]);
@@ -438,7 +455,7 @@ export default function EmcommLayout(props) {
         rosterKeys.has(String(s.call || '').toUpperCase()),
     );
     const present = new Set(kept.map((s) => String(s.ssid || s.call).toUpperCase()));
-    for (const op of netRoster) {
+    for (const op of displayRoster) {
       if (!op?.call || op.lat == null || op.lon == null) continue;
       if (present.has(op.call.toUpperCase())) continue;
       kept.push({
@@ -454,7 +471,7 @@ export default function EmcommLayout(props) {
       });
     }
     return kept;
-  }, [aprsData?.filteredStations, aprsSource, emcommOnly, netRoster]);
+  }, [aprsData?.filteredStations, aprsSource, emcommOnly, displayRoster]);
 
   // Apply APRS source filter
   const aprsStations = useMemo(() => {
@@ -1669,12 +1686,23 @@ export default function EmcommLayout(props) {
             )}
           </PanelSection>
 
+          {/* Net Control — running a voice net (check-ins, traffic, script, report) */}
+          <PanelSection
+            title="Net Control"
+            count={voiceRoster?.active ? voiceRoster.roster.length : 0}
+            color="#14b8a6"
+            panels={panels}
+            bodyMaxHeight="none"
+          >
+            <NetControlPanel callsign={config.callsign} embedded />
+          </PanelSection>
+
           {/* Net Operations Panel */}
-          <PanelSection title="Net Roster" count={netRoster.length} color="#a855f7" panels={panels}>
-            {netRoster.length === 0 ? (
+          <PanelSection title="Net Roster" count={displayRoster.length} color="#a855f7" panels={panels}>
+            {displayRoster.length === 0 ? (
               <EmptyState text="No operators checked in. Send 'CQ NETNAME status' to EMCOMM via APRS to check in." />
             ) : (
-              netRoster.map((op) => {
+              displayRoster.map((op) => {
                 const ageStr = op.age < 1 ? 'now' : op.age < 60 ? `${op.age}m` : `${Math.floor(op.age / 60)}h`;
                 const hasPos = op.lat != null && op.lon != null;
                 return (
@@ -1699,7 +1727,10 @@ export default function EmcommLayout(props) {
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <div>
                         <span style={{ color: op.stale ? '#f59e0b' : '#22c55e', fontWeight: 600 }}>{op.call}</span>
-                        <span style={{ color: '#888', marginLeft: '6px', fontSize: '10px' }}>{op.netName}</span>
+                        <span style={{ color: '#888', marginLeft: '6px', fontSize: '10px' }}>
+                          {op.source === 'net-control' ? '🎙️ ' : ''}
+                          {op.netName}
+                        </span>
                       </div>
                       <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
                         <span style={{ color: '#888', fontSize: '10px' }}>{ageStr}</span>
@@ -2150,7 +2181,7 @@ function ResourceSummary({ stations, panels }) {
 }
 
 /** Collapsible panel section wrapper */
-function PanelSection({ title, count, color, extra, panels, children }) {
+function PanelSection({ title, count, color, extra, panels, bodyMaxHeight = '250px', children }) {
   const [localCollapsed, setLocalCollapsed] = useState(false);
   const collapsed = panels ? panels.collapsedFor(title) : localCollapsed;
   const setCollapsed = panels ? () => panels.toggle(title) : setLocalCollapsed;
@@ -2199,7 +2230,7 @@ function PanelSection({ title, count, color, extra, panels, children }) {
           </span>
         )}
       </div>
-      {!collapsed && <div style={{ padding: '4px 2px', maxHeight: '250px', overflowY: 'auto' }}>{children}</div>}
+      {!collapsed && <div style={{ padding: '4px 2px', maxHeight: bodyMaxHeight, overflowY: 'auto' }}>{children}</div>}
     </div>
   );
 }

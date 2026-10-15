@@ -355,6 +355,7 @@ _The Solar panel cycling through live imagery, indices, X-ray flux, and the moon
 - **MeshCom** — nodes, messages, and weather/telemetry from a MeshCom LoRa mesh via the rig-bridge UDP plugin.
 - **Winlink** — gateway discovery plus a Pat client inbox/outbox and compose, via the rig-bridge Winlink plugin.
 - **Digital Modes** — status and control for WSJT-X, JTDX, MSHV, and JS8Call connected through Rig Bridge (halt TX, send free text).
+- **Net Control** — run a voice net: keyboard-speed check-ins with status flags, a traffic queue, a read-aloud preamble, and a net report at close. See [Net Control (voice nets)](#net-control-voice-nets).
 
 The full EmComm _layout_ is described in [The EmComm layout](#the-emcomm-layout).
 
@@ -676,7 +677,7 @@ A purpose-built dashboard for ARES/RACES/SKYWARN and served-agency work (Setting
 _The EmComm layout: map with range rings and alert polygons, and the operations rail_
 
 - **Map:** range rings at 50/100/200 km, NWS alert polygons by severity, shelter markers, EmComm APRS stations, and an APRS source toggle (All / RF Only / Internet Only).
-- **Panels:** Resource Summary (aggregated resource dashboard), NWS Alerts, FEMA Disaster Declarations, Nearby Shelters (with capacity, ♿ and 🐾 indicators — including shelter reports heard over RF), EmComm Stations, and a live Net Roster.
+- **Panels:** Resource Summary (aggregated resource dashboard), NWS Alerts, FEMA Disaster Declarations, Nearby Shelters (with capacity, ♿ and 🐾 indicators — including shelter reports heard over RF), EmComm Stations, a live Net Roster, and [Net Control](#net-control-voice-nets) for running a voice net.
 - **Net operations:** check in by APRS message (`CQ NETNAME <status>` to `EMCOMM`), check out with `U NETNAME`, or use the manual check-in API; the roster tracks status, last-heard, and resources.
 - **Messaging:** point-to-point APRS messages (67 chars) from the roster's MSG button, sent via your local TNC.
 - **Resource tokens:** structured data in APRS beacon comments — `[Beds 30/100][Power OK][Water -50]` — parsed into capacity bars, need flags, and the aggregate dashboard. Any `[Key Value]` works; built-ins include Beds, Water, Food, Power, Fuel, Med, Staff, Evac, Comms, Gen.
@@ -684,6 +685,35 @@ _The EmComm layout: map with range rings and alert polygons, and the operations 
 - **Winlink:** the gateway map layer and panel, plus Pat client messaging through rig-bridge.
 - **Event Log:** significant events — net check-ins/outs, APRS messages sent and received, new NWS alerts, shelter and field reports, first-heard EmComm stations — are recorded automatically in your browser (capped at 2000). Export the log as **CSV** or a print-friendly **After Action Report** (with operator callsign, station location, and operation date range; use your browser's print dialog to save as PDF), or clear it between operations.
 - **Field Reports:** Winlink Express at an EOC accumulates a CSV of received forms (Field Situation Reports, Damage Assessments) with embedded geolocation. Point the rig-bridge `winlink-express-csv` plugin at that file and new rows appear in the Field Reports panel and as 📋 map markers — form type, callsign, age, position, and free text. See the [rig-bridge README](https://github.com/accius/openhamclock/blob/main/rig-bridge/README.md#winlink-express-csv-ingest-beta) for setup.
+
+### Net Control (voice nets)
+
+The **Net Control** panel is a logging desk for whoever is running a voice net on a repeater or simplex frequency. It sits in the EmComm rail and is also available in the Dockable layout (**＋ → Net Control**).
+
+![Net Control in the EmComm rail: a running net with its timer and check-in counter, the check-in box and flag buttons, the traffic queue calling the next station with its phonetic spelling, and the station list](images/manual/emcomm-net-control.jpg)
+
+_Net Control in the EmComm rail: a running net with its timer and counter, the check-in box, the traffic queue, and the station list_
+
+**Starting a net.** Pick a net from your [Nets](#station-and-rig) schedule (name and frequency fill in), or type a name and a frequency/repeater description, and confirm the net control callsign (your own call by default). **Start net** opens it: a running timer and a counter (stations currently in / total check-ins) sit at the top.
+
+**Checking stations in.** The check-in box is built for keyboard speed: type a callsign and press **Enter**. Status flags go after the call as letters — **T** traffic, **M** mobile, **S** short time, **R** relay, **I** in-and-out — as a separate word (`W1AW T`, `W1AW TM`) or a slash suffix (`W1AW/M`). Use `/` or `+` for three or more letters (`W1AW /TMS`). Anything after the flags is kept as a note (`W1AW T Hiram, county EOC`). You can also click the flag buttons under the box, or press **Alt+T / M / S / R / I**, before pressing Enter.
+
+- **Names and locations** fill in by themselves: first from stations you have logged on previous nets (instant, works offline), then from your logbook, then from the callbook lookup (the same QRZ/HamQTH path as the callsign popups) when the internet is available.
+- **Duplicates:** pressing Enter twice on the same call within ten seconds is ignored with a warning.
+- **Re-checks:** checking in a station that is already on the list moves it to the top and counts a re-check (↻). A station that had checked out comes back in.
+- **Check out** with the **Out** button; the line stays on the list, greyed. **✕** removes a mistyped call.
+- **Undo** reverses the last check-in, check-out, flag change, removal, or traffic pass (also **Ctrl+Z** with the check-in box empty). **Esc** clears the box.
+- Flags can be toggled on any line by clicking them.
+
+**Traffic.** Stations flagged with traffic form a queue in check-in order. **Next** (or **Alt+N**) calls the first one, shown large with its phonetic spelling; **Passed** marks it done and records it in the EmComm event log. The ✓ beside a queued station passes it directly.
+
+**Net script.** The **Script** tab holds a preamble and a closing for reading on the air, shown in large type; **Read aloud** fills the screen with it (click or Esc to close). **Edit** to write your own; the placeholders `{net}`, `{ncs}`, `{freq}`, `{date}`, `{time}` and `{count}` are filled in from the running net. The default is a typical ARES-style directed-net preamble, and **Default** restores it. Your script syncs and saves to profiles like your other settings.
+
+**Closing and the report.** **Close net** produces the net report: name, net control, frequency, opened and closed times, duration, total check-ins, unique stations, traffic listed and passed, and every station with check-in time, flags, name, and location. **Copy text** puts a plain-text version on the clipboard for email; **CSV** downloads a spreadsheet; **Print** opens a print-ready page (save it as PDF from the print dialog).
+
+**Where it goes.** Opening and closing the net, every check-in and check-out, and each traffic pass are recorded in the EmComm [Event Log](#the-emcomm-layout), so they appear in the After Action Report. While the net runs its stations also appear in the EmComm **Net Roster** alongside APRS check-ins (an APRS check-in for the same call takes precedence there); the closed net's station list stays stored in the same roster format for forms and reports.
+
+**Reloads and history.** The running net is saved in your browser after every change, so a reload or a crash does not lose it. Closed nets are kept in the **History** tab (the last 50); open any of them to see its report again, or **Export all (CSV)** for one spreadsheet of every net. The running net and history stay in this browser and are not synced to other devices.
 
 Deep dive: [docs/emcomm-roadmap.md](emcomm-roadmap.md).
 

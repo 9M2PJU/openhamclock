@@ -62,6 +62,7 @@ export function buildPanelDefs({ isLocalInstall = false } = {}) {
     'rig-control': { name: 'Rig Control', icon: '📻' },
     'freq-memories': { name: 'Frequencies', icon: '📻' },
     'net-schedule': { name: 'Nets', icon: '🕐' },
+    'net-control': { name: 'Net Control', icon: '🎙️' },
     'callsign-search': { name: 'Callsign Lookup', icon: '🔎' },
     'dx-news': { name: 'DX News', icon: '📰' },
     'solar-cycle': { name: 'Solar Cycle', icon: '📈' },
