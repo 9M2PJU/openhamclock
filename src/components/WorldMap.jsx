@@ -77,6 +77,7 @@ function CompactMenuWrap({ compact, open, children }) {
   if (!open) return null;
   return (
     <div
+      data-compact-pop="menu"
       style={{
         position: 'absolute',
         top: '44px',
@@ -953,9 +954,45 @@ export const WorldMap = ({
   // Compact controls (phones): one open popover at a time ('menu' | 'night'),
   // and a band legend that starts collapsed to a chip. Kept apart from the
   // persisted desktop legend setting so a phone never changes the desktop.
-  const compact = useCompactMapControls(compactControls);
+  // The map's root element: its width drives compact mode (a small Dockable
+  // map panel goes compact even on a desktop screen).
+  const mapRootRef = useRef(null);
+  const compact = useCompactMapControls(compactControls, mapRootRef);
   const [compactPopover, setCompactPopover] = useState(null);
   const [compactLegendOpen, setCompactLegendOpen] = useState(false);
+  const compactOverlayOpen = compact && (compactPopover !== null || compactLegendOpen);
+
+  // An open compact popover or legend closes on any tap outside it (a map
+  // tap, the start of a pan — capture phase, so Leaflet's own handlers can't
+  // swallow it) and on Escape. Only listening while one is open.
+  useEffect(() => {
+    if (!compactOverlayOpen) return undefined;
+    const closeAll = () => {
+      setCompactPopover(null);
+      setCompactLegendOpen(false);
+    };
+    const onPointerDown = (e) => {
+      if (e.target?.closest?.('[data-compact-pop]')) return;
+      closeAll();
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') closeAll();
+    };
+    document.addEventListener('pointerdown', onPointerDown, true);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown, true);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [compactOverlayOpen]);
+
+  // Leaving compact mode (map panel resized wider) drops any open popover
+  useEffect(() => {
+    if (!compact) {
+      setCompactPopover(null);
+      setCompactLegendOpen(false);
+    }
+  }, [compact]);
   const toggleCompactPopover = useCallback((id) => {
     setCompactLegendOpen(false);
     setCompactPopover((cur) => (cur === id ? null : id));
@@ -2759,7 +2796,7 @@ export const WorldMap = ({
   );
 
   return (
-    <div data-map-surface="" style={{ position: 'relative', height: '100%', minHeight: '200px' }}>
+    <div ref={mapRootRef} data-map-surface="" style={{ position: 'relative', height: '100%', minHeight: '200px' }}>
       {/* Azimuthal equidistant projection (canvas-based) */}
       {isAzimuthal && (
         <AzimuthalErrorBoundary
@@ -3109,7 +3146,7 @@ export const WorldMap = ({
               </button>
 
               {compact ? (
-                <div style={{ position: 'relative' }}>
+                <div data-compact-pop="night" style={{ position: 'relative' }}>
                   <button
                     type="button"
                     onClick={() => toggleCompactPopover('night')}
@@ -3255,6 +3292,7 @@ export const WorldMap = ({
           {compact && (
             <button
               type="button"
+              data-compact-pop="menu"
               onClick={() => toggleCompactPopover('menu')}
               title="Map projection and style"
               aria-label="Map projection and style"
@@ -3581,6 +3619,7 @@ export const WorldMap = ({
       {!hideOverlays && !mapUiHidden && (
         <button
           onClick={onLegendToggle}
+          data-compact-pop={compact ? 'legend' : undefined}
           title={legendOpen ? 'Hide legend' : 'Show legend'}
           aria-expanded={compact ? legendOpen : undefined}
           style={{
@@ -3611,6 +3650,7 @@ export const WorldMap = ({
       {/* Legend - centered above news ticker */}
       {!hideOverlays && !mapUiHidden && legendOpen && (
         <div
+          data-compact-pop={compact ? 'legend' : undefined}
           style={{
             position: 'absolute',
             bottom: compact ? '46px' : '44px',
