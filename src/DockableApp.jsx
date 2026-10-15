@@ -448,6 +448,18 @@ export const DockableApp = ({
   const bearingMode = useBearingMode();
 
   // Unified Spot Click Handler (Tune + Set DX)
+  // Reachable Winlink gateways: clicking one sets it as DX and brings it into
+  // view, same as a spot click. Tuning is handled inside the panel, which
+  // knows the channel's dial frequency and rig mode.
+  const handleSelectWinlinkGateway = useCallback(
+    (gw) => {
+      if (!gw || gw.lat == null || gw.lon == null) return;
+      handleDXChange({ lat: gw.lat, lon: gw.lon, callsign: gw.callsign ?? null });
+      requestMapFocus({ lat: gw.lat, lon: gw.lon });
+    },
+    [handleDXChange],
+  );
+
   const handleSpotClick = useCallback(
     (spot) => {
       if (!spot) return;
@@ -1574,7 +1586,15 @@ export const DockableApp = ({
           break;
 
         case 'winlink':
-          content = <WinlinkPanel />;
+          content = (
+            <WinlinkPanel
+              deLocation={config.location}
+              propConfig={config.propagation}
+              solarIndices={solarIndices}
+              units={config.allUnits?.dist}
+              onSelectGateway={handleSelectWinlinkGateway}
+            />
+          );
           break;
 
         case 'ibp':
