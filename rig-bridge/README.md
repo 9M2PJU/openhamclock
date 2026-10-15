@@ -772,6 +772,25 @@ See [Scenario 3](#scenario-3-cloud-relay-ohc-on-openhamclockcom-radio-at-home) f
 
 The rig-bridge holds a persistent long-poll connection to the server. The moment you click PTT or a DX spot, the server wakes that connection and delivers the command — no fixed poll tick to wait for.
 
+### MQTT Publish Plugin _(Beta)_
+
+Publishes rig and rotator state to an MQTT broker so Home Assistant, Node-RED or any dashboard can react to your shack:
+
+| Topic (prefix default `openhamclock`) | Payload                                                                                           |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `<prefix>/rig`                        | `{ connected, freq_hz, freq_mhz, band, mode, width, ptt, aprs_received, updated_at }`             |
+| `<prefix>/rotator`                    | `{ enabled, connected, az, el, target_az, target_el, updated_at }` (when the Rotator plugin runs) |
+| `<prefix>/bridge/status`              | `{ state: "online" \| "offline" }` — retained, with a Last-Will so HA marks entities unavailable  |
+
+1. Rig Bridge → **Plugins** tab → **MQTT Publish (Home Assistant)** → tick **Enable**
+2. Broker URL (`mqtt://192.168.1.10:1883`, `mqtts://…` or `ws://…`), username/password if your broker needs them, topic prefix
+3. Leave **Home Assistant discovery** on to get entities created automatically (`homeassistant/sensor/openhamclock_rig_bridge_*/config`): Rig Frequency, Mode, Band, PTT and Connected binary sensors, Rotator Azimuth/Elevation, APRS Packets Received
+4. **Save** — the plugin restarts with the new settings, no bridge restart needed
+
+PTT changes publish immediately; frequency/mode changes are throttled to one publish per second; everything is re-published every minute as a keepalive. Config section `mqtt`: `enabled`, `url`, `username`, `password`, `prefix`, `haDiscovery`, `publishInterval` (ms).
+
+The `mqtt` npm module is an optional dependency. Prebuilt binaries include it; when running from source, `npm install` installs it unless it fails, in which case the plugin logs `The "mqtt" module is not installed` and stays idle — run `npm install mqtt` inside `rig-bridge/`.
+
 **Config reference:**
 
 | Field          | Description                                     | Default |

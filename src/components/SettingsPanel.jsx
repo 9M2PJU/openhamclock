@@ -41,6 +41,7 @@ import { getNotificationPermission, requestNotificationPermission } from '../uti
 import { useGps } from '../hooks/useGps.js';
 import { useBridgeEvent } from '../hooks/useBridgeEvent.js';
 import { BRIGHTNESS_PREVIEW_EVENT } from '../hooks/app/useDisplayBrightness.js';
+import SpokenAlertsSettings from './SpokenAlertsSettings.jsx';
 import {
   isPushSupported,
   getServerPushStatus,
@@ -8257,6 +8258,8 @@ function AudioAlertsTab({ callsign, timeZone }) {
         </div>
         <AlarmSettingsSection timeZone={timeZone} />
       </div>
+      {/* Spoken alerts (Web Speech API) — master toggle, voice, rate, phonetics, per-feed */}
+      <SpokenAlertsSettings alertSettings={alertSettings} updateSettings={updateSettings} />
     </div>
   );
 }

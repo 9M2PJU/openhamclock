@@ -30,6 +30,7 @@ Features tagged are already merged and will ship in the next monthly drop — yo
 - [The EmComm layout](#the-emcomm-layout)
 - [The EME layout](#the-eme-layout)
 - [Alerts and notifications](#alerts-and-notifications)
+- [Home automation (MQTT and Home Assistant)](#home-automation-mqtt-and-home-assistant)
 - [Offline mode (PWA)](#offline-mode-pwa)
 - [Layouts, themes, and profiles](#layouts-themes-and-profiles)
 - [Languages](#languages)
@@ -261,7 +262,8 @@ _The DX Cluster panel: band-coloured spots with age, mode, and the tune / listen
 - **PSK Reporter** — who hears you (**TX** tab) and who you hear (**RX** tab) on digital modes, live via a server-side MQTT proxy with HTTP fallback. Filter by band, mode, retention window (2–15 min), callsign or grid. A gold star ★ marks _mutual_ reception — you hear them and they hear you on the same band, so a QSO is likely. A trash-can button clears all spots.
 - **POTA / SOTA / WWFF / WWBOTA** — currently active Parks, Summits, Flora & Fauna, and Bunkers on the Air activators, each with its own marker shape and color on the map (▲ green, ◆ orange, ▼ light green, ■ light purple). QRT and expired spots are filtered automatically. Band/mode/grid filters per panel; SOTA spots include summit name, altitude, and points.
 - **DXpeditions** — active and upcoming DXpeditions (NG3K data) with real operating callsigns, dates, and modes.
-- **Contests** — the WA7BNM contest calendar with countdowns and links; active contests highlighted.
+- **Contests** — the WA7BNM contest calendar with countdowns and links; active contests highlighted. Contests inside NOAA's 27-day window carry a **weekend outlook pill** — _Quiet / Unsettled / Active / Storm_ from the largest predicted Kp across the contest's days, plus the predicted SFI — with the full numbers in the tooltip (see the 27-Day Solar Outlook panel below).
+- **Opportunities** — a ranked list of what is worth working _right now_. Every station spotted in the last 15 minutes (DX cluster plus POTA/SOTA/WWFF/WWBOTA) is scored as **need × activity × reliability**: need comes from your native logbook (badges **NEW DXCC**, **NEW BAND** slot, **NEW ZONE** for WAZ, **NEW GRID** for VUCC, **NEW STATE** for WAS — the last two only once your log carries grids/states), activity is the number of distinct spotters decayed by spot age, and reliability is the ITU-R P.533 circuit reliability from your QTH to the spot for this hour, computed in your browser for the top 40 candidates and cached ten minutes (shown as a percentage; when no prediction is available yet the row falls back to the server's band-opening detector, shown as "~nn%"). Click a row to tune the rig and set DX (same handler as the DX Cluster panel), 📓+ logs it. Without a logbook the list still ranks by activity and path. An optional **Opportunities** alert feed (Settings → Alerts) fires when a new _top-five_ entry is at least a new DXCC entity.
 - **DX News ticker** — headlines merged from DXNews.com, DX-World, and NG3K, deduplicated over 24 hours, with adjustable text size and scroll speed (« » buttons, 0.5×–2.5×).
 - **DX News** — the same merged three-source feed as the ticker, but as a full reader panel: newest-first list with source badges and relative ages, expandable summaries with a link to the original article, per-source filter chips, and a read/unread dot that remembers what you've already seen (stored locally, capped at 200 items).
 - **POTA Activator** — self-spotting for park activations. Enter the park reference (verified live against the POTA park directory, so you see the park name before you post), frequency in kHz, and mode; the spot posts to pota.app under your callsign. POTA's response is shown verbatim, and a 30-second cooldown prevents accidental double-spots. Re-spot after a QSY to stay on the hunters' active list.
@@ -290,6 +292,8 @@ _The Solar panel cycling through live imagery, indices, X-ray flux, and the moon
 - **Grayline Planner** — when are DE and the DX target _both_ on the gray line? A seven-day timeline (one row per UTC day) paints each station's twilight windows — sunrise and sunset ± a margin you choose (15–90 minutes, default 30) — and highlights the overlaps in green, with a countdown to the next mutual window and a table of upcoming windows in UTC and your local time, tagged sunrise/sunset at each end. Click a window to set the [display time](#time-shift) to its start and watch the terminator line up. Pure local math (the same NOAA sunrise/sunset the DE/DX panels use) — no network.
 - **My Signal (RBN)** — who is hearing _you_: live Reverse Beacon Network skimmer reports of your callsign from the last 30 minutes, grouped by band with SNR and CW speed. Call CQ on CW/RTTY/FT modes and watch your signal land — the honest antenna-comparison tool.
 - **WSPR My Spots** — where your WSPR beacons were received in the last 24 hours (via the [wspr.live](https://wspr.live) archive): per-band counts, unique receivers, best DX, and the full reception list with SNR and distance. The milliwatt companion to the RBN panel.
+- **Station Benchmark** — how your station is heard _compared with your neighbours_. The server keeps a week of RBN skimmer reports for every spotted station and, for your callsign, matches each (skimmer, band, UTC hour) bucket against the median of the stations within 100/300/600/1000 km of your QTH heard by the _same_ skimmer in the _same_ hour — so propagation cancels out and what remains is antenna, power and QTH. Per-band bars of "you − neighbours" dB with the number of matched skimmer-hours, a 7-day trend sparkline per band, and a plain-language explanation line. RBN only (CW/RTTY/FT-mode skimmers): PSK Reporter "my spots" carry no SNR in OpenHamClock, so FT8 reports are not compared. Needs a callsign and location; neighbours only count once their location is known precisely (callbook or cluster grid), which the server resolves slowly in the background around places that have been asked about.
+- **27-Day Solar Outlook** — NOAA SWPC's 27-day outlook of predicted 10.7 cm flux, planetary A index and largest Kp per UTC day: sparklines plus a table with a _Quiet / Unsettled / Active / Storm_ pill per day, weekends tinted and today highlighted. Reissued daily by SWPC and cached six hours on the server. The same data feeds the per-contest pills in the Contests panel.
 
 ### Station and rig
 
@@ -711,11 +715,34 @@ Sensible guardrails: no alert storm on page load or when returning to a backgrou
 
 **Browser notifications:** each feed also gets a 🔔 toggle to show an OS-level notification alongside the tone — delivered through the service worker, so they work while the tab is backgrounded. Grant permission with the master button at the top of the Alerts tab.
 
+**Spoken alerts:** the **Speak Alerts** card at the bottom of the Alerts tab reads alerts aloud with your browser's text-to-speech (Web Speech API — no server, no account). A master toggle, a voice picker (whatever voices your OS/browser offers), a speaking-rate slider, **Spell callsigns phonetically** (ITU alphabet: "Watchlist: Victor Kilo Nine Mike Alfa on 20 metres CW"), and a per-feed checkbox for every feed — a feed must be enabled above _and_ ticked here to be spoken. Speech fires in the same place as the tone, so cooldowns apply; on top of that utterances are queued at most one every 4 seconds and identical sentences within a minute are dropped, so a burst of spots never stacks a minute of chatter. Hands on the paddles, eyes on the rig.
+
 **Push with the browser closed:** the **Push (Closed Browser) — Space Weather** card in Settings → Alerts subscribes your browser to true Web Push. In this first version it covers one thing, broadcast to everyone subscribed: **severe space weather alerts** — NOAA scale **2 or higher** (G2/S2/R2 and up), the same threshold as the in-app severe-alert feed. A **Send test** button verifies the whole path end-to-end. Notes:
 
 - Works on the hosted site out of the box. Push requires HTTPS and a service worker, so plain-http LAN installs can't use it (same browser rule as offline mode).
 - **Self-hosters:** the feature is dormant until you configure VAPID keys — run `npx web-push generate-vapid-keys` once and set `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, and `VAPID_SUBJECT` (a `mailto:` contact) in your `.env` (see `.env.example`). Without keys, the card simply shows push as unavailable and nothing else changes.
 - Per-feed/per-watchlist push (your spots, your callsign) needs server-side evaluation and is planned as a later phase.
+
+---
+
+## Home automation (MQTT and Home Assistant)
+
+OpenHamClock can _publish_ to an MQTT broker so the rest of your shack automation — Home Assistant, Node-RED, a dashboard on the wall — can react to space weather, band openings and your rig. Two independent publishers, both off by default:
+
+**Server (self-hosted only):** set `MQTT_PUBLISH_URL` in your `.env` (for example `mqtt://192.168.1.10:1883`, `mqtts://…` or `wss://…`), optionally `MQTT_PUBLISH_USER` / `MQTT_PUBLISH_PASS`, and `MQTT_PUBLISH_PREFIX` (default `openhamclock`). The server then publishes retained JSON topics, each at most once per minute and only when something changed:
+
+| Topic                    | Content                                                                                             |
+| ------------------------ | --------------------------------------------------------------------------------------------------- |
+| `<prefix>/spaceweather`  | `sfi`, `ssn`, `kp`, `a_index`, `xray_class`, `bz`, `solar_wind_speed`, `proton_flux`, NOAA `scales` |
+| `<prefix>/alerts/swpc`   | the latest SWPC alert products (count, max level, slim list)                                        |
+| `<prefix>/band-openings` | current band openings and zone openings from the server's spot-surge detector                       |
+| `<prefix>/status`        | `state: online/offline` (LWT), version, uptime, subsystem health — the availability topic           |
+
+Set `MQTT_PUBLISH_HA_DISCOVERY=true` and the server also publishes retained Home Assistant discovery configs under `homeassistant/sensor/openhamclock_*/config`, so SFI, SSN, Kp, A, X-ray class, Bz, solar wind, G/R scale, alert count, open-band count and server health appear as entities of one "OpenHamClock" device without any YAML. `GET /api/mqtt/status` shows whether the publisher is enabled and connected (no credentials are exposed). The hosted site does not publish MQTT — this needs your own server.
+
+**Rig Bridge (any install, including the hosted site):** the **MQTT Publish (Home Assistant)** plugin in Rig Bridge → Plugins publishes your rig's frequency, mode, band and PTT, rotator azimuth/elevation (when the Rotator plugin is enabled) and a running count of APRS packets received by the TNC plugin to `<prefix>/rig` and `<prefix>/rotator`, with `<prefix>/bridge/status` as the availability topic and the matching Home Assistant discovery entities (Rig Frequency/Mode/Band, PTT and Connected binary sensors, Rotator Azimuth/Elevation, APRS Packets Received). PTT changes are pushed immediately, everything else is throttled to one publish per second plus a keepalive every minute. Enter the broker URL, credentials and prefix in the plugin's fields and save — no bridge restart needed. The `mqtt` npm module is an optional dependency of Rig Bridge: prebuilt binaries include it; if you run from source and the plugin logs that the module is missing, run `npm install mqtt` inside `rig-bridge/`.
+
+Typical automations: dim the shack lights when PTT goes on, a wall tablet card showing "20m open to EU", or a notification when the server's G scale reaches 3.
 
 ---
 

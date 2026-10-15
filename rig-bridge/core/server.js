@@ -1023,6 +1023,14 @@ function buildSetupHtml(version, firstRunToken = null) {
         { id: 'port', label: 'rotctld Port', type: 'number', default: 4533 },
         { id: 'pollInterval', label: 'Poll Interval (ms)', type: 'number', default: 1000 },
       ]},
+      { key: 'mqtt', name: 'MQTT Publish (Home Assistant)', maturity: 'beta', desc: 'Publish rig frequency/mode/PTT, rotator az/el and APRS counts to an MQTT broker, with Home Assistant discovery', fields: [
+        { id: 'url', label: 'Broker URL (mqtt://host:1883)', type: 'text', default: '' },
+        { id: 'username', label: 'Username', type: 'text', default: '' },
+        { id: 'password', label: 'Password', type: 'text', default: '' },
+        { id: 'prefix', label: 'Topic prefix', type: 'text', default: 'openhamclock' },
+        { id: 'haDiscovery', label: 'Home Assistant discovery', type: 'checkbox', default: true },
+        { id: 'publishInterval', label: 'Keepalive publish (ms)', type: 'number', default: 60000 },
+      ]},
       { key: 'winlink', name: 'Winlink', maturity: 'alpha', desc: 'Gateway discovery + Pat client for Winlink messaging', fields: [
         { id: 'apiKey', label: 'Winlink API Key', type: 'text', default: '' },
         { id: 'pat.enabled', label: 'Enable Pat Client', type: 'checkbox', default: false },
@@ -2351,6 +2359,7 @@ function createServer(registry, version) {
       'meshcom',
       'beaconMonitor',
       ...HW_KEYS,
+      'mqtt',
     ]) {
       if (newConfig[key]) {
         const incoming = newConfig[key];
@@ -2429,6 +2438,10 @@ function createServer(registry, version) {
     // Hardware plugins restart in place — no rig-bridge restart needed
     const HW_PLUGIN_IDS = { gps: 'gps', envSensors: 'env-sensors', gpio: 'gpio', brightness: 'brightness' };
     for (const k of hwChanged) registry.restartIntegration(HW_PLUGIN_IDS[k]);
+    // Restart the MQTT publisher if its config changed (no bridge restart needed)
+    if (newConfig.mqtt) {
+      registry.restartIntegration('mqtt-publish');
+    }
 
     res.json({ success: true, config });
   });

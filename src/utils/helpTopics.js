@@ -47,6 +47,7 @@ export const HELP_TOPICS = {
   utility: 'utility',
   eme: 'the-eme-layout',
   'time-shift': 'time-shift',
+  'home-automation': 'home-automation-mqtt-and-home-assistant',
 };
 
 /** Dockable panel component id → topic key (see DockableApp panelDefs) */
@@ -120,6 +121,9 @@ export const PANEL_HELP = {
   'cluster-console': 'dx-cluster',
   rover: 'rig-bridge',
   'env-sensors': 'rig-bridge',
+  opportunities: 'spots-activity',
+  'solar-outlook': 'propagation-panels',
+  benchmark: 'propagation-panels',
 };
 
 /**

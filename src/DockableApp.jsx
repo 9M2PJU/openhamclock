@@ -66,6 +66,9 @@ import {
   GraylinePlannerPanel,
   EmePlannerPanel,
   SatPlannerPanel,
+  OpportunityPanel,
+  SolarOutlookPanel,
+  BenchmarkPanel,
 } from './components';
 import MeshtasticPanel from './components/MeshtasticPanel.jsx';
 import LogbookPanel from './components/LogbookPanel.jsx';
@@ -166,6 +169,8 @@ export const DockableApp = ({
   meshcomData,
   filteredPskSpots,
   wsjtxMapSpots,
+  // Opportunity feed (useOpportunities in App.jsx — shared with the alert engine)
+  opportunities,
 
   // Filters
   dxFilters,
@@ -1552,6 +1557,18 @@ export const DockableApp = ({
           content = <EnvSensorsPanel allUnits={config.allUnits} />;
           break;
 
+        case 'opportunities':
+          content = <OpportunityPanel opportunities={opportunities} onSpotClick={handleSpotClick} />;
+          break;
+
+        case 'solar-outlook':
+          content = <SolarOutlookPanel />;
+          break;
+
+        case 'benchmark':
+          content = <BenchmarkPanel config={config} />;
+          break;
+
         default: {
           // Auto-discovered panel plugins (src/plugins/local/panels/*.jsx).
           // v1 props contract: { config, t } only — see docs/PLUGINS.md.
@@ -1637,6 +1654,7 @@ export const DockableApp = ({
       panelZoom,
       keybindingsList,
       t,
+      opportunities,
     ],
   );
 

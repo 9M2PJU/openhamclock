@@ -83,6 +83,7 @@ class PluginRegistry {
       'env-sensors',
       'gpio',
       'brightness',
+      'mqtt-publish',
     ]) {
       try {
         const p = require(`../plugins/${file}`);

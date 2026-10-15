@@ -72,6 +72,15 @@
     "ohcApiKey": "",
     "verbose": false
   },
+  "mqtt": {
+    "enabled": false,
+    "url": "mqtt://127.0.0.1:1883",
+    "username": "",
+    "password": "",
+    "prefix": "openhamclock",
+    "haDiscovery": true,
+    "publishInterval": 60000
+  },
   "tls": {
     "enabled": false,
     "certGenerated": false

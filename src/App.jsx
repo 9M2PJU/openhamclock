@@ -71,6 +71,7 @@ import { useIBPMeasurements } from './hooks/useIBPMeasurements';
 import useHamsAtAlerts from './hooks/useHamsAtAlerts';
 import { annotateCoVisibility, upcomingAlertFeedItems } from './utils/hamsAtAlerts.js';
 import { getAlertSettings, ALERT_SETTINGS_EVENT } from './utils/audioAlerts';
+import { useOpportunities } from './hooks/useOpportunities.js';
 import { useSatelliteAnnouncements } from './hooks/app/useSatelliteAnnouncements';
 import { useCompiledWatchlist } from './hooks/useWatchlists.js';
 import { applyWatchlist } from './utils/watchlistSpec.js';
@@ -510,6 +511,22 @@ const App = () => {
 
   const propagation = usePropagation(config.location, dxLocation, config.propagation);
   const mySpots = useMySpots(config.callsign);
+  // Opportunity feed: ranked "worth working now" from cluster + activation
+  // spots × logbook needs × P.533 reliability. Shared by the Opportunities
+  // panel (via layoutProps) and the audio-alert engine below.
+  const opportunities = useOpportunities({
+    rawSpots: dxClusterData.rawSpots,
+    potaSpots: potaSpots.data,
+    sotaSpots: sotaSpots.data,
+    wwffSpots: wwffSpots.data,
+    wwbotaSpots: wwbotaSpots.data,
+    deLocation: config.location,
+    openings: bandOpenings.data,
+    myZone: myRegion.myZone,
+    myContinent: myRegion.myContinent,
+    propagationConfig: config.propagation,
+    ssn: propagation.data?.solarData?.ssn,
+  });
   const filterState = useSatelliteFilterState();
   const { satelliteFilters, setSatelliteFilters } = filterState;
   const satellites = useSatellites(config.location, config.satellite, satelliteFilters);
@@ -641,6 +658,7 @@ const App = () => {
     swpc: severeSwpcAlerts,
     'beacon-opening': ibpMeasured.openings,
     'grid-change': gridChangeAlerts,
+    opportunity: opportunities.alertItems,
   });
   // Mirror satellite / countdown state to the bridge's GPIO indicator lines
   useHardwareIndicators({ satellites: satellites.data, rigConfig: config.rigControl });
@@ -917,6 +935,7 @@ const App = () => {
     dxpeditions,
     contests,
     swpcAlerts,
+    opportunities,
     satellites,
     pskReporter,
     wsjtx,

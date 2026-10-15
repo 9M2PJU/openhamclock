@@ -991,6 +991,9 @@ export const PANEL_ICONS = {
   'cluster-console': LiTerminal,
   rover: LiRover,
   'env-sensors': LiThermometer,
+  opportunities: LiTarget,
+  'solar-outlook': LiCycle,
+  benchmark: LiHeardBy,
 };
 
 /**

@@ -70,3 +70,6 @@ export { default as AircraftNearbyPanel } from './AircraftNearbyPanel.jsx';
 export { default as GraylinePlannerPanel } from './GraylinePlannerPanel.jsx';
 export { default as EmePlannerPanel } from './EmePlannerPanel.jsx';
 export { default as SatPlannerPanel } from './SatPlannerPanel.jsx';
+export { default as OpportunityPanel } from './OpportunityPanel.jsx';
+export { default as SolarOutlookPanel } from './SolarOutlookPanel.jsx';
+export { default as BenchmarkPanel } from './BenchmarkPanel.jsx';

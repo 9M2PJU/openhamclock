@@ -92,6 +92,9 @@ export function buildPanelDefs({ isLocalInstall = false } = {}) {
     ...(isLocalInstall ? { 'cluster-console': { name: 'Cluster Console', icon: '🖥️' } } : {}),
     rover: { name: 'Rover (GPS)', icon: '🚙', group: 'Rig Bridge' },
     'env-sensors': { name: 'Environment Sensors', icon: '🌡️', group: 'Rig Bridge' },
+    opportunities: { name: 'Opportunities', icon: '🎯' },
+    'solar-outlook': { name: '27-Day Solar Outlook', icon: '📅', group: 'Solar' },
+    benchmark: { name: 'Station Benchmark', icon: '📶', group: 'Propagation' },
   };
 
   // Append auto-discovered panel plugins (src/plugins/local/panels/*.jsx).
