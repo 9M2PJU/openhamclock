@@ -119,6 +119,27 @@ describe('IcsFormsPanel', () => {
     expect(saved.ics309.removed.length).toBe(1);
   });
 
+  it('309 shows the next message number and resets it only after confirming', () => {
+    recordEvent('net_checkin', { callsign: 'KE8PLM', summary: 'Checked into ARES' });
+    recordEvent('aprs_msg_sent', { callsign: 'K0CJH', summary: 'Message to KE8PLM' });
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    const { container, unmount } = render(<IcsFormsPanel config={{ callsign: 'K0CJH' }} initialForm="309" />);
+    expect(container.textContent).toContain('Next station message #: 3');
+    click(buttonByText(container, 'Reset message numbers'));
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(container.textContent).toContain('Next station message #: 3'); // cancelled
+    confirm.mockReturnValue(true);
+    click(buttonByText(container, 'Reset message numbers'));
+    expect(container.textContent).toContain('Next station message #: 1');
+    expect(buttonByText(container, 'Reset message numbers').disabled).toBe(true);
+    act(() => {
+      recordEvent('aprs_msg_rx', { callsign: 'KE8PLM', summary: 'Message to K0CJH' });
+    });
+    expect(getEvents().at(-1).msgNo).toBe(1);
+    expect(container.textContent).toContain('Next station message #: 2');
+    unmount();
+  });
+
   it('prints labels in English by default and in the interface language on request', () => {
     i18n.addResourceBundle('de', 'translation', { 'icsForms.print.309.name': 'FUNKPROTOKOLL' }, true, true);
     act(() => {

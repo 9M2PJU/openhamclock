@@ -140,10 +140,6 @@ export function formatSpeechText(feedId, item, { phonetic = true } = {}) {
       if (!scale && !title) return '';
       return ['Space weather:', scale, title].filter(Boolean).join(' ');
     }
-    case 'lightning': {
-      if (item.distance == null) return '';
-      return `Lightning ${Math.round(item.distance)} kilometres away`;
-    }
     case 'lightning-guard': {
       // Lightning guard transition: { level, downgraded, distanceKm, bearing (words), imperial, relay }
       const relayWords =
@@ -151,7 +147,11 @@ export function formatSpeechText(feedId, item, { phonetic = true } = {}) {
       if (item.level === 'clear') return `Lightning all clear.${relayWords}`;
       if (item.level !== 'warn' && item.level !== 'alarm') return '';
       if (item.downgraded) return `Lightning alarm ended. Warning continues.${relayWords}`;
-      const head = item.level === 'alarm' ? 'Lightning alarm.' : 'Lightning warning.';
+      const head = item.closer
+        ? 'Lightning closer.'
+        : item.level === 'alarm'
+          ? 'Lightning alarm.'
+          : 'Lightning warning.';
       if (!Number.isFinite(item.distanceKm)) return `${head}${relayWords}`;
       const dist = item.imperial ? item.distanceKm * 0.621371 : item.distanceKm;
       const unit = item.imperial ? 'miles' : 'kilometres';

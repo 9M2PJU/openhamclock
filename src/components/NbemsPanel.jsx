@@ -42,7 +42,7 @@ const EMPTY_ICS = { to: '', from: '', subject: '', message: '' };
 
 export default function NbemsPanel({ apiToken = '' }) {
   const { t } = useTranslation();
-  const { status, connected, running, rxText, lastForm, relayOnly, sendText, sendIcs213, setMode, abort } = useFldigi({
+  const { status, connected, running, rxText, lastForm, viaRelay, sendText, sendIcs213, setMode, abort } = useFldigi({
     apiToken,
   });
   const [text, setText] = useState('');
@@ -58,8 +58,10 @@ export default function NbemsPanel({ apiToken = '' }) {
   }, [rxText]);
 
   const describeError = (r) => {
-    if (r.error === 'relay')
-      return t('nbems.errRelay', { defaultValue: 'Sending needs a direct Rig Bridge connection' });
+    if (r.error === 'relay' || r.error === 'relay-inactive')
+      return t('nbems.errRelay', { defaultValue: 'Cloud relay is not connected to Rig Bridge' });
+    if (r.error === 'relay-timeout')
+      return t('nbems.errRelayTimeout', { defaultValue: 'No answer from Rig Bridge through the cloud relay' });
     if (r.status === 401)
       return t('nbems.errToken', { defaultValue: 'Rig Bridge rejected the API token (Settings → Rig Bridge)' });
     if (r.error === 'unreachable' || r.error === 'timeout')
@@ -85,7 +87,23 @@ export default function NbemsPanel({ apiToken = '' }) {
   const onSendIcs = async (e) => {
     e.preventDefault();
     if (!ics.subject.trim() && !ics.message.trim()) return;
-    const ok = await run(() => sendIcs213(ics), t('nbems.icsQueued', { defaultValue: 'ICS-213 queued for transmit' }));
+    let folded = false;
+    const ok = await run(
+      async () => {
+        const r = await sendIcs213(ics);
+        folded = !!r.folded;
+        return r;
+      },
+      t('nbems.icsQueued', { defaultValue: 'ICS-213 queued for transmit' }),
+    );
+    if (ok && folded) {
+      setNotice({
+        ok: true,
+        msg: t('nbems.icsQueuedFolded', {
+          defaultValue: 'ICS-213 queued; accented and special characters were sent as plain letters',
+        }),
+      });
+    }
     if (ok) {
       setIcs(EMPTY_ICS);
       setShowIcs(false);
@@ -95,15 +113,15 @@ export default function NbemsPanel({ apiToken = '' }) {
   const transmitting = status?.trx === 'tx' || status?.trx === 'tune';
   const freqMHz = status?.freq ? (status.freq / 1e6).toFixed(3) : null;
   const modes = Array.isArray(status?.modes) ? status.modes : [];
-  const canSend = connected && !relayOnly && !busy;
+  const canSend = connected && !busy;
 
   if (!running && !status) {
     return (
       <div style={{ padding: '10px 8px', color: '#555', fontSize: '11px', lineHeight: 1.5 }}>
-        {relayOnly
+        {viaRelay
           ? t('nbems.relayHint', {
               defaultValue:
-                'NBEMS needs a direct connection to Rig Bridge on this network; cloud relay does not carry fldigi.',
+                'Waiting for fldigi through the cloud relay. Enable the fldigi + flmsg plugin and Cloud Relay in Rig Bridge.',
             })
           : t('nbems.setupHint', {
               defaultValue:
@@ -214,7 +232,7 @@ export default function NbemsPanel({ apiToken = '' }) {
           onChange={(e) => setText(e.target.value)}
           placeholder={t('nbems.sendPlaceholder', { defaultValue: 'Text to transmit…' })}
           aria-label={t('nbems.sendLabel', { defaultValue: 'Text to transmit through fldigi' })}
-          disabled={!connected || relayOnly}
+          disabled={!connected}
           style={input}
         />
         <button type="submit" style={btn} disabled={!canSend || !text.trim()}>
@@ -225,7 +243,7 @@ export default function NbemsPanel({ apiToken = '' }) {
           style={{ ...btn, color: showIcs ? ACCENT : btn.color }}
           onClick={() => setShowIcs((v) => !v)}
           aria-expanded={showIcs}
-          disabled={!connected || relayOnly}
+          disabled={!connected}
         >
           {t('nbems.icsButton', { defaultValue: 'ICS-213' })}
         </button>

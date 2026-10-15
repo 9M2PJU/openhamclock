@@ -56,10 +56,17 @@ import {
   commitRunningNet,
   pickNewer,
   livePeerCount,
+  changedCalls,
+  changedNetFields,
+  rebaseCheck,
   PEER_TTL_MS,
   serializeNetState,
   applyRemoteNetState,
   parseNetFrequency,
+  parseOffset,
+  formatOffset,
+  bandPlanRegion,
+  standardOffset,
   localParts,
   fmtLocalDateTime,
   rememberStation,
@@ -565,6 +572,13 @@ describe('undo bookkeeping', () => {
     expect(peekUndo(net).action.kind).toBe('remove');
     expect(attachEvent(null, 'x')).toBeNull();
   });
+  it('attaches to the action for that call even when another action was stacked on top', () => {
+    let net = startNet();
+    ({ net } = checkIn(net, { call: 'W1AW', now: T0 }));
+    ({ net } = checkIn(net, { call: 'K0CJH', now: T0 + 1 })); // e.g. from another tab
+    net = attachEvent(net, 'ev-w', 'W1AW');
+    expect(net.undo.map((u) => u.eventIds)).toEqual([['ev-w'], []]);
+  });
   it('withdrawalSummary names what Undo reversed', () => {
     expect(withdrawalSummary({ kind: 'new' }, 'ARES')).toBe('Check-in withdrawn (ARES)');
     expect(withdrawalSummary({ kind: 'return' })).toBe('Re-check-in withdrawn');
@@ -766,29 +780,168 @@ describe('report times (UTC + local)', () => {
 });
 
 describe('parseNetFrequency', () => {
+  const R2 = { region: 'R2' };
   it('reads repeater descriptions', () => {
-    expect(parseNetFrequency('146.940 − PL 100.0')).toEqual({ mhz: 146.94, txMhz: 146.34, tone: '100.0', mode: '' });
-    expect(parseNetFrequency('442.150 +5 T 123.0 FM')).toEqual({
-      mhz: 442.15,
+    expect(parseNetFrequency('146.940 − PL 100.0', R2)).toEqual({
+      mhz: 146.94,
+      txMhz: 146.34,
+      offsetMhz: -0.6,
+      offsetSource: 'standard',
+      offsetCheck: false,
+      tone: '100.0',
+      mode: '',
+    });
+    expect(parseNetFrequency('442.150 +5 T 123.0 FM')).toMatchObject({
       txMhz: 447.15,
+      offsetSource: 'explicit',
       tone: '123.0',
       mode: 'FM',
     });
     expect(parseNetFrequency('147.105 MHz + 600 kHz 88.5 Hz')).toMatchObject({ txMhz: 147.705, tone: '88.5' });
-    expect(parseNetFrequency('146.520 MHz FM')).toEqual({ mhz: 146.52, txMhz: 146.52, tone: '', mode: 'FM' });
-    expect(parseNetFrequency('3.873 LSB')).toEqual({ mhz: 3.873, txMhz: 3.873, tone: '', mode: 'LSB' });
-    expect(parseNetFrequency('53.150 -')).toMatchObject({ mhz: 53.15, txMhz: null }); // no standard 6 m offset
+    expect(parseNetFrequency('146.520 MHz FM')).toMatchObject({ txMhz: 146.52, offsetMhz: 0, offsetSource: 'simplex' });
+    expect(parseNetFrequency('3.873 LSB')).toMatchObject({ mhz: 3.873, txMhz: 3.873, mode: 'LSB' });
     expect(parseNetFrequency('Main repeater')).toBeNull();
     expect(parseNetFrequency('')).toBeNull();
+  });
+  it("uses the region's standard offsets, flagging ones that vary locally", () => {
+    expect(parseNetFrequency('224.940 -', R2)).toMatchObject({ txMhz: 223.34, offsetCheck: false });
+    expect(parseNetFrequency('439.000 -', { region: 'R1' })).toMatchObject({ txMhz: 431.4, offsetCheck: true });
+    expect(parseNetFrequency('145.700 -', { region: 'R1' })).toMatchObject({ txMhz: 145.1, offsetCheck: false });
+    expect(parseNetFrequency('29.660 -', { region: 'R3' })).toMatchObject({ txMhz: 29.56 });
+  });
+  it('6 m in the Americas follows the ARRL band plan segments (all −500 kHz)', () => {
+    // 51.62–51.98 outputs: the plan lists no exceptions
+    expect(parseNetFrequency('51.620 -', R2)).toMatchObject({ txMhz: 51.12, offsetMhz: -0.5, offsetCheck: false });
+    expect(parseNetFrequency('51.980 -', R2)).toMatchObject({ txMhz: 51.48, offsetCheck: false });
+    // 52.5–52.98 and 53.5–53.98 outputs: "except as noted" → check locally
+    expect(parseNetFrequency('52.700 -', R2)).toMatchObject({ txMhz: 52.2, offsetCheck: true }); // the plan's test pair
+    expect(parseNetFrequency('52.500 -', R2)).toMatchObject({ txMhz: 52.0, offsetCheck: true });
+    expect(parseNetFrequency('53.980 -', R2)).toMatchObject({ txMhz: 53.48, offsetCheck: true });
+    expect(parseNetFrequency('53.500 -', R2)).toMatchObject({ txMhz: 53.0, offsetCheck: true });
+    // outside an output segment (inputs, simplex, gaps): no standard
+    for (const f of ['51.100 -', '51.990 -', '52.400 -', '53.150 -', '53.490 -', '50.500 -']) {
+      expect(parseNetFrequency(f, R2), f).toMatchObject({ txMhz: null, offsetSource: 'unknown' });
+    }
+  });
+  it('reports an unknown offset instead of guessing', () => {
+    for (const [text, opts] of [
+      ['50.840 -', { region: 'R3' }], // no 6 m standard in R3
+      ['146.940 -', {}], // no region known
+      ['1293.000 -', R2], // 23 cm: no single standard
+    ]) {
+      expect(parseNetFrequency(text, opts)).toMatchObject({ txMhz: null, offsetMhz: null, offsetSource: 'unknown' });
+    }
+  });
+  it('an override fills or replaces the offset; its sign may come from the text', () => {
+    // a locally coordinated 1 MHz pair outside the plan's segments
+    expect(parseNetFrequency('53.150 -', { ...R2, offset: '1' })).toMatchObject({
+      txMhz: 52.15,
+      offsetSource: 'override',
+    });
+    // the override also replaces a standard offset
+    expect(parseNetFrequency('53.700 -', { ...R2, offset: '1' })).toMatchObject({ txMhz: 52.7 });
+    expect(parseNetFrequency('50.840 -', { region: 'R3', offset: '+0.5' })).toMatchObject({ txMhz: 51.34 });
+    expect(parseNetFrequency('442.150 +5', { offset: '−5' })).toMatchObject({ txMhz: 437.15 });
+    expect(parseNetFrequency('146.520', { offset: '0' })).toMatchObject({ txMhz: 146.52, offsetSource: 'override' });
+    expect(parseNetFrequency('146.940', { offset: 'abc' })).toMatchObject({ offsetSource: 'simplex' }); // unreadable override ignored
+  });
+  it('parseOffset, formatOffset and bandPlanRegion', () => {
+    expect(parseOffset('−600 kHz')).toEqual({ sign: '-', mhz: 0.6 });
+    expect(parseOffset('+5')).toEqual({ sign: '+', mhz: 5 });
+    expect(parseOffset('500')).toEqual({ sign: null, mhz: 0.5 });
+    expect(parseOffset('x')).toBeNull();
+    expect(formatOffset(-0.6)).toBe('−600 kHz');
+    expect(formatOffset(5)).toBe('+5 MHz');
+    expect(formatOffset(null)).toBe('');
+    expect(bandPlanRegion({ lat: 44.4, lon: -93.2 })).toBe('R2');
+    expect(bandPlanRegion({ lat: 51.5, lon: -0.1 })).toBe('R1');
+    expect(bandPlanRegion({ lat: 55.7, lon: 37.6 })).toBe('R1');
+    expect(bandPlanRegion({ lat: 55, lon: 82.9 })).toBe('R1'); // Novosibirsk
+    expect(bandPlanRegion({ lat: 35.7, lon: 139.7 })).toBe('R3');
+    expect(bandPlanRegion({ lat: -33.9, lon: 151.2 })).toBe('R3');
+    expect(bandPlanRegion(null)).toBeNull();
+    expect(standardOffset(146.94, 'R9')).toBeNull();
   });
 });
 
 describe('createNet frequency fields', () => {
   it('stores scheduled frequency, mode and script', () => {
-    const net = createNet({ name: 'N', freqMhz: 146.94, mode: 'fm', scriptId: 'tpl-skywarn', now: T0 });
-    expect(net).toMatchObject({ freqMhz: 146.94, mode: 'FM', scriptId: 'tpl-skywarn', rev: 0 });
+    const net = createNet({
+      name: 'N',
+      freqMhz: 146.94,
+      mode: 'fm',
+      scriptId: 'tpl-skywarn',
+      region: 'R2',
+      offset: ' -0.6 ',
+      now: T0,
+    });
+    expect(net).toMatchObject({
+      freqMhz: 146.94,
+      mode: 'FM',
+      scriptId: 'tpl-skywarn',
+      rev: 0,
+      region: 'R2',
+      offset: '-0.6',
+    });
     expect(createNet({ name: 'N', freqMhz: 'x' }).freqMhz).toBeNull();
     saveRosterSnapshot(net, { active: true });
-    expect(getNetControlRoster()).toMatchObject({ freqMhz: 146.94, mode: 'FM' });
+    expect(getNetControlRoster()).toMatchObject({ freqMhz: 146.94, mode: 'FM', region: 'R2', offset: '-0.6' });
+  });
+});
+
+describe('re-applying a refused change (rebaseCheck)', () => {
+  const base = () => {
+    let n = { ...startNet(), rev: 4 };
+    ({ net: n } = checkIn(n, { call: 'W1AW', now: T0 }));
+    ({ net: n } = checkIn(n, { call: 'K0CJH', now: T0 + 1000 }));
+    return n;
+  };
+  it('different calls checked in on each side → re-apply', () => {
+    const b = base();
+    const theirs = checkIn(b, { call: 'KE8PLM', now: T0 + min(1) }).net;
+    const mine = checkIn(b, { call: 'N0XYZ', now: T0 + min(1) }).net;
+    expect(rebaseCheck(b, mine, theirs)).toEqual({ ok: true, calls: [], fields: [] });
+    // re-applying my operation to their net keeps both check-ins
+    const merged = checkIn(theirs, { call: 'N0XYZ', now: T0 + min(1) }).net;
+    expect(merged.stations.map((s) => s.call).sort()).toEqual(['K0CJH', 'KE8PLM', 'N0XYZ', 'W1AW']);
+  });
+  it('flag toggles on different lines → re-apply; on the same line → ask', () => {
+    const b = base();
+    const theirs = toggleFlag(b, 'W1AW', 'mobile');
+    expect(rebaseCheck(b, toggleFlag(b, 'K0CJH', 'traffic'), theirs).ok).toBe(true);
+    expect(rebaseCheck(b, toggleFlag(b, 'W1AW', 'traffic'), theirs)).toEqual({
+      ok: false,
+      calls: ['W1AW'],
+      fields: [],
+    });
+  });
+  it('the same call checked in on both sides → ask', () => {
+    const b = base();
+    const theirs = checkIn(b, { call: 'KE8PLM', now: T0 + min(1) }).net;
+    const mine = checkIn(b, { call: 'KE8PLM', now: T0 + min(1) + 5 }).net;
+    expect(rebaseCheck(b, mine, theirs)).toMatchObject({ ok: false, calls: ['KE8PLM'] });
+  });
+  it('net fields: both set the same value → fine; different values → ask', () => {
+    let b = base();
+    b = toggleFlag(b, 'W1AW', 'traffic');
+    b = toggleFlag(b, 'K0CJH', 'traffic');
+    expect(rebaseCheck(b, nextTraffic(b), nextTraffic(b)).ok).toBe(true);
+    expect(rebaseCheck(b, { ...b, scriptId: 'a' }, { ...b, scriptId: 'b' })).toMatchObject({
+      ok: false,
+      fields: ['scriptId'],
+    });
+    expect(changedNetFields(b, { ...b, frequency: 'x' })).toEqual(['frequency']);
+  });
+  it('a closed or different net elsewhere → ask', () => {
+    const b = base();
+    const mine = checkIn(b, { call: 'N0XYZ', now: T0 }).net;
+    expect(rebaseCheck(b, mine, null).ok).toBe(false);
+    expect(rebaseCheck(b, mine, { ...b, id: 'other' }).ok).toBe(false);
+  });
+  it('changedCalls sees added, removed and edited lines', () => {
+    const b = base();
+    expect([...changedCalls(b, removeStation(b, 'W1AW'))]).toEqual(['W1AW']);
+    expect([...changedCalls(b, updateStation(b, 'K0CJH', { name: 'Chris' }))]).toEqual(['K0CJH']);
+    expect(changedCalls(b, { ...b }).size).toBe(0);
   });
 });

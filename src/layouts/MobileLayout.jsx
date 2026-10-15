@@ -30,6 +30,7 @@ import {
   APRSPanel,
 } from '../components';
 import LogbookPanel from '../components/LogbookPanel.jsx';
+import MobileEmcommCard from '../components/MobileEmcommCard.jsx';
 import { IconGear, IconExpand, IconShrink } from '../components/Icons.jsx';
 import { useRig } from '../contexts/RigContext.jsx';
 import { findDXPathForSpot } from '../utils/dxClusterSpotMatcher';
@@ -43,12 +44,19 @@ import {
   isLandscape as isLandscapeViewport,
   isStandaloneDisplay,
   portraitMapHeight,
+  MOBILE_CARD_DEFS,
+  PREVIOUS_LAYOUT_KEY,
+  readCardPrefs,
+  writeCardPrefs,
+  toggleCardPref,
+  isCardEnabled,
 } from '../utils/mobileLayout.js';
 
 const GAP = 12; // px between cards in the swipe row
 const GUTTER = 16; // px page gutter (plus safe-area insets)
 
 const CARD_LABELS = {
+  emcomm: ['mobileLayout.card.emcomm', 'EmComm'],
   'dx-cluster': ['mobileLayout.card.dxCluster', 'DX Cluster'],
   activations: ['mobileLayout.card.activations', 'POTA / SOTA'],
   propagation: ['mobileLayout.card.propagation', 'Propagation'],
@@ -188,9 +196,35 @@ export default function MobileLayout(props) {
     !standalone && typeof document !== 'undefined' && !!document.fullscreenEnabled && !!handleFullscreenToggle;
 
   // ── Cards ───────────────────────────────────────────────────────────────
+  // Card-picker choices. With nothing saved yet the EmComm card defaults on
+  // only for an operator who came here from the EmComm layout; that default
+  // is saved straight away so a later trip through another layout (the idle
+  // clock, say) doesn't change it.
+  const [cardPrefs, setCardPrefs] = useState(() => {
+    try {
+      const p = readCardPrefs(window.localStorage, window.localStorage.getItem(PREVIOUS_LAYOUT_KEY));
+      if (p.isDefault) writeCardPrefs(window.localStorage, p);
+      return { enabled: p.enabled };
+    } catch {
+      return { enabled: {} };
+    }
+  });
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const cardCtx = { panels: config?.panels, showAPRS: !!mapLayers.showAPRS };
+  const toggleCard = (id) => {
+    setCardPrefs((prev) => {
+      const next = toggleCardPref(prev, id, cardCtx);
+      try {
+        writeCardPrefs(window.localStorage, next);
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  };
   const cards = useMemo(
-    () => buildMobileCards({ panels: config?.panels, showAPRS: !!mapLayers.showAPRS }),
-    [config?.panels, mapLayers.showAPRS],
+    () => buildMobileCards({ panels: config?.panels, showAPRS: !!mapLayers.showAPRS, prefs: cardPrefs }),
+    [config?.panels, mapLayers.showAPRS, cardPrefs],
   );
   const cardKey = cards.map((c) => c.id).join(',');
   const [active, setActive] = useState(() => {
@@ -323,6 +357,8 @@ export default function MobileLayout(props) {
   // ── Panel content per card ──────────────────────────────────────────────
   const panelFor = (id) => {
     switch (id) {
+      case 'emcomm':
+        return <MobileEmcommCard location={config.location} allUnits={config.allUnits} />;
       case 'dx-cluster':
         return (
           <DXClusterPanel
@@ -629,6 +665,7 @@ export default function MobileLayout(props) {
         allUnits={config.allUnits}
         mouseZoom={config.mouseZoom}
         onSpotClick={tuneTo}
+        compactControls
       />
     </div>
   );
@@ -656,19 +693,23 @@ export default function MobileLayout(props) {
             aria-hidden={i !== activeIdx}
             data-card={card.id}
           >
-            <button
-              type="button"
-              className="ohc-mobile-card-head"
-              onClick={() => openCard(card.id)}
-              aria-label={t('mobileLayout.expand', { defaultValue: 'Open {{name}} full screen', name })}
-              tabIndex={i === activeIdx ? 0 : -1}
-            >
-              <span aria-hidden="true">{card.icon}</span>
-              <span className="ohc-mobile-card-title">{name}</span>
-              <span aria-hidden="true" className="ohc-mobile-card-expand">
-                ⤢
-              </span>
-            </button>
+            {/* Panels that draw their own titled header get no second title;
+                the full-screen button under the cards covers every card. */}
+            {!card.ownHeader && (
+              <button
+                type="button"
+                className="ohc-mobile-card-head"
+                onClick={() => openCard(card.id)}
+                aria-label={t('mobileLayout.expand', { defaultValue: 'Open {{name}} full screen', name })}
+                tabIndex={i === activeIdx ? 0 : -1}
+              >
+                <span aria-hidden="true">{card.icon}</span>
+                <span className="ohc-mobile-card-title">{name}</span>
+                <span aria-hidden="true" className="ohc-mobile-card-expand">
+                  ⤢
+                </span>
+              </button>
+            )}
             <div className="ohc-mobile-card-body">
               {live ? (
                 panelFor(card.id)
@@ -684,25 +725,49 @@ export default function MobileLayout(props) {
     </div>
   );
 
+  const activeCard = cards[activeIdx];
+  const activeName = activeCard ? cardLabel(activeCard.id) : '';
   const dots = (
-    <nav className="ohc-mobile-dots" aria-label={t('mobileLayout.cards', { defaultValue: 'Panel cards' })}>
-      {cards.map((card, i) => {
-        const name = cardLabel(card.id);
-        return (
-          <button
-            key={card.id}
-            type="button"
-            className={`ohc-mobile-dot${i === activeIdx ? ' is-active' : ''}`}
-            onClick={() => goToCard(i)}
-            aria-label={t('mobileLayout.showCard', { defaultValue: 'Show {{name}}', name })}
-            aria-current={i === activeIdx ? 'true' : undefined}
-            title={name}
-          >
-            <span />
-          </button>
-        );
-      })}
-    </nav>
+    <div className="ohc-mobile-dots-row">
+      <button
+        type="button"
+        className="ohc-mobile-picker-btn"
+        onClick={() => setPickerOpen(true)}
+        aria-label={t('mobileLayout.picker.open', { defaultValue: 'Choose cards' })}
+        title={t('mobileLayout.picker.open', { defaultValue: 'Choose cards' })}
+      >
+        <span aria-hidden="true">☰</span>
+      </button>
+      <nav className="ohc-mobile-dots" aria-label={t('mobileLayout.cards', { defaultValue: 'Panel cards' })}>
+        {cards.map((card, i) => {
+          const name = cardLabel(card.id);
+          return (
+            <button
+              key={card.id}
+              type="button"
+              className={`ohc-mobile-dot${i === activeIdx ? ' is-active' : ''}`}
+              onClick={() => goToCard(i)}
+              aria-label={t('mobileLayout.showCard', { defaultValue: 'Show {{name}}', name })}
+              aria-current={i === activeIdx ? 'true' : undefined}
+              title={name}
+            >
+              <span />
+            </button>
+          );
+        })}
+      </nav>
+      {activeCard && (
+        <button
+          type="button"
+          className="ohc-mobile-expand-btn"
+          onClick={() => openCard(activeCard.id)}
+          aria-label={t('mobileLayout.expand', { defaultValue: 'Open {{name}} full screen', name: activeName })}
+          title={t('mobileLayout.expand', { defaultValue: 'Open {{name}} full screen', name: activeName })}
+        >
+          <span aria-hidden="true">⤢</span>
+        </button>
+      )}
+    </div>
   );
 
   const expandedCard = expanded ? cards.find((c) => c.id === expanded) : null;
@@ -728,15 +793,62 @@ export default function MobileLayout(props) {
         </>
       )}
 
+      {pickerOpen && (
+        <div
+          className="ohc-mobile-picker"
+          role="dialog"
+          aria-modal="true"
+          aria-label={t('mobileLayout.picker.title', { defaultValue: 'Cards' })}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setPickerOpen(false);
+          }}
+        >
+          <div className="ohc-mobile-picker-sheet">
+            <div className="ohc-mobile-picker-head">
+              <span>{t('mobileLayout.picker.title', { defaultValue: 'Cards' })}</span>
+              <button type="button" className="ohc-mobile-back" onClick={() => setPickerOpen(false)}>
+                {t('mobileLayout.picker.done', { defaultValue: 'Done' })}
+              </button>
+            </div>
+            {MOBILE_CARD_DEFS.map((def) => {
+              const on = isCardEnabled(cardPrefs, def.id);
+              const note =
+                def.id === 'emcomm'
+                  ? t('mobileLayout.picker.emcommNote', {
+                      defaultValue: 'NWS alerts, nearby shelters and the net roster. Loads only while shown.',
+                    })
+                  : def.when === 'showAPRS'
+                    ? t('mobileLayout.picker.aprsNote', { defaultValue: 'Shown while the APRS map layer is on.' })
+                    : def.panelKey && config?.panels?.[def.panelKey]?.visible === false
+                      ? t('mobileLayout.picker.hiddenNote', { defaultValue: 'Hidden in your saved panel settings.' })
+                      : null;
+              return (
+                <label key={def.id} className="ohc-mobile-picker-row">
+                  <input type="checkbox" checked={on} onChange={() => toggleCard(def.id)} />
+                  <span aria-hidden="true">{def.icon}</span>
+                  <span style={{ flex: 1, minWidth: 0 }}>
+                    <span style={{ display: 'block' }}>{cardLabel(def.id)}</span>
+                    {note && <span className="ohc-mobile-picker-note">{note}</span>}
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {expandedCard && (
         <div className="ohc-mobile-fullscreen" role="dialog" aria-modal="true" aria-label={cardLabel(expandedCard.id)}>
           <div className="ohc-mobile-fullscreen-bar">
             <button type="button" className="ohc-mobile-back" onClick={closeCard}>
               <span aria-hidden="true">‹</span> {t('mobileLayout.back', { defaultValue: 'Back' })}
             </button>
-            <span className="ohc-mobile-card-title">
-              <span aria-hidden="true">{expandedCard.icon}</span> {cardLabel(expandedCard.id)}
-            </span>
+            {/* The panel's own header names it; only plain cards need a title here */}
+            {!expandedCard.ownHeader && (
+              <span className="ohc-mobile-card-title">
+                <span aria-hidden="true">{expandedCard.icon}</span> {cardLabel(expandedCard.id)}
+              </span>
+            )}
           </div>
           <div className="ohc-mobile-fullscreen-body">{panelFor(expandedCard.id)}</div>
         </div>

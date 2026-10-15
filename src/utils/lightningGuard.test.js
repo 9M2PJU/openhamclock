@@ -15,6 +15,9 @@ import {
   nextOverride,
   formatDistance,
   describeStrike,
+  shouldRealert,
+  GuardRunner,
+  REALERT_MIN_GAP_MS,
 } from './lightningGuard.js';
 
 const DE = { lat: 40.015, lon: -105.2705 }; // Boulder, CO
@@ -219,6 +222,19 @@ describe('state machine', () => {
     expect(late.map((x) => x.level)).toEqual(['clear', 'clear']);
   });
 
+  it('a short all-clear time also shortens the escalation window', () => {
+    const s = normalizeGuardSettings({ enabled: true, allClearMin: 5 });
+    const r = run(
+      [
+        { t: T0, strikes: [[10, 0]] },
+        { t: T0 + 5 * MIN + 1 }, // 5 quiet minutes: all clear, the 10 km strike no longer escalates
+      ],
+      s,
+    );
+    expect(r.map((x) => x.level)).toEqual(['alarm', 'clear']);
+    expect(r[1].windowMin).toBe(5);
+  });
+
   it('rates are strikes per minute over the trigger window', () => {
     const r = run([
       {
@@ -276,5 +292,38 @@ describe('presentation', () => {
     expect(formatDistance(25, true)).toEqual({ value: '16', unit: 'mi' });
     expect(describeStrike({ distanceKm: 18, bearingDeg: 50 })).toBe('18 km NE');
     expect(describeStrike(null)).toBe('');
+  });
+});
+
+describe('repeat alerts while in alarm', () => {
+  it('shouldRealert: halving the distance or crossing 10 km, throttled', () => {
+    const base = { lastAt: T0, now: T0 + REALERT_MIN_GAP_MS };
+    expect(shouldRealert({ ...base, lastKm: 20, nearestKm: 10 })).toBe(true); // halved
+    expect(shouldRealert({ ...base, lastKm: 20, nearestKm: 11 })).toBe(false);
+    expect(shouldRealert({ ...base, lastKm: 14, nearestKm: 9.9 })).toBe(true); // crossed 10 km
+    expect(shouldRealert({ ...base, lastKm: 8, nearestKm: 6 })).toBe(false); // already inside 10 km, not halved
+    expect(shouldRealert({ ...base, lastKm: 8, nearestKm: 4 })).toBe(true);
+    expect(shouldRealert({ lastKm: 20, nearestKm: 5, lastAt: T0, now: T0 + 60000 })).toBe(false); // too soon
+    expect(shouldRealert({ ...base, lastKm: null, nearestKm: 5 })).toBe(false);
+  });
+
+  it('GuardRunner reports transitions and closer re-alerts (and can be switched off)', () => {
+    const r = new GuardRunner({ enabled: true });
+    expect(r.step([strikeAt(20, 0, T0)], DE, T0)).toMatchObject({ transition: 'escalate', closer: false });
+    expect(r.level).toBe('alarm');
+    // 15 km a minute later: not halved, not inside 10 km
+    expect(r.step([strikeAt(15, 0, T0 + MIN)], DE, T0 + MIN).closer).toBe(false);
+    // 8 km but only 90 s after the alarm: throttled
+    expect(r.step([strikeAt(8, 0, T0 + 1.5 * MIN)], DE, T0 + 1.5 * MIN).closer).toBe(false);
+    // next evaluation past the gap: nearest is still 8 km → closer
+    const c = r.step([], DE, T0 + 2 * MIN);
+    expect(c.closer).toBe(true);
+    expect(c.status.nearest.distanceKm).toBeCloseTo(8, 1);
+    expect(r.step([], DE, T0 + 5 * MIN).closer).toBe(false); // remembered 8 km
+    expect(r.step([strikeAt(3, 0, T0 + 6 * MIN)], DE, T0 + 6 * MIN).closer).toBe(true);
+
+    const off = new GuardRunner({ enabled: true, repeatCloser: false });
+    off.step([strikeAt(20, 0, T0)], DE, T0);
+    expect(off.step([strikeAt(3, 0, T0 + 5 * MIN)], DE, T0 + 5 * MIN).closer).toBe(false);
   });
 });

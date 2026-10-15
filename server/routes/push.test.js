@@ -168,7 +168,12 @@ describe('configured mode', () => {
     const { app } = mountConfigured();
     const res = await callRoute(app, 'GET', '/api/push/vapid-key');
     expect(res.statusCode).toBe(200);
-    expect(res.body).toEqual({ configured: true, publicKey: 'test-public-key', lightning: false });
+    expect(res.body).toEqual({
+      configured: true,
+      publicKey: 'test-public-key',
+      lightning: true,
+      lightningBroadcast: false,
+    });
   });
 
   it('subscribe stores and persists; invalid bodies are rejected', async () => {
@@ -284,26 +289,188 @@ describe('SWPC severe alert trigger', () => {
 // ─── Lightning guard broadcast ────────────────────────────────────────────────
 
 describe('lightning guard push', () => {
-  it('is refused unless PUSH_LIGHTNING_BROADCAST is set', async () => {
-    const { app, webpushMock } = mountConfigured();
+  // A point `km` from (lat, lon) along `brg` (spherical earth)
+  const destination = (lat, lon, km, brg) => {
+    const rad = (d) => (d * Math.PI) / 180;
+    const deg = (r) => (r * 180) / Math.PI;
+    const d = km / 6371;
+    const p1 = rad(lat);
+    const b = rad(brg);
+    const p2 = Math.asin(Math.sin(p1) * Math.cos(d) + Math.cos(p1) * Math.sin(d) * Math.cos(b));
+    const l2 =
+      rad(lon) + Math.atan2(Math.sin(b) * Math.sin(d) * Math.cos(p1), Math.cos(d) - Math.sin(p1) * Math.sin(p2));
+    return { lat: deg(p2), lon: deg(l2) };
+  };
+  const HOME = { lat: 40, lon: -105 };
+  const FAR = { lat: 51.5, lon: -0.1 };
+  const strikeNear = (where, km, brg = 0) => ({ ...destination(where.lat, where.lon, km, brg), timestamp: Date.now() });
+  const optIn = (app, n, where, extra = {}) =>
+    callRoute(app, 'POST', '/api/push/lightning/prefs', {
+      endpoint: makeSub(n).endpoint,
+      lightning: { ...where, warnKm: 50, alarmKm: 25, ...extra },
+    });
+
+  async function setup() {
+    const ctx = mountConfigured();
+    for (const n of [1, 2, 3]) await callRoute(ctx.app, 'POST', '/api/push/subscribe', { subscription: makeSub(n) });
+    return ctx;
+  }
+
+  it('advertises targeted lightning pushes; the broadcast override is off by default', async () => {
+    const { app } = mountConfigured();
+    const key = await callRoute(app, 'GET', '/api/push/vapid-key');
+    expect(key.body).toMatchObject({ lightning: true, lightningBroadcast: false });
+  });
+
+  it('prefs: opt-in stores a rounded location, survives re-subscribe and restart; null opts out', async () => {
+    const { app, exports_ } = await setup();
+    const res = await optIn(app, 1, { lat: 40.01234, lon: -105.27051, imperial: true });
+    expect(res.body.lightning).toEqual({ lat: 40.01, lon: -105.27, warnKm: 50, alarmKm: 25, imperial: true });
     await callRoute(app, 'POST', '/api/push/subscribe', { subscription: makeSub(1) });
-    const res = await callRoute(app, 'POST', '/api/push/lightning', { level: 'alarm', distanceKm: 12 });
-    expect(res.statusCode).toBe(403);
-    expect(res.body.enabled).toBe(false);
+    expect(exports_._pushStore.subscriptions[makeSub(1).endpoint].lightning.lat).toBe(40.01);
+    // A fresh module instance reading the same store file keeps the opt-in
+    const again = mountConfigured();
+    expect(again.exports_._pushStore.subscriptions[makeSub(1).endpoint].lightning.lon).toBe(-105.27);
+
+    expect((await optIn(app, 9, HOME)).statusCode).toBe(404); // unknown subscription
+    expect((await optIn(app, 1, { lat: 99, lon: 0 })).statusCode).toBe(400);
+    const off = await callRoute(app, 'POST', '/api/push/lightning/prefs', {
+      endpoint: makeSub(1).endpoint,
+      lightning: null,
+    });
+    expect(off.body).toEqual({ ok: true, lightning: null });
+    expect(exports_._pushStore.subscriptions[makeSub(1).endpoint].lightning).toBeUndefined();
+  });
+
+  it('sends only to opted-in subscriptions whose own radius the strike falls inside', async () => {
+    const { app, webpushMock } = await setup();
+    await optIn(app, 1, HOME); // the reporting station
+    await optIn(app, 2, FAR); // another user, on another continent
+    // sub 3 is subscribed (space weather) but not opted in to lightning
+
+    const res = await callRoute(app, 'POST', '/api/push/lightning', {
+      endpoint: makeSub(1).endpoint,
+      level: 'alarm',
+      strike: strikeNear(HOME, 12, 45),
+      relay: true,
+    });
+    expect(res.body).toMatchObject({ mode: 'targeted', inRange: 1, sent: 1 });
+    const [sub, json] = webpushMock.sendNotification.mock.calls[0];
+    expect(sub.endpoint).toBe(makeSub(1).endpoint);
+    expect(JSON.parse(json)).toEqual({
+      title: 'Lightning ALARM',
+      body: 'Nearest strike 12 km NE · antenna relay engaged',
+      tag: 'ohc-lightning',
+    });
+  });
+
+  it('computes level and distance for each recipient, and keeps the relay text to the caller', async () => {
+    const { app, webpushMock } = await setup();
+    const NEAR = { lat: HOME.lat, lon: HOME.lon + 0.4 }; // ~34 km east of HOME
+    await optIn(app, 1, HOME);
+    await optIn(app, 2, NEAR);
+    const strike = strikeNear(HOME, 10, 270); // 10 km west of HOME → ~44 km from NEAR
+    await callRoute(app, 'POST', '/api/push/lightning', {
+      endpoint: makeSub(1).endpoint,
+      level: 'alarm',
+      strike,
+      relay: true,
+    });
+    const byEndpoint = Object.fromEntries(
+      webpushMock.sendNotification.mock.calls.map(([s, j]) => [s.endpoint, JSON.parse(j)]),
+    );
+    expect(byEndpoint[makeSub(1).endpoint].title).toBe('Lightning ALARM');
+    expect(byEndpoint[makeSub(1).endpoint].body).toMatch(/antenna relay engaged/);
+    expect(byEndpoint[makeSub(2).endpoint].title).toBe('Lightning warning');
+    expect(byEndpoint[makeSub(2).endpoint].body).toMatch(/^Nearest strike 4\d km W$/);
+  });
+
+  it('throttles per subscription: escalation and halving pass, repeats do not', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(new Date('2026-07-01T12:00:00Z'));
+      const { app, webpushMock } = await setup();
+      await optIn(app, 1, HOME);
+      const post = (km) =>
+        callRoute(app, 'POST', '/api/push/lightning', {
+          endpoint: makeSub(1).endpoint,
+          level: 'warn',
+          strike: strikeNear(HOME, km),
+        });
+      expect((await post(40)).body.sent).toBe(1); // warn
+      vi.setSystemTime(new Date('2026-07-01T12:00:30Z'));
+      expect((await post(38)).body.skipped).toBe(1); // same level, not halved
+      expect((await post(20)).body.sent).toBe(1); // escalates to alarm
+      vi.setSystemTime(new Date('2026-07-01T12:01:30Z'));
+      expect((await post(9)).body.skipped).toBe(1); // halved, but < 2 min after the last push
+      vi.setSystemTime(new Date('2026-07-01T12:03:00Z'));
+      expect((await post(9)).body.sent).toBe(1);
+      expect(JSON.parse(webpushMock.sendNotification.mock.calls.at(-1)[1]).title).toBe('Lightning closer');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('refuses callers that are not opted in, stale strikes, and garbage', async () => {
+    const { app, webpushMock } = await setup();
+    await optIn(app, 1, HOME);
+    const notOpted = await callRoute(app, 'POST', '/api/push/lightning', {
+      endpoint: makeSub(3).endpoint,
+      level: 'alarm',
+      strike: strikeNear(HOME, 5),
+    });
+    expect(notOpted.statusCode).toBe(403);
+    const stale = await callRoute(app, 'POST', '/api/push/lightning', {
+      endpoint: makeSub(1).endpoint,
+      level: 'alarm',
+      strike: { ...strikeNear(HOME, 5), timestamp: Date.now() - 60 * 60 * 1000 },
+    });
+    expect(stale.statusCode).toBe(400);
+    expect((await callRoute(app, 'POST', '/api/push/lightning', { level: 'storm' })).statusCode).toBe(400);
     expect(webpushMock.sendNotification).not.toHaveBeenCalled();
   });
 
-  it('broadcasts a validated payload to every subscriber and throttles repeats', async () => {
+  it('all-clear and simulated strikes go to the caller only', async () => {
+    const { app, webpushMock } = await setup();
+    await optIn(app, 1, HOME);
+    await optIn(app, 2, HOME); // a neighbour at the same place
+    const sim = await callRoute(app, 'POST', '/api/push/lightning', {
+      endpoint: makeSub(1).endpoint,
+      level: 'alarm',
+      simulated: true,
+      strike: strikeNear(HOME, 8, 90),
+    });
+    expect(sim.body).toMatchObject({ mode: 'self', sent: 1 });
+    expect(JSON.parse(webpushMock.sendNotification.mock.calls[0][1]).body).toBe(
+      'Nearest strike 8.0 km E · test strike',
+    );
+    const clear = await callRoute(app, 'POST', '/api/push/lightning', {
+      endpoint: makeSub(1).endpoint,
+      level: 'clear',
+      relay: false,
+    });
+    expect(clear.body).toMatchObject({ mode: 'self', sent: 1 });
+    expect(webpushMock.sendNotification.mock.calls.map(([s]) => s.endpoint)).toEqual([
+      makeSub(1).endpoint,
+      makeSub(1).endpoint,
+    ]);
+  });
+
+  it('rate-limits strike reports per client', async () => {
+    const { app } = await setup();
+    await optIn(app, 1, HOME);
+    let last;
+    for (let i = 0; i < 31; i++) {
+      last = await callRoute(app, 'POST', '/api/push/lightning', { endpoint: makeSub(1).endpoint, level: 'clear' });
+    }
+    expect(last.statusCode).toBe(429);
+  });
+
+  it('PUSH_LIGHTNING_BROADCAST override: the old broadcast to every subscriber', async () => {
     process.env.PUSH_LIGHTNING_BROADCAST = 'true';
-    const { app, webpushMock } = mountConfigured();
+    const { app, webpushMock } = await setup();
     const key = await callRoute(app, 'GET', '/api/push/vapid-key');
-    expect(key.body.lightning).toBe(true);
-    await callRoute(app, 'POST', '/api/push/subscribe', { subscription: makeSub(1) });
-    await callRoute(app, 'POST', '/api/push/subscribe', { subscription: makeSub(2) });
-
-    const bad = await callRoute(app, 'POST', '/api/push/lightning', { level: 'storm' });
-    expect(bad.statusCode).toBe(400);
-
+    expect(key.body.lightningBroadcast).toBe(true);
     const res = await callRoute(app, 'POST', '/api/push/lightning', {
       level: 'alarm',
       distanceKm: 12.4,
@@ -311,18 +478,13 @@ describe('lightning guard push', () => {
       relay: true,
       title: 'ignored free text',
     });
-    expect(res.statusCode).toBe(200);
-    expect(res.body.sent).toBe(2);
-    const payload = JSON.parse(webpushMock.sendNotification.mock.calls[0][1]);
-    expect(payload).toEqual({
+    expect(res.body).toMatchObject({ mode: 'broadcast', sent: 3 });
+    expect(JSON.parse(webpushMock.sendNotification.mock.calls[0][1])).toEqual({
       title: 'Lightning ALARM',
       body: 'Nearest strike 12 km NE · antenna relay engaged',
       tag: 'ohc-lightning',
     });
-
-    // Same level again straight away → skipped, nothing sent
     const again = await callRoute(app, 'POST', '/api/push/lightning', { level: 'alarm', distanceKm: 8 });
     expect(again.body.skipped).toBe(true);
-    expect(webpushMock.sendNotification).toHaveBeenCalledTimes(2);
   });
 });

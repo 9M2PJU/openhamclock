@@ -77,7 +77,7 @@ function fakeFldigi() {
   return f;
 }
 
-function make(cfg = {}, { watcher } = {}) {
+function make(cfg = {}, { watcher, prefs } = {}) {
   const fl = fakeFldigi();
   const bus = new EventEmitter();
   const events = [];
@@ -87,6 +87,8 @@ function make(cfg = {}, { watcher } = {}) {
   const config = { fldigi: { enabled: true, flmsgEnabled: !!watcher, ...cfg } };
   const inst = plugin.create(config, {
     pluginBus: bus,
+    flmsgPrefs: () => prefs || { dtformat: null, mycall: '' },
+    locale: 'en-US',
     createClient: () => ({ call: (m, p) => fl.call(m, p) }),
     createWatcher: (opts) => {
       watcherOpts = opts;
@@ -275,20 +277,42 @@ describe('fldigi plugin — TX', () => {
       message: 'Need 40 cots\nby 1800',
       bogus: 'ignored',
     });
-    expect(r.filename).toMatch(/^KE8PLM-\d{14}\.213$/);
+    expect(r.filename).toMatch(/^KE8PLM-\d{8}-\d{6}\.213$/);
+    expect(r.folded).toBe(false);
     await vi.waitFor(() => expect(fl.trx).toBe('tx'));
+    expect(fl.tx.startsWith('... start\n[WRAP:beg][WRAP:lf][WRAP:fn KE8PLM-')).toBe(true);
     const u = unwrapFlmsg(fl.tx);
     expect(u).toMatchObject({ filename: r.filename, checksumOk: true });
     const doc = parseFlmsg(u.content);
     expect(doc.form).toBe('ics213');
-    expect(doc.header.hdr_fm).toMatch(/^KE8PLM \d{14}$/);
+    expect(doc.header.hdr_fm).toMatch(/^\nKE8PLM \d{14}$/);
     expect(fieldsToFriendly('ics213', doc.fields)).toMatchObject({
       to: 'EOC',
       from: 'Shelter 3',
       subject: 'Cots',
       message: 'Need 40 cots\nby 1800',
     });
-    expect(fl.tx.endsWith('\n^r')).toBe(true);
+    expect(fl.tx.endsWith('[WRAP:end]\n... end\n^r')).toBe(true);
+  });
+
+  it('folds an ICS-213 to plain ASCII so any flmsg verifies its checksum', async () => {
+    const { fl, inst } = make({ callsign: 'KE8PLM' });
+    await inst.pollOnce();
+    const r = await inst.sendIcs213({ subject: 'Café – Wasser', message: 'für 20 Personen' });
+    expect(r.folded).toBe(true);
+    await vi.waitFor(() => expect(fl.trx).toBe('tx'));
+    const fields = parseFlmsg(unwrapFlmsg(fl.tx).content).fields;
+    expect(fields).toMatchObject({ sb: 'Cafe - Wasser', mg: 'fur 20 Personen' });
+    expect(/[^\x00-\x7f]/.test(fl.tx)).toBe(false);
+  });
+
+  it('takes the station callsign from flmsg when the plugin has none', async () => {
+    const { fl, inst } = make({}, { prefs: { dtformat: 2, mycall: 'W1AW' } });
+    await inst.pollOnce();
+    const r = await inst.sendIcs213({ subject: 'x' });
+    expect(r.filename).toMatch(/^W1AW-/);
+    await vi.waitFor(() => expect(fl.trx).toBe('tx'));
+    expect(inst.getStatus().stationCall).toBe('W1AW');
   });
 
   it('validates ICS-213 input', async () => {
@@ -338,6 +362,9 @@ describe('fldigi plugin — flmsg forms', () => {
       text: 'Cots',
       extra: {},
       fields: { to: 'EOC' },
+      senders: ['KE8PLM'],
+      wrapped: true,
+      origin: 'received',
     };
     watcherOpts().onForm(record, '/a/ICS/messages/x.213');
     expect(events.find((e) => e.ev === 'nbems-form').d).toBe(record);
@@ -358,6 +385,45 @@ describe('fldigi plugin — flmsg forms', () => {
     expect(inst.getForms()[0]).toMatchObject({ id: 'abc', file: '/a/ICS/messages/x.213' });
     inst.disconnect();
     expect(watcher.stop).toHaveBeenCalled();
+  });
+
+  it('keeps drafts and sent forms out of Field Reports unless flmsgIncludeLocal is on', async () => {
+    vi.useFakeTimers();
+    const watcher = { start() {}, stop() {}, getStatus: () => ({}) };
+    const draft = { id: 'd', callsign: '', formType: 'ICS-213 (NBEMS)', extra: {}, origin: 'local' };
+    const a = make({}, { watcher });
+    a.inst.connect();
+    a.watcherOpts().onForm(draft, 'f');
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(a.posted).toEqual([]);
+    expect(a.events.some((e) => e.ev === 'nbems-form')).toBe(false);
+    expect(a.inst.getForms()[0]).toMatchObject({ id: 'd', origin: 'local' });
+    a.inst.disconnect();
+
+    const b = make({ flmsgIncludeLocal: true }, { watcher });
+    b.inst.connect();
+    b.watcherOpts().onForm(draft, 'f');
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(b.posted[0]).toMatchObject({ id: 'd', receivedVia: 'nbems-flmsg-local', extra: { origin: 'local' } });
+    b.inst.disconnect();
+  });
+
+  it('gives the watcher the station call and date order (flmsg prefs, then locale)', () => {
+    const watcher = { start() {}, stop() {}, getStatus: () => ({}) };
+    const a = make({}, { watcher, prefs: { dtformat: 2, mycall: 'W1AW' } });
+    a.inst.connect();
+    expect(a.watcherOpts().stationCall()).toBe('W1AW');
+    expect(a.watcherOpts().dateOrder()).toMatchObject({ slash: 'dmy', source: 'flmsg' });
+    a.inst.disconnect();
+    const b = make({ callsign: 'ke8plm', flmsgDateFormat: 'mdy' }, { watcher, prefs: { dtformat: 2, mycall: 'W1AW' } });
+    b.inst.connect();
+    expect(b.watcherOpts().stationCall()).toBe('KE8PLM');
+    expect(b.watcherOpts().dateOrder()).toMatchObject({ slash: 'mdy', source: 'setting' });
+    b.inst.disconnect();
+    const c = make({}, { watcher });
+    c.inst.connect();
+    expect(c.watcherOpts().dateOrder()).toMatchObject({ slash: 'mdy', source: 'locale' }); // en-US
+    c.inst.disconnect();
   });
 
   it('does not post when serverForward is off', async () => {

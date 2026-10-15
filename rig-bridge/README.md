@@ -735,14 +735,15 @@ Plugin status endpoint: `GET http://localhost:5555/api/winlink-express-csv/statu
 
 NBEMS (fldigi for the modem, flmsg for the forms) is how many ARES groups pass ICS-213 messages and radiograms over HF and VHF. The `fldigi` plugin brings both into OpenHamClock's **EmComm layout**:
 
-- **fldigi** — connection, mode, dial frequency, audio offset and TX/RX state; a live tail of the receive pane; a send box; a mode picker; and a compact ICS-213 form that goes out through fldigi. All of it shows in the EmComm layout's **NBEMS** panel.
-- **flmsg** — forms that arrive in flmsg's folders (ICS-213, radiograms, and other flmsg forms) are parsed and forwarded to your OpenHamClock server. They appear in the **Field Reports** panel tagged **NBEMS**, with the form type (for example `ICS-213 (NBEMS)`), and as 📋 map markers when the form carries a position.
+- **fldigi** — connection, mode, dial frequency, audio offset and TX/RX state; a live tail of the receive pane; a send box; a mode picker; and a compact ICS-213 form that goes out through fldigi. All of it shows in the EmComm layout's **NBEMS** panel, on the same network or through the Cloud Relay.
+- **flmsg** — forms received over the air (ICS-213, radiograms, and other flmsg forms, compressed or not) are parsed and forwarded to your OpenHamClock server. They appear in the **Field Reports** panel tagged **NBEMS**, with the form type (for example `ICS-213 (NBEMS)`), and as 📋 map markers when the form carries a position.
 
 ```
-fldigi ◀──XML-RPC :7362──▶ Rig Bridge — fldigi plugin ──SSE /stream──▶ EmComm layout · NBEMS panel
+fldigi ◀──XML-RPC :7362──▶ Rig Bridge — fldigi plugin ──SSE /stream (or Cloud Relay)──▶ EmComm · NBEMS panel
                                        │
-~/NBEMS.files/ICS/messages ──watch──▶  │ parse flmsg forms
-~/NBEMS.files/WRAP/recv    ──watch──▶  │ POST /api/emcomm/field-reports
+~/NBEMS.files/WRAP/recv    ──watch──▶  │ received transfers
+~/NBEMS.files/ICS/messages ──watch──▶  │ forms saved in flmsg (received ones only)
+                                       │ POST /api/emcomm/field-reports
                                        ▼
                          OpenHamClock server ──▶ Field Reports panel + map markers
 ```
@@ -750,8 +751,8 @@ fldigi ◀──XML-RPC :7362──▶ Rig Bridge — fldigi plugin ──SSE /s
 #### Setup
 
 1. **fldigi:** nothing to change — its XML-RPC server listens on `127.0.0.1:7362` by default. If you changed it, it is under fldigi's _Configure → Misc → TCP-IP sockets_ (XML-RPC).
-2. **flmsg:** keep using it as usual. Received transfers land in `NBEMS.files/WRAP/recv`, and forms you open and save in flmsg go to `NBEMS.files/ICS/messages`. Both folders sit in your home directory on Linux, macOS and Windows (`C:\Users\<you>\NBEMS.files` on Windows).
-3. In the Rig Bridge setup page, open **Plugins**, switch on **fldigi + flmsg (NBEMS)**, set **Your Callsign** (it goes into the header of forms you send) and the **OpenHamClock server URL**, then save. Or in `rig-bridge-config.json`:
+2. **flmsg:** keep using it as usual. fldigi saves every flmsg transfer it decodes to `NBEMS.files/WRAP/recv` (as `extract-<date>-<time>.wrap`), and flmsg saves the forms you open, write or send to `NBEMS.files/ICS/messages`. Both folders sit in your home directory on Linux, macOS and Windows (`C:\Users\<you>\NBEMS.files` on Windows).
+3. In the Rig Bridge setup page, open **Plugins**, switch on **fldigi + flmsg (NBEMS)**, set **Your Callsign** (it goes into the header of forms you send, and tells your own forms from received ones) and the **OpenHamClock server URL**, then save. Or in `rig-bridge-config.json`:
 
 ```json
 {
@@ -764,27 +765,31 @@ fldigi ◀──XML-RPC :7362──▶ Rig Bridge — fldigi plugin ──SSE /s
 }
 ```
 
-4. Switch OpenHamClock to the EmComm layout. The **NBEMS** panel shows fldigi's state within a second, and forms from the last 72 hours already in the folders appear in Field Reports.
+Leave **Your Callsign** blank and the plugin uses the callsign set in flmsg.
 
-Sending (text, ICS-213, mode change, Stop TX) goes from the browser straight to Rig Bridge, like click-to-tune, and uses your Rig Bridge API token when one is set (Settings → Rig Bridge).
+4. Switch OpenHamClock to the EmComm layout. The **NBEMS** panel shows fldigi's state within a second, and forms received in the last 72 hours appear in Field Reports.
+
+Sending (text, ICS-213, mode change, Stop TX) needs your Rig Bridge API token when one is set (Settings → Rig Bridge). On the same network the browser sends straight to Rig Bridge, like click-to-tune; with the Cloud Relay the command travels through your OpenHamClock server — see [Cloud Relay](#nbems-over-the-cloud-relay) below.
 
 #### Config reference
 
-| Field               | Description                                                                                             | Default                 |
-| ------------------- | ------------------------------------------------------------------------------------------------------- | ----------------------- |
-| `enabled`           | Activate the plugin on startup                                                                          | `false`                 |
-| `url`               | fldigi's XML-RPC address                                                                                | `http://127.0.0.1:7362` |
-| `pollInterval`      | Milliseconds between status and receive-text polls (minimum 250)                                        | `1000`                  |
-| `rxBufferChars`     | Receive text kept for browsers that connect later                                                       | `4000`                  |
-| `maxTxSeconds`      | Transmit watchdog: a transmission still running after this long is aborted and fldigi set to receive    | `600`                   |
-| `callsign`          | Station callsign written into the flmsg header of forms you send                                        | `""`                    |
-| `flmsgEnabled`      | Watch the flmsg folders for forms                                                                       | `true`                  |
-| `flmsgDirs`         | Folders to watch, separated by `;` — blank means `NBEMS.files/ICS/messages` and `NBEMS.files/WRAP/recv` | `""`                    |
-| `flmsgPollInterval` | Seconds between folder scans (file-system events also trigger a scan straight away)                     | `15`                    |
-| `flmsgMaxAgeHours`  | At start-up, forms older than this are remembered but not reported                                      | `72`                    |
-| `serverForward`     | POST forms to the OpenHamClock server                                                                   | `true`                  |
-| `ohcUrl`            | OpenHamClock server URL                                                                                 | `http://localhost:3000` |
-| `verbose`           | Log every TX completion and other detail                                                                | `false`                 |
+| Field               | Description                                                                                                                        | Default                 |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ----------------------- |
+| `enabled`           | Activate the plugin on startup                                                                                                     | `false`                 |
+| `url`               | fldigi's XML-RPC address                                                                                                           | `http://127.0.0.1:7362` |
+| `pollInterval`      | Milliseconds between status and receive-text polls (minimum 250)                                                                   | `1000`                  |
+| `rxBufferChars`     | Receive text kept for browsers that connect later                                                                                  | `4000`                  |
+| `maxTxSeconds`      | Transmit watchdog: a transmission still running after this long is aborted and fldigi set to receive                               | `600`                   |
+| `callsign`          | This station's callsign: written into forms you send, and used to tell your own forms from received ones. Blank = flmsg's callsign | `""`                    |
+| `flmsgEnabled`      | Watch the flmsg folders for forms                                                                                                  | `true`                  |
+| `flmsgDirs`         | Folders to watch, separated by `;` — blank means `NBEMS.files/WRAP/recv` and `NBEMS.files/ICS/messages`                            | `""`                    |
+| `flmsgPollInterval` | Seconds between folder scans (file-system events also trigger a scan straight away)                                                | `15`                    |
+| `flmsgMaxAgeHours`  | At start-up, forms older than this are remembered but not reported                                                                 | `72`                    |
+| `flmsgIncludeLocal` | Also forward your own drafts and sent forms to Field Reports (tagged LOCAL)                                                        | `false`                 |
+| `flmsgDateFormat`   | How dates such as `03/04/26` are read: `auto`, `mdy`, `dmy`, `ymd` or `ydm` — see [Dates](#form-dates)                             | `auto`                  |
+| `serverForward`     | POST forms to the OpenHamClock server                                                                                              | `true`                  |
+| `ohcUrl`            | OpenHamClock server URL                                                                                                            | `http://localhost:3000` |
+| `verbose`           | Log every TX completion and other detail                                                                                           | `false`                 |
 
 Changes saved from the setup page restart the plugin; no Rig Bridge restart is needed.
 
@@ -792,59 +797,72 @@ Changes saved from the setup page restart the plugin; no Rig Bridge restart is n
 
 | Job          | fldigi XML-RPC calls                                                                                                       |
 | ------------ | -------------------------------------------------------------------------------------------------------------------------- |
-| Status       | `main.get_frequency`, `modem.get_name`, `modem.get_carrier`, `main.get_trx_status`                                         |
+| Status       | `main.get_frequency`, `modem.get_name`, `modem.get_carrier`, `main.get_trx_status` (`rx`, `tx` or `tune`)                  |
 | On connect   | `fldigi.version`, `modem.get_names` (the mode list for the picker)                                                         |
 | Receive text | `text.get_rx_length` + `text.get_rx` — reads the receive pane without consuming it (`rx.get_data` on builds without these) |
-| Send         | `text.add_tx` with `^r` appended, then `main.tx` — fldigi returns to receive when the text is sent                         |
+| Send         | `text.add_tx` with `^r` appended, then `main.tx`                                                                           |
 | Mode         | `modem.set_by_name`                                                                                                        |
 | Stop TX      | `main.abort`, `text.clear_tx`, `main.rx`                                                                                   |
 
-Messages are sent one at a time: the next one starts only after fldigi is back on receive. If fldigi is closed or restarted the panel shows _not connected_ and the plugin retries every 2 s, backing off to 30 s, until it answers again.
+Text added with `text.add_tx` goes into fldigi's transmit pane, where `^r` is a control code: when fldigi reaches it, it clears the pane and returns to receive. That is why `^` typed in your own text is sent as a space. Messages go out one at a time; the next starts only after fldigi is back on receive. If fldigi is closed or restarted the panel shows _not connected_ and the plugin retries every 2 s, backing off to 30 s, until it answers again.
 
 #### Forms
 
-- **ICS-213** fields (incident, to/from with positions, subject, date, time, message, approved-by) are read by name. The report's text is the subject and message; the to/from/subject/approved-by details travel with it.
-- **Radiograms** come through with number, precedence, handling, check, place of origin, addressee and signature; the station of origin becomes the report's callsign.
-- **Other flmsg forms** (ICS-205, ICS-214, plain text, ...) are listed under their form name with their raw fields.
+- **Received or yours?** Everything in `WRAP/recv` was received over the air. `ICS/messages` holds whatever flmsg saved: your drafts, forms you sent, and received forms you opened and saved. flmsg records who sent a form in its header, and only when it is actually sent, so the plugin reads that: a form never sent is a draft, a form last sent by your callsign is yours, a form last sent by another station is received. Only received forms go to Field Reports, unless `flmsgIncludeLocal` is on (then yours show with a LOCAL tag). A received transfer and the copy you saved from it count once.
+- **ICS-213** fields (incident, to/from with positions, subject, date, time, message, approved-by) are read by name. The report's text is the subject and message; the details travel with it. **HICS-213**, **radiograms** and **IARU messages** are read by their own fields (for radiograms the station of origin becomes the report's callsign). Other flmsg forms (ICS-205, ICS-214, plain text, ...) are listed under their form name with their raw fields.
 - **Positions:** an ICS-213 has no position field, so put one in the message: `GRID EM29qb`, `LAT 39.10 LON -94.58`, or a decimal pair such as `39.0997, -94.5786`. Forms without one still appear in the list.
-- **Received transfers** (`[WRAP:beg]...[WRAP:end]`) are checked against their CRC-16; a mismatch shows in the report's details as `checksum: MISMATCH` and the form is still listed.
-- Each form is reported once, even when the same form is in both folders or the file is saved again unchanged.
+- **Checksums:** received transfers are checked against their CRC-16 the way flmsg checks them, including transfers whose line ends changed on the air. A mismatch shows in the report's details as `checksum: MISMATCH`; the form is still listed.
+- **Compressed transfers** (flmsg's compression option) are decoded. If the log says the LZMA decoder is missing, run `npm install` in the `rig-bridge` folder (installs from source only; the standalone builds include it).
 
-**Send ICS-213** (the ICS-213 button in the NBEMS panel, or `POST /api/fldigi/send-ics213`) writes the form in flmsg's file format, dated now in UTC, wraps it in the `[WRAP:...]` envelope with its CRC-16, and transmits it in fldigi's current mode. A receiving station running fldigi and flmsg gets it as a normal flmsg transfer.
+**Send ICS-213** (the ICS-213 button in the NBEMS panel, or `POST /api/fldigi/send-ics213`) writes the form exactly as flmsg does, dated now in UTC, wraps it with flmsg's checksum and transmits it in fldigi's current mode, framed the way flmsg frames its own transfers. A receiving station running fldigi and flmsg gets it as a normal flmsg transfer. Accented and other non-ASCII characters are converted to plain letters first (`é` → `e`, `ß` → `ss`): flmsg's checksum of those characters comes out differently on most PCs and Macs than on Linux on ARM (such as a Raspberry Pi), so a form containing them could fail the check at the other end.
 
-#### Known limitations
+#### Form dates
 
-- **Compressed transfers are not read.** flmsg can compress forms before sending; the plugin skips those and logs `... is compressed — turn off compression in flmsg`. Ask stations to send uncompressed, or open the form in flmsg, which saves it uncompressed to `ICS/messages` where the plugin reads it. Forms sent from OpenHamClock are never compressed.
-- **Sent forms follow flmsg's format; flmsg remains the reference.** If a receiving flmsg ever reports a checksum error on a form sent from OpenHamClock, send that traffic from flmsg directly and report the case. Characters outside plain ASCII are the most likely trigger.
-- `^` in outgoing text is sent as a space: fldigi reads `^` as the start of a transmit command.
-- `ICS/messages` also holds forms you drafted in flmsg yourself; they are listed too.
-- In cloud-relay mode the NBEMS panel has no data: it needs a direct (local or LAN) connection between the browser and Rig Bridge. Received forms still reach a cloud server when `ohcUrl` points at it.
-- Dates written `DD/MM/YY` are read as `MM/DD/YY`; flmsg's default ISO dates (`2026-10-15`) are unambiguous.
+flmsg writes dates in the format its operator chose: `2026-10-15`, `10/15/26`, `15/10/26`, `2026-15-10` or `20261510`. When a part is above 12 the order is obvious; otherwise (`03/04/26`) the plugin uses `flmsgDateFormat`:
+
+- `auto` (default) — the date format set in your own flmsg (read from `NBEMS.files/w1hkj.com/flmsg.prefs`); if that cannot be read, your computer's regional setting.
+- `mdy` / `dmy` — slash dates are month-first / day-first.
+- `ymd` / `ydm` — year-first dates are year-month-day / year-day-month.
+
+A form carries no record of the sender's date setting, so a net whose stations use different settings should agree on one; `GET /api/fldigi/status` shows the order in use under `flmsg.dateOrder`. Radiogram dates (`OCT 15`) take the year from the form's header.
+
+#### NBEMS over the Cloud Relay
+
+With the [Cloud Relay](#cloud-relay-plugin) running, the NBEMS panel works on a hosted OpenHamClock too: fldigi's status and receive text, and received forms, travel up with the relay's regular pushes, and the server replays the latest status and receive text to a browser that opens the page later. Send, ICS-213, mode change and Stop TX travel down the relay's command channel. The command carries your Rig Bridge API token from OpenHamClock's settings, and Rig Bridge checks it exactly as for a local request — the relay's own credentials cannot key the transmitter. The panel waits for Rig Bridge's answer (typically about a second) and shows any refusal. To keep NBEMS off the relay, set `"relayFldigi": false` in the `cloudRelay` section.
 
 #### API
 
-| Endpoint                       | Description                                                             |
-| ------------------------------ | ----------------------------------------------------------------------- |
-| `GET /api/fldigi/status`       | Connection, mode, frequency, TX queue, folder watcher and counters      |
-| `GET /api/fldigi/rx`           | The receive-text tail                                                   |
-| `GET /api/fldigi/forms`        | The last 50 forms read from the flmsg folders                           |
-| `POST /api/fldigi/send`        | `{ "text": "..." }` — queue text for transmit (token)                   |
-| `POST /api/fldigi/send-ics213` | `{ "to", "from", "subject", "message", ... }` — send an ICS-213 (token) |
-| `POST /api/fldigi/mode`        | `{ "mode": "MT63-2KL" }` — change fldigi's mode (token)                 |
-| `POST /api/fldigi/abort`       | Stop transmitting and clear the queue (token)                           |
+| Endpoint                       | Description                                                                                                                       |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/fldigi/status`       | Connection, mode, frequency, TX queue, station callsign, folder watcher (folders, received/local counts, date order) and counters |
+| `GET /api/fldigi/rx`           | The receive-text tail                                                                                                             |
+| `GET /api/fldigi/forms`        | The last 50 forms read from the flmsg folders, received and local, with their `origin`                                            |
+| `POST /api/fldigi/send`        | `{ "text": "..." }` — queue text for transmit (token)                                                                             |
+| `POST /api/fldigi/send-ics213` | `{ "to", "from", "subject", "message", ... }` — send an ICS-213 (token)                                                           |
+| `POST /api/fldigi/mode`        | `{ "mode": "MT63-2KL" }` — change fldigi's mode (token)                                                                           |
+| `POST /api/fldigi/abort`       | Stop transmitting and clear the queue (token)                                                                                     |
 
-"(token)" endpoints need the `X-RigBridge-Token` header when an API token is configured. Live updates reach the browser on `/stream` as plugin events `fldigi` (status), `fldigi-rx` (receive text) and `nbems-form` (a form just read).
+"(token)" endpoints need the `X-RigBridge-Token` header when an API token is configured. Live updates reach the browser on `/stream` as plugin events `fldigi` (status), `fldigi-rx` (receive text) and `nbems-form` (a received form).
+
+#### Known limitations
+
+- A form's date setting is not part of the form; see [Dates](#form-dates).
+- Without a callsign (in the plugin or in flmsg), forms in `ICS/messages` cannot be told apart and are all treated as yours. Received transfers in `WRAP/recv` are unaffected.
+- flmsg's `[b128:...]` and `[b256:...]` encodings are recognised but not decoded; flmsg itself does not use them for forms.
 
 #### Troubleshooting
 
-| Problem                                  | Solution                                                                                           |
-| ---------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| NBEMS panel says _not connected_         | Is fldigi running? Check `url` and fldigi's XML-RPC port (Configure → Misc → TCP-IP sockets)       |
-| Send says the API token was rejected     | Copy the token from the Rig Bridge setup page into OpenHamClock Settings → Rig Bridge              |
-| No forms in Field Reports                | `GET /api/fldigi/status` → `flmsg.dirs` shows which folders exist; check `ohcUrl` and `postErrors` |
-| A form shows but has no map marker       | Add `GRID ...` or `LAT ... LON ...` to the message — ICS-213 has no position field                 |
-| Log says a file is compressed            | The sender used flmsg compression — open it in flmsg and save, or ask for uncompressed sends       |
-| Transmission cut off after a few minutes | The watchdog (`maxTxSeconds`) stopped it — raise it for long messages in slow modes                |
+| Problem                                             | Solution                                                                                                                               |
+| --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| NBEMS panel says _not connected_                    | Is fldigi running? Check `url` and fldigi's XML-RPC port (Configure → Misc → TCP-IP sockets)                                           |
+| Send says the API token was rejected                | Copy the token from the Rig Bridge setup page into OpenHamClock Settings → Rig Bridge                                                  |
+| "No answer from Rig Bridge through the cloud relay" | Check the Cloud Relay is running and `relayFldigi` is not `false`                                                                      |
+| No forms in Field Reports                           | `GET /api/fldigi/status` → `flmsg.dirs` shows which folders exist and `flmsg.byOrigin` what was found; check `ohcUrl` and `postErrors` |
+| Your own forms show in Field Reports                | Set **Your Callsign** (or your callsign in flmsg), and leave `flmsgIncludeLocal` off                                                   |
+| A form shows but has no map marker                  | Add `GRID ...` or `LAT ... LON ...` to the message — ICS-213 has no position field                                                     |
+| A form shows the wrong day                          | Set `flmsgDateFormat` to the date order your net uses                                                                                  |
+| Log says the LZMA decoder is missing                | Run `npm install` in the `rig-bridge` folder                                                                                           |
+| Transmission cut off after a few minutes            | The watchdog (`maxTxSeconds`) stopped it — raise it for long messages in slow modes                                                    |
 
 ---
 
@@ -901,6 +919,8 @@ See [Scenario 3](#scenario-3-cloud-relay-ohc-on-openhamclockcom-radio-at-home) f
 | Browser command → rig | Long-poll (server wakes rig-bridge on command arrival) | ~RTT (< 100 ms) |
 
 The rig-bridge holds a persistent long-poll connection to the server. The moment you click PTT or a DX spot, the server wakes that connection and delivers the command — no fixed poll tick to wait for.
+
+The relay also carries the NBEMS panel (fldigi status, receive text, received flmsg forms, and send / mode / Stop TX commands, which still need your Rig Bridge API token) — see [NBEMS over the Cloud Relay](#nbems-over-the-cloud-relay). Set `"relayFldigi": false` in `cloudRelay` to leave it out.
 
 ### MQTT Publish Plugin _(Beta)_
 
@@ -1035,7 +1055,7 @@ Drives indicator and switch lines on the Pi header, plus a PTT sense input. Pin 
 | `satOut`            | output    | 20 (38)                        | 1 Hz the minute before AOS, steady during the pass, 2 Hz the last minute (SA)             |
 | `lightningOut`      | output    | off (suggested 25 / header 22) | Lightning antenna-protection relay — see [Lightning relay](#lightning-relay-lightningout) |
 
-Set a pin to `-1` to disable that function. `activeLow` (default on) means switches pull the input to ground; `outputActiveLow` inverts the outputs for sink-driven LEDs.
+Set a pin to `-1` to disable that function. Pins are BCM numbers or header pins written `P37`, both in the config file and on the setup page. `activeLow` (default on) means switches pull the input to ground; `outputActiveLow` inverts the outputs for sink-driven LEDs.
 
 **Wiring:** LEDs through a 330 Ω–1 kΩ resistor to ground (3.3 V logic, ≤ 8 mA per pin — use a transistor or relay module for anything bigger). Switches between the input pin and ground; the plugin requests internal pull-ups, but GPIO 9–27 default to pull-_down_ at boot, so add this to `/boot/firmware/config.txt` (older images: `/boot/config.txt`) and reboot:
 
@@ -1045,7 +1065,7 @@ gpio=5,16,26=pu
 
 **Backends** (`backend`): `auto` picks sysfs when `/sys/class/gpio` exists (every Raspberry Pi OS release so far) and otherwise the libgpiod tools (`gpioget`/`gpioset`/`gpiomon`, v1 or v2 — install with `sudo apt install gpiod`). `mock` keeps everything in memory; `POST /api/gpio/mock/input { "name": "pttIn", "level": 1 }` presses a virtual button so you can watch the ON AIR panel react.
 
-The browser tells the bridge what to show by posting its indicator state to `POST /api/indicators` (`{ satVisible, satAosInSec, satLosInSec, countdown: off|running|expired, alarm, lightning?: clear|warn|alarm, lightningRelay?: bool }`, token-protected, every 15 s and on change). Any plugin can subscribe with `pluginBus.on('indicators', fn)`. Physical button presses go the other way as `{ type:'plugin', event:'gpio-button' }` — the **ID Timer** panel restarts on `countdown-restart` and dismisses its reminder on `alarm-silence`.
+The browser tells the bridge what to show by posting its indicator state to `POST /api/indicators` (`{ satVisible, satAosInSec, satLosInSec, countdown: off|running|expired, alarm, lightning?: clear|warn|alarm, lightningRelay?: bool, lightningAllClearMin?, lightningOverride?: auto|on|off, displayId? }`, token-protected, every 15 s and on change; in Cloud Relay mode it arrives through the cloud-relay plugin). Any plugin can subscribe with `pluginBus.on('indicators', fn)`. Physical button presses go the other way as `{ type:'plugin', event:'gpio-button' }` — the **ID Timer** panel restarts on `countdown-restart` and dismisses its reminder on `alarm-silence`.
 
 API: `GET /api/gpio/status`, `POST /api/gpio/mock/input`, `POST /api/indicators`, `GET /api/indicators`.
 
@@ -1053,15 +1073,29 @@ API: `GET /api/gpio/status`, `POST /api/gpio/mock/input`, `POST /api/indicators`
 
 > ⚠️ **Safety first.** The lightning relay is a **convenience, not lightning protection.** Lightning data can arrive late or not at all, and the browser, network, Pi or relay can fail. A relay a few millimetres apart does not stop a direct or nearby strike. It does **not** replace a proper station ground, bonding, coax surge arrestors at the entry panel, and disconnecting antennas by hand when storms are forecast. Never use it to make outdoor work safe.
 
-The GPIO plugin can drive one more output, `lightningOut`, from the browser's **lightning guard** (OpenHamClock → Settings → Alerts → Lightning guard): the relay engages when strikes come inside the alarm radius (or the warning radius, if chosen there) and releases automatically after the all-clear time. The browser sends `lightningRelay: true|false` and the guard level `lightning` in the indicator payload above; a browser that does not drive the relay leaves both out, so a second display cannot release a relay the first one engaged.
+The GPIO plugin can drive one more output, `lightningOut`, from the **lightning guard** (OpenHamClock → Settings → Alerts → Lightning guard): the relay engages when strikes come inside the alarm radius (or the warning radius, if chosen there) and releases after the all-clear time.
 
-| Setting                  | Default | Description                                                                                                                    |
-| ------------------------ | ------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `pins.lightningOut`      | `-1`    | BCM line for the relay (`-1` = off). Suggested `25` (header 22) — free on a bare Pi. `P22` also works                          |
-| `lightningFailSafe`      | `false` | Invert this line only: energised = antenna **connected**. Power loss, a crash or a stopped bridge then disconnects the antenna |
-| `lightningHoldWhenStale` | `true`  | Keep the relay engaged when the browser stops reporting (90 s). Off: release with the other indicator lines                    |
+**Who decides.** Every OpenHamClock display that drives the relay sends `lightningRelay: true|false`, its guard level `lightning`, its all-clear time `lightningAllClearMin`, any manual override `lightningOverride` and a stable `displayId` in the indicator payload above — directly, or through Cloud Relay (the browser queues an `indicators` command; the cloud-relay plugin posts it to the local `/api/indicators`). Rig Bridge keeps one claim per display:
 
-Assign the line from OpenHamClock (**Settings → Rig Bridge → Lightning relay (GPIO)** → _Push to Rig Bridge_) or on the setup page (Plugins → Raspberry Pi GPIO). `GET /api/gpio/status` reports `lightning: { pin, relay, requested, level, reportAgeMs, failSafe, holdWhenStale }`. With the **mock** backend you can watch it work without hardware: enable the guard, click _Simulate alarm strike_, and `mockLevels` in the status shows the line switching.
+- the relay is **engaged while any display wants protection**, and released only when none does;
+- a display that asked for protection and then went quiet (tab closed, network gone) **keeps its claim for its own all-clear time** after its last request — Rig Bridge releases the relay on its own then, without waiting for the browser (`lightningHoldWhenStale: false` ends the claim with the 90 s stale window instead);
+- a manual override from a live display wins (_Force protect_ / _Hold connected_; the most recent one counts);
+- displays that don't drive the relay leave the fields out and change nothing.
+
+**Headless guard (no browser needed).** With `lightningHeadless.enabled` Rig Bridge connects to Blitzortung.org itself (`ws`) and runs the same guard logic as the browser — the code is generated from OpenHamClock's `src/utils/lightningGuard.js` into `lib/lightning-guard-logic.js` (`npm run lightning:sync` in the repository root; a test fails when the copy is stale). It counts as one more display. OpenHamClock's _Run the guard inside Rig Bridge_ box sends your location and guard settings with **Push to Rig Bridge**.
+
+| Setting                                | Default | Description                                                                                                                       |
+| -------------------------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `pins.lightningOut`                    | `-1`    | BCM line for the relay (`-1` = off). Suggested `25` (header 22) — free on a bare Pi. `P22` also works, here and on the setup page |
+| `lightningFailSafe`                    | `false` | Invert this line only: energised = antenna **connected**. Power loss, a crash or a stopped bridge then disconnects the antenna    |
+| `lightningHoldWhenStale`               | `true`  | A quiet display keeps its claim for its all-clear time. Off: the claim ends after 90 s without a report                           |
+| `lightningHeadless.enabled`            | `false` | Run the guard inside Rig Bridge                                                                                                   |
+| `lightningHeadless.lat` / `lon`        | —       | Station location for the headless guard                                                                                           |
+| `lightningHeadless.warnKm` / `alarmKm` | 50 / 25 | Radii (km)                                                                                                                        |
+| `lightningHeadless.allClearMin`        | 30      | All-clear time (min); also `minStrikes` (1) and `hysteresisPct` (20)                                                              |
+| `lightningHeadless.relayOn`            | `alarm` | Engage at `alarm` or already at `warn`                                                                                            |
+
+`GET /api/gpio/status` reports `lightning: { pin, relay, engaged, reason, holdUntil, reporters[], failSafe, holdWhenStale, headless }` — `reason` is `requested`, `hold` (only quiet displays' claims are left), `override-on`/`override-off` or `clear`. `POST /api/gpio/lightning/test { "distanceKm": 8, "bearingDeg": 90 }` (token-protected) places a synthetic strike for the headless guard. With the **mock** backend you can watch everything without hardware: `mockLevels` in the status shows the line switching.
 
 **Wiring:**
 

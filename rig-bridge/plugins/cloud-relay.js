@@ -25,6 +25,8 @@
  *   relayRig:       boolean  Relay rig state (default: true)
  *   relayWsjtx:     boolean  Relay WSJT-X decodes (default: true)
  *   relayAprs:      boolean  Relay APRS packets (default: true)
+ *   relayFldigi:    boolean  Relay the fldigi plugin's status, receive text and
+ *                            flmsg forms, and accept NBEMS commands (default: true)
  *   verbose:        boolean  Log all relay activity (default: false)
  */
 
@@ -72,6 +74,14 @@ const descriptor = {
     let pendingAprs = []; // Batched APRS packets to push
     let pendingMeshCom = []; // Batched MeshCom packets to push
     let pendingHamAlerts = []; // Batched HamAlert spots to push
+    // fldigi / NBEMS: latest status, accumulated receive text, forms and
+    // command results — pushed as `pluginEvents` with the same
+    // { event, source, data } shape the local /stream uses.
+    let pendingFldigiStatus = null;
+    let pendingFldigiRx = null; // { text, reset }
+    let pendingFldigiOther = []; // nbems-form / fldigi-cmd-result
+    let fldigiPushTimer = null;
+    const FLDIGI_RX_MAX = 8000;
 
     function makeRequest(urlStr, method, body, callback, timeoutMs) {
       let parsed;
@@ -164,6 +174,7 @@ const descriptor = {
       const hasAprs = pendingAprs.length > 0;
       const hasMeshCom = pendingMeshCom.length > 0;
       const hasHamAlerts = pendingHamAlerts.length > 0;
+      const hasPluginEvents = !!(pendingFldigiStatus || pendingFldigiRx || pendingFldigiOther.length);
       const stateChanged =
         currentState.freq !== lastState.freq ||
         currentState.mode !== lastState.mode ||
@@ -171,7 +182,7 @@ const descriptor = {
         currentState.connected !== lastState.connected;
 
       // Only push if state changed or there's data to send
-      if (!stateChanged && !hasDecodes && !hasAprs && !hasMeshCom && !hasHamAlerts) return;
+      if (!stateChanged && !hasDecodes && !hasAprs && !hasMeshCom && !hasHamAlerts && !hasPluginEvents) return;
       lastState = { ...currentState };
 
       // Include batched data in the push
@@ -189,6 +200,17 @@ const descriptor = {
       if (hasHamAlerts) {
         payload.hamAlerts = pendingHamAlerts.splice(0, 50);
       }
+      let sentFldigi = null;
+      if (hasPluginEvents) {
+        sentFldigi = { status: pendingFldigiStatus, rx: pendingFldigiRx, other: pendingFldigiOther.splice(0, 20) };
+        pendingFldigiStatus = null;
+        pendingFldigiRx = null;
+        payload.pluginEvents = [
+          ...(sentFldigi.status ? [{ event: 'fldigi', source: 'fldigi', data: sentFldigi.status }] : []),
+          ...(sentFldigi.rx ? [{ event: 'fldigi-rx', source: 'fldigi', data: sentFldigi.rx }] : []),
+          ...sentFldigi.other,
+        ];
+      }
 
       makeRequest(`${serverUrl}/api/rig-bridge/relay/state`, 'POST', payload, (err, status, data) => {
         if (err) {
@@ -200,6 +222,20 @@ const descriptor = {
           if (payload.aprsPackets) pendingAprs.unshift(...payload.aprsPackets);
           if (payload.meshcomPackets) pendingMeshCom.unshift(...payload.meshcomPackets);
           if (payload.hamAlerts) pendingHamAlerts.unshift(...payload.hamAlerts);
+          if (sentFldigi) {
+            pendingFldigiStatus = pendingFldigiStatus || sentFldigi.status;
+            if (sentFldigi.rx) {
+              pendingFldigiRx = pendingFldigiRx
+                ? pendingFldigiRx.reset
+                  ? pendingFldigiRx
+                  : {
+                      text: (sentFldigi.rx.text + pendingFldigiRx.text).slice(-FLDIGI_RX_MAX),
+                      reset: sentFldigi.rx.reset,
+                    }
+                : sentFldigi.rx;
+            }
+            pendingFldigiOther.unshift(...sentFldigi.other);
+          }
           return;
         }
         if (status === 200) {
@@ -304,9 +340,61 @@ const descriptor = {
             pttReq.end();
           }
           break;
+        case 'fldigi':
+          runFldigiCommand(cmd.payload || {}, localMod, localOptions);
+          break;
+        case 'indicators':
+          // Display indicator state (satellite, countdown, alarm, lightning
+          // guard relay) from a browser in cloud-relay mode → the same local
+          // /api/indicators the browser would POST to directly.
+          if (cmd.payload && typeof cmd.payload === 'object') {
+            const indReq = localMod.request(localOptions('/api/indicators'), () => {});
+            indReq.on('error', (err) => {
+              if (cfg.verbose) console.error(`[CloudRelay] indicators dispatch error: ${err.message}`);
+            });
+            indReq.write(JSON.stringify(cmd.payload));
+            indReq.end();
+          }
+          break;
         default:
           if (cfg.verbose) console.log(`[CloudRelay] Unknown command type: ${cmd.type}`);
       }
+    }
+
+    // NBEMS commands from the browser: run against the local fldigi plugin
+    // routes with the browser's own Rig Bridge API token — not the relay's —
+    // so a hosted page still needs the token to key the transmitter. The
+    // outcome goes back as a 'fldigi-cmd-result' plugin event.
+    const FLDIGI_ACTIONS = new Set(['send', 'send-ics213', 'mode', 'abort']);
+    function runFldigiCommand(p, localMod, localOptions) {
+      const requestId = String(p.requestId || '')
+        .replace(/[^A-Za-z0-9-]/g, '')
+        .slice(0, 40);
+      const done = (result) => {
+        if (pluginBus && requestId) pluginBus.emit('fldigi-cmd-result', { requestId, ...result });
+      };
+      if (cfg.relayFldigi === false)
+        return done({ ok: false, status: 403, error: 'fldigi relay is off in Rig Bridge' });
+      if (!FLDIGI_ACTIONS.has(p.action)) return done({ ok: false, status: 400, error: 'Unknown fldigi action' });
+      const body = JSON.stringify(p.body && typeof p.body === 'object' ? p.body : {});
+      const opts = localOptions(`/api/fldigi/${p.action}`);
+      opts.headers = { ...opts.headers, 'X-RigBridge-Token': typeof p.token === 'string' ? p.token : '' };
+      const req = localMod.request(opts, (res) => {
+        let data = '';
+        res.on('data', (c) => (data += c));
+        res.on('end', () => {
+          let parsed = {};
+          try {
+            parsed = JSON.parse(data);
+          } catch (e) {}
+          const ok = res.statusCode >= 200 && res.statusCode < 300;
+          done({ ...parsed, ok, status: res.statusCode });
+        });
+      });
+      req.on('error', (err) => done({ ok: false, status: 502, error: err.message }));
+      req.setTimeout(10000, () => req.destroy(new Error('Timeout')));
+      req.write(body);
+      req.end();
     }
 
     function connect() {
@@ -403,6 +491,40 @@ const descriptor = {
           });
           subscribed.push('HamAlert');
         }
+        if (cfg.relayFldigi !== false) {
+          const soon = () => {
+            if (fldigiPushTimer) return;
+            fldigiPushTimer = setTimeout(() => {
+              fldigiPushTimer = null;
+              pushState();
+            }, 250);
+          };
+          pluginBus.on('fldigi', (status) => {
+            pendingFldigiStatus = status;
+            soon();
+          });
+          pluginBus.on('fldigi-rx', (rx) => {
+            const text = String(rx?.text ?? '');
+            if (rx?.reset || !pendingFldigiRx) {
+              pendingFldigiRx = { text: text.slice(-FLDIGI_RX_MAX), reset: !!rx?.reset };
+            } else {
+              pendingFldigiRx = {
+                text: (pendingFldigiRx.text + text).slice(-FLDIGI_RX_MAX),
+                reset: pendingFldigiRx.reset,
+              };
+            }
+            soon();
+          });
+          for (const event of ['nbems-form', 'fldigi-cmd-result']) {
+            pluginBus.on(event, (data) => {
+              const { fields, ...slim } = data || {};
+              pendingFldigiOther.push({ event, source: 'fldigi', data: slim });
+              if (pendingFldigiOther.length > 50) pendingFldigiOther.splice(0, pendingFldigiOther.length - 50);
+              soon();
+            });
+          }
+          subscribed.push('fldigi');
+        }
         console.log(`[CloudRelay] Subscribed to plugin bus (${subscribed.join(', ')})`);
       }
     }
@@ -422,6 +544,8 @@ const descriptor = {
         clearTimeout(immediatePushTimer);
         immediatePushTimer = null;
       }
+      clearTimeout(fldigiPushTimer);
+      fldigiPushTimer = null;
       if (stateChangeHandler && typeof removeStateChangeListener === 'function') {
         removeStateChangeListener(stateChangeHandler);
       }
@@ -443,7 +567,7 @@ const descriptor = {
       };
     }
 
-    const instance = { connect, disconnect, getStatus };
+    const instance = { connect, disconnect, getStatus, _pushState: pushState, _executeCommand: executeCommand };
     _currentInstance = instance;
     return instance;
   },
