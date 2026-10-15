@@ -905,6 +905,10 @@ export const SettingsPanel = ({
       defaultValue:
         'A big digital clock and nothing else — UTC and local, date, callsign. For shack TVs during down time.',
     }),
+    mobile: t('station.settings.layout.mobile.describe', {
+      defaultValue:
+        'A phone or tablet as the main display: compact header, a touch-sized map, and swipeable panel cards. For go-boxes and the field.',
+    }),
   };
 
   const unitString = (t) => {
@@ -4691,6 +4695,7 @@ export const SettingsPanel = ({
                     'weather',
                     'airtraffic',
                     'clock',
+                    'mobile',
                   ].map((l) => (
                     <button
                       key={l}
@@ -4718,6 +4723,7 @@ export const SettingsPanel = ({
                         hunter: '🎯',
                         weather: '🌩️',
                         airtraffic: '✈️',
+                        mobile: '📲',
                       }[l] || '⊞'}{' '}
                       {t('station.settings.layout.' + l)}
                     </button>
@@ -4841,6 +4847,7 @@ export const SettingsPanel = ({
                         'weather',
                         'airtraffic',
                         'clock',
+                        'mobile',
                         ...profileIds,
                       ].map((l) => {
                         const presetName = l.startsWith('dockable#')

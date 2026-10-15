@@ -43,7 +43,7 @@ export const DEFAULT_CONFIG = {
   },
   licenseClass: 'other', // US license class for privilege shading/warnings: 'other', 'technician', 'general', 'extra'
   theme: 'dark', // 'dark', 'light', 'legacy', or 'retro'
-  layout: 'modern', // 'modern' or 'classic'
+  layout: 'modern', // see App.jsx for the full list: 'modern', 'classic', 'dockable', 'mobile', …
   mouseZoom: 50, // Factor to affect rate of zooming with scrollwheel (1-100)
   timezone: '', // IANA timezone (e.g. 'America/Regina') — empty means consumers must fall back to browser default themselves; passing '' to Intl.DateTimeFormat throws RangeError
   use12Hour: true,

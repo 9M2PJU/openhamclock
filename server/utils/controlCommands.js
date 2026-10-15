@@ -26,6 +26,7 @@ const LAYOUT_IDS = [
   'hunter',
   'weather',
   'airtraffic',
+  'mobile',
 ];
 
 // Keep in sync with src/theme/themeConfig.js AVAILABLE_THEMES.
