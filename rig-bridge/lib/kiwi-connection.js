@@ -19,6 +19,7 @@
  * stranger's receiver.
  *
  * Events: 'open', 'ready' ({sampleRate}), 'smeter' ({dbm, t, seq}),
+ *         'audio' ({pcm: Buffer s16be, seq, sampleRate, dbm}) — only when listened to,
  *         'msg' (params), 'rejected' ({event, reason}), 'close' ({code, reason}),
  *         'error' (err), 'reconnect' ({inMs, attempt}).
  */
@@ -186,6 +187,12 @@ class KiwiConnection extends EventEmitter {
     if (frame.type === 'SND') {
       if (frame.rssiDbm == null) return;
       this.emit('smeter', { dbm: frame.rssiDbm, t: this.lastFrameAt, seq: frame.seq, flags: frame.flags });
+      // Raw audio — only built when someone listens (the beacon monitor
+      // doesn't). setupCommands() sends compression=0, so the payload is
+      // 16-bit big-endian mono PCM at this.sampleRate (≈ 12 kHz).
+      if (frame.audio && frame.audio.length >= 2 && this.listenerCount('audio') > 0) {
+        this.emit('audio', { pcm: frame.audio, seq: frame.seq, sampleRate: this.sampleRate, dbm: frame.rssiDbm });
+      }
       return;
     }
     if (frame.type !== 'MSG') return;

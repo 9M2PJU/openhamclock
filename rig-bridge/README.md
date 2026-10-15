@@ -875,6 +875,18 @@ Measurements are served locally from `GET http://localhost:5555/api/beacon-monit
 
 Etiquette: the monitor holds one receiver slot 24/7. Use a Kiwi you own or have permission to park on — public receivers usually cap session length per IP, and the monitor will simply reconnect with backoff when kicked.
 
+### KiwiSDR Audio Plugin _(Alpha)_
+
+Streams a KiwiSDR's demodulated audio to OpenHamClock's **Decoder** panel, which shows it on a waterfall and runs the CW decoder on it — so you can copy what that receiver hears without a radio or sound card. The browser can't open a Kiwi socket itself (Kiwis are plain `ws://` and need a handshake), so the bridge holds the socket and relays raw PCM.
+
+1. Enable **KiwiSDR Audio (Decoder panel)** in the Plugins tab.
+2. Set the Kiwi host/port/password — or leave the host blank to use the Beacon Monitor's receiver.
+3. In OpenHamClock, open the Decoder panel, pick **KiwiSDR (Rig Bridge)** as the source, enter a frequency and press Start.
+
+It connects **only while the panel is listening** and closes the Kiwi socket as soon as the panel stops or the tab closes. One stream at a time: a second listener replaces the first. Note that if the Beacon Monitor runs on the same Kiwi, listening uses a second receiver slot.
+
+Endpoints: `GET /api/kiwi-audio/status`; `GET /api/kiwi-audio/stream?freq=<kHz>&mode=cw|usb|lsb|am` (API token) — `application/octet-stream`, 16-bit big-endian mono PCM, sample rate in the `X-Sample-Rate` header; `POST /api/kiwi-audio/tune` `{ freqKHz, mode }` and `POST /api/kiwi-audio/stop` (API token). Not available through the Cloud Relay — audio needs a direct connection to the bridge.
+
 ### Cloud Relay Plugin
 
 Bridges a locally-running rig-bridge to a cloud-hosted OpenHamClock instance so cloud users get the same rig control as local users — click-to-tune, PTT, WSJT-X decodes, APRS packets.
@@ -1334,6 +1346,9 @@ Rig Bridge exposes a simple HTTP API — compatible with the original rig-daemon
 | POST   | `/api/gpio/mock/input`                                                                                 | Press a virtual button in GPIO mock mode                                         |
 | GET    | `/api/beacon-monitor/status`                                                                           | KiwiSDR beacon monitor connection state                                          |
 | GET    | `/api/beacon-monitor/measurements`                                                                     | Beacon SNR log: `?band=20m&hours=24` or `?since=<ms>`                            |
+| GET    | `/api/kiwi-audio/status`                                                                               | KiwiSDR audio relay state (Decoder panel)                                        |
+| GET    | `/api/kiwi-audio/stream`                                                                               | Live Kiwi audio, s16be PCM: `?freq=<kHz>&mode=cw` (token)                        |
+| POST   | `/api/kiwi-audio/tune`, `/api/kiwi-audio/stop`                                                         | Retune `{ freqKHz, mode }` / end the live stream (token)                         |
 
 ### Project structure
 
