@@ -16,6 +16,8 @@ import {
   inputToPrintDateTime,
   defaultDrafts,
   mergeDrafts,
+  migrateIcs309Types,
+  DRAFTS_VERSION,
   loadDrafts,
   saveDrafts,
   eventsInRange,
@@ -793,5 +795,37 @@ describe('ICS 205 zones', () => {
     const html = buildIcs205Html(d, { now: T0 });
     expect(html).toContain('146.520 N</td>');
     expect(html).toContain('146.520 W</td>');
+  });
+});
+
+describe('draft migration', () => {
+  const withoutTraffic = ICS309_DEFAULT_TYPES.filter((t) => t !== 'net_traffic');
+  it('ticks net_traffic once in drafts saved before versioning', () => {
+    const migrated = mergeDrafts({ ics309: { types: withoutTraffic } }, T0);
+    expect(migrated.version).toBe(DRAFTS_VERSION);
+    expect(migrated.ics309.types).toContain('net_traffic');
+    // ...and an operator's other choices are left alone
+    expect(mergeDrafts({ ics309: { types: ['aprs_msg_sent'] } }, T0).ics309.types).toEqual([
+      'aprs_msg_sent',
+      'net_traffic',
+    ]);
+  });
+  it('does not re-tick it once the draft is current (the operator unticked it on purpose)', () => {
+    const current = mergeDrafts({ version: DRAFTS_VERSION, ics309: { types: withoutTraffic } }, T0);
+    expect(current.ics309.types).not.toContain('net_traffic');
+  });
+  it('survives a save/load round trip without migrating twice', () => {
+    const once = mergeDrafts({ ics309: { types: ['aprs_msg_rx'] } }, T0);
+    once.ics309.types = once.ics309.types.filter((t) => t !== 'net_traffic');
+    saveDrafts(once);
+    expect(loadDrafts(T0).ics309.types).toEqual(['aprs_msg_rx']);
+  });
+  it('migrateIcs309Types is pure and tolerates bad input', () => {
+    const src = ['net_checkin'];
+    expect(migrateIcs309Types(src, 1)).toEqual(['net_checkin', 'net_traffic']);
+    expect(src).toEqual(['net_checkin']);
+    expect(migrateIcs309Types(['net_traffic'], 1)).toEqual(['net_traffic']);
+    expect(migrateIcs309Types(null, 1)).toBeNull();
+    expect(defaultDrafts(T0).version).toBe(DRAFTS_VERSION);
   });
 });

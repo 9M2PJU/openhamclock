@@ -104,10 +104,27 @@ export function newRowId() {
  * Fresh draft set. `header` is shared by every form (incident name,
  * operational period, who prepared it) so the operator types it once.
  */
+/**
+ * Draft format version. Stored drafts older than this are migrated once in
+ * mergeDrafts():
+ *   v1 → v2  tick `net_traffic` in the 309's event types (it became a default
+ *            after drafts had already saved their own type list).
+ */
+export const DRAFTS_VERSION = 2;
+
+/** One-time upgrades of a stored draft's 309 type list. Pure; returns a new array. */
+export function migrateIcs309Types(types, fromVersion) {
+  const list = Array.isArray(types) ? [...types] : null;
+  if (!list) return list;
+  if (fromVersion < 2 && !list.includes('net_traffic')) list.push('net_traffic');
+  return list;
+}
+
 export function defaultDrafts(now = Date.now()) {
   const start = new Date(now);
   start.setUTCHours(0, 0, 0, 0);
   return {
+    version: DRAFTS_VERSION,
     header: {
       incidentName: '',
       periodFrom: toInputDateTime(start.getTime()),
@@ -165,6 +182,10 @@ export function mergeDrafts(stored, now = Date.now()) {
     const s = stored[key];
     out[key] = s && typeof s === 'object' ? { ...base[key], ...s } : base[key];
   }
+  // Drafts saved before versioning count as v1
+  const storedVersion = Number.isInteger(stored.version) && stored.version > 0 ? stored.version : 1;
+  if (Array.isArray(out.ics309.types)) out.ics309.types = migrateIcs309Types(out.ics309.types, storedVersion);
+  out.version = DRAFTS_VERSION;
   if (!Array.isArray(out.ics214.resources)) out.ics214.resources = [];
   if (!Array.isArray(out.ics214.rows)) out.ics214.rows = [];
   if (!Array.isArray(out.ics205.rows)) out.ics205.rows = [];
