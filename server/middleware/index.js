@@ -46,7 +46,9 @@ function applyMiddleware(app, ctx) {
 
   // Permissions-Policy
   app.use((req, res, next) => {
-    res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(self), payment=(), usb=()');
+    // microphone=(self): the Decoder panel listens to the receiver through a
+    // sound-card input (getUserMedia). Same-origin only — frames never get it.
+    res.setHeader('Permissions-Policy', 'camera=(), microphone=(self), geolocation=(self), payment=(), usb=()');
     next();
   });
 
