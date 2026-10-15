@@ -259,7 +259,6 @@ export async function showAlertNotification({ feedId, title, body = '', tag } = 
 
   // Fallback: page-owned notification.
   try {
-    // eslint-disable-next-line no-new
     new api(title, options);
   } catch {
     // Some platforms throw for page-owned notifications — stay silent.

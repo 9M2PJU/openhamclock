@@ -176,7 +176,6 @@ export default function EmeLayout(props) {
     if (!satMode || relaySat || !candidates.length) return;
     const first = candidates.find((c) => c.relay) || candidates[0];
     if (first) setRelaySat(first.sat.name);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [satMode, relaySat, candidates]);
 
   // Selected satellite's passes at a finer step

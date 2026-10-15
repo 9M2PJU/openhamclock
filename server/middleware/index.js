@@ -7,7 +7,7 @@ const compression = require('compression');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const express = require('express');
-const { formatBytes, getClientIP } = require('../utils/helpers');
+const { getClientIP } = require('../utils/helpers');
 
 /**
  * Apply all middleware to the Express app.
@@ -16,7 +16,7 @@ const { formatBytes, getClientIP } = require('../utils/helpers');
  * @returns {{ endpointStats, writeLimiter, requireWriteAuth }} shared middleware refs
  */
 function applyMiddleware(app, ctx) {
-  const { CONFIG, PORT, TRUST_PROXY, API_WRITE_KEY, CORS_ORIGINS } = ctx;
+  const { PORT, TRUST_PROXY, API_WRITE_KEY, CORS_ORIGINS } = ctx;
 
   // Trust proxy
   app.set('trust proxy', TRUST_PROXY);
@@ -39,7 +39,7 @@ function applyMiddleware(app, ctx) {
   // remain active.
   app.use(
     helmet({
-      contentSecurityPolicy: false, // eslint-disable-line -- see comment above
+      contentSecurityPolicy: false, // see comment above
       crossOriginEmbedderPolicy: false, // Required for cross-origin tile loading
     }),
   );
