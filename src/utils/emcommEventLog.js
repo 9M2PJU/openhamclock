@@ -26,6 +26,7 @@ export const EVENT_TYPE_META = {
   shelter_report: { label: 'Shelter Report', color: '#22c55e' },
   field_report: { label: 'Field Report', color: '#f472b6' },
   station_heard: { label: 'Station Heard', color: '#a855f7' },
+  ics213_sent: { label: 'ICS 213 Sent', color: '#eab308' },
 };
 
 // ── In-memory state (mirrors localStorage) ──────────────────────────────────

@@ -137,6 +137,7 @@ export const PANEL_HELP = {
   wefax: 'weather-panels',
   hamalert: 'spots-activity',
   balloons: 'utility',
+  'ics-forms': 'emcomm',
 };
 
 /**

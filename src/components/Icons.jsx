@@ -1004,6 +1004,15 @@ export const LiBalloon = glyph(
     <path d="M12 18.8c-.8 1 .8 1.6 0 2.7" />
   </>,
 );
+export const LiClipboard = glyph(
+  <>
+    <rect x="5" y="4.5" width="14" height="17" rx="2" />
+    <path d="M9 4.5V3h6v1.5" />
+    <line x1="8.5" y1="10" x2="15.5" y2="10" />
+    <line x1="8.5" y1="13.5" x2="15.5" y2="13.5" />
+    <line x1="8.5" y1="17" x2="12.5" y2="17" />
+  </>,
+);
 
 export const PANEL_ICONS = {
   'world-map': LiMapFold,
@@ -1090,6 +1099,7 @@ export const PANEL_ICONS = {
   wefax: LiFax,
   hamalert: LiBell,
   balloons: LiBalloon,
+  'ics-forms': LiClipboard,
 };
 
 /**

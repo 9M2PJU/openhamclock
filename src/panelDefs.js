@@ -107,6 +107,7 @@ export function buildPanelDefs({ isLocalInstall = false } = {}) {
     wefax: { name: 'WEFAX Charts', icon: '📠', group: 'Weather' },
     hamalert: { name: 'HamAlert', icon: '🔔' },
     balloons: { name: 'Balloons (HAB)', icon: '🎈' },
+    'ics-forms': { name: 'ICS Forms', icon: '📋' },
   };
 
   // Append auto-discovered panel plugins (src/plugins/local/panels/*.jsx).
