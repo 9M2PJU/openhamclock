@@ -31,6 +31,7 @@ export const EVENT_TYPE_META = {
   station_heard: { label: 'Station Heard', color: '#a855f7' },
   ics213_sent: { label: 'ICS 213 Sent', color: '#eab308' },
   lightning: { label: 'Lightning', color: '#facc15' },
+  incident_note: { label: 'Incident', color: '#38bdf8' },
 };
 
 // ── In-memory state (mirrors localStorage) ──────────────────────────────────
@@ -118,9 +119,13 @@ export function recordEvent(type, data = {}) {
     if (dedupeIndex.has(key)) return null;
     dedupeIndex.add(key);
   }
+  const now = Date.now();
   const ev = {
-    id: `${Date.now()}-${++idCounter}`,
-    ts: Number.isFinite(ts) ? ts : Date.now(),
+    id: `${now}-${++idCounter}`,
+    ts: Number.isFinite(ts) ? ts : now,
+    // When this browser wrote the entry (ts may be the event's own time) —
+    // a shared incident mirrors only entries recorded after joining.
+    recordedAt: now,
     type,
     callsign: String(callsign || ''),
     summary: String(summary || ''),

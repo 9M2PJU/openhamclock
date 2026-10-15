@@ -16,6 +16,9 @@ import { sendAprsMessage } from '../utils/aprsMessageSend.js';
 import { IcsFormsOverlay } from '../components/IcsFormsPanel.jsx';
 import NetControlPanel from '../components/NetControlPanel.jsx';
 import { getNetControlRoster, mergeRosters, NET_CONTROL_ROSTER_EVENT } from '../utils/netControl.js';
+import { useSharedIncident } from '../hooks/useSharedIncident.js';
+import EmcommIncidentPanel, { IncidentStatusPill } from '../components/EmcommIncidentPanel.jsx';
+import { mergeDisplayedRoster, mergeFieldReports, mergeShelterReports } from '../utils/incidentSync.js';
 
 // Sidebar panel collapse state (#1188). Mode decides what a fresh visit to
 // the layout starts with: 'remember' restores each section's last state,
@@ -279,7 +282,9 @@ export default function EmcommLayout(props) {
       window.removeEventListener('storage', refresh);
     };
   }, []);
-  const displayRoster = useMemo(() => mergeRosters(netRoster, voiceRoster), [netRoster, voiceRoster]);
+  // This browser's own roster (APRS + voice net). With a shared incident
+  // joined it is also what gets mirrored to the incident (see displayRoster).
+  const localRoster = useMemo(() => mergeRosters(netRoster, voiceRoster), [netRoster, voiceRoster]);
   // RF-heard APRS shelter reports (kept alongside FEMA data — still works
   // via local TNC when internet infrastructure is down)
   const [aprsShelterReports, setAprsShelterReports] = useState([]);
@@ -324,6 +329,33 @@ export default function EmcommLayout(props) {
   // Bumped when the operator clears the log so the recording effects below
   // re-run against a reset baseline and re-seed the current picture (#1181)
   const [logEpoch, setLogEpoch] = useState(0);
+  // Check-in time per roster call, so a check-out event can carry the same
+  // dedupe identity in every browser watching this server's roster.
+  const rosterCheckinRef = useRef(new Map());
+  // Shared incident: while joined, the roster, event log and reports shown
+  // here are this browser's own merged with every other joined station's.
+  // Not joined → everything below falls back to the local-only data.
+  const incident = useSharedIncident({
+    callsign: config.callsign,
+    localRoster,
+    fieldReports,
+    shelterReports: aprsShelterReports,
+  });
+  const incidentJoined = incident.joined;
+  const incidentState = incident.state;
+  const displayRoster = useMemo(
+    () => (incidentJoined ? mergeDisplayedRoster(localRoster, incidentState) : localRoster),
+    [incidentJoined, localRoster, incidentState],
+  );
+  const displayFieldReports = useMemo(
+    () => (incidentJoined ? mergeFieldReports(fieldReports, incidentState) : fieldReports),
+    [incidentJoined, fieldReports, incidentState],
+  );
+  const displayShelterReports = useMemo(
+    () => (incidentJoined ? mergeShelterReports(aprsShelterReports, incidentState) : aprsShelterReports),
+    [incidentJoined, aprsShelterReports, incidentState],
+  );
+  const displayEventLog = incidentJoined ? incident.events : eventLog;
   // High-water mark for received-APRS-message polling (only log traffic from this session on)
   const sessionStartRef = useRef(Date.now());
   const msgSinceRef = useRef(sessionStartRef.current);
@@ -508,7 +540,10 @@ export default function EmcommLayout(props) {
 
   // FEMA shelters + RF-heard APRS shelter reports, source-tagged and deduped
   // only when positions are trivially identical
-  const mergedShelters = useMemo(() => mergeShelters(shelters, aprsShelterReports), [shelters, aprsShelterReports]);
+  const mergedShelters = useMemo(
+    () => mergeShelters(shelters, displayShelterReports),
+    [shelters, displayShelterReports],
+  );
 
   // ── Event log recording — diff-and-append on each data flow update ────────
   // Net roster: check-ins (new calls) and check-outs (calls that disappeared)
@@ -524,8 +559,15 @@ export default function EmcommLayout(props) {
       });
     }
     for (const call of removed) {
-      recordEvent('net_checkout', { callsign: call, summary: 'Checked out of net' });
+      const checkinTime = rosterCheckinRef.current.get(call);
+      recordEvent('net_checkout', {
+        callsign: call,
+        summary: 'Checked out of net',
+        // Two browsers on one server (or a shared incident) log it once.
+        ...(checkinTime ? { dedupeKey: `${call}-${checkinTime}-out` } : {}),
+      });
     }
+    rosterCheckinRef.current = new Map(netRoster.filter((op) => op?.call).map((op) => [op.call, op.checkinTime]));
     evtPrevRef.current.roster = keys;
   }, [netRoster, logEpoch]);
 
@@ -846,7 +888,7 @@ export default function EmcommLayout(props) {
     });
 
     // Field report markers (Winlink Express forms via rig-bridge) — clipboard icon
-    fieldReports.forEach((r) => {
+    displayFieldReports.forEach((r) => {
       if (r.lat == null || r.lon == null) return;
       const marker = L.marker([r.lat, r.lon], {
         icon: L.divIcon({
@@ -878,7 +920,7 @@ export default function EmcommLayout(props) {
       });
       overlayLayersRef.current = [];
     };
-  }, [config.location, alerts, mergedShelters, emcommStationsWithDistance, winlinkGateways, fieldReports]);
+  }, [config.location, alerts, mergedShelters, emcommStationsWithDistance, winlinkGateways, displayFieldReports]);
 
   // Click shelter to pan map
   // Bring a panel row's target (shelter, station, gateway, roster op, field
@@ -977,7 +1019,7 @@ export default function EmcommLayout(props) {
 
   // ── Event log export handlers ─────────────────────────────────────────────
   const exportEventLogCsv = useCallback(() => {
-    const csv = eventsToCSV(getEvents());
+    const csv = eventsToCSV(incidentJoined ? incident.events : getEvents());
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -987,13 +1029,13 @@ export default function EmcommLayout(props) {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-  }, []);
+  }, [incidentJoined, incident.events]);
 
   const printEventLog = useCallback(() => {
     const loc = config.location;
     const grid = loc?.lat != null && loc?.lon != null ? latLonToMaidenhead({ lat: loc.lat, lon: loc.lon }) : '';
     const html = buildPrintHtml({
-      events: getEvents(),
+      events: incidentJoined ? incident.events : getEvents(),
       callsign: config.callsign,
       location: loc,
       grid,
@@ -1004,7 +1046,7 @@ export default function EmcommLayout(props) {
     win.document.close();
     win.focus();
     win.print();
-  }, [config.callsign, config.location]);
+  }, [config.callsign, config.location, incidentJoined, incident.events]);
 
   const clearEventLog = useCallback(() => {
     if (!window.confirm('Clear the entire EmComm event log? This cannot be undone.')) return;
@@ -1205,6 +1247,17 @@ export default function EmcommLayout(props) {
               Collapse all
             </button>
           </div>
+
+          {/* Shared incident — create / join / leave, board, invite, manual check-in */}
+          <PanelSection
+            title="Incident"
+            count={incidentJoined ? incident.participants : 0}
+            color="#38bdf8"
+            extra={<IncidentStatusPill status={incident.status} />}
+            panels={panels}
+          >
+            <EmcommIncidentPanel incident={incident} callsign={config.callsign} />
+          </PanelSection>
 
           {/* Resource Summary Dashboard */}
           <ResourceSummary stations={emcommStationsWithDistance} panels={panels} />
@@ -1659,8 +1712,8 @@ export default function EmcommLayout(props) {
           </PanelSection>
 
           {/* Field Reports Panel — Winlink Express CSV ingest and NBEMS flmsg forms via rig-bridge */}
-          <PanelSection title="Field Reports" count={fieldReports.length} color="#f472b6" panels={panels}>
-            {fieldReports.length === 0 ? (
+          <PanelSection title="Field Reports" count={displayFieldReports.length} color="#f472b6" panels={panels}>
+            {displayFieldReports.length === 0 ? (
               <div style={{ padding: '12px 8px', color: '#555', fontSize: '11px', lineHeight: 1.5 }}>
                 {t('emcomm.fieldReports.empty', {
                   defaultValue:
@@ -1671,7 +1724,7 @@ export default function EmcommLayout(props) {
                 </a>
               </div>
             ) : (
-              fieldReports.map((r) => (
+              displayFieldReports.map((r) => (
                 <div
                   key={r.id}
                   style={{
@@ -1767,6 +1820,9 @@ export default function EmcommLayout(props) {
                           {op.source === 'net-control' ? '🎙️ ' : ''}
                           {op.netName}
                         </span>
+                        {incidentJoined && op.site && (
+                          <span style={{ color: '#38bdf8', marginLeft: '6px', fontSize: '9px' }}>@{op.site}</span>
+                        )}
                       </div>
                       <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
                         <span style={{ color: '#888', fontSize: '10px' }}>{ageStr}</span>
@@ -1805,6 +1861,28 @@ export default function EmcommLayout(props) {
                         >
                           HIST
                         </button>
+                        {incidentJoined && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              incident.checkOut(op.call, op);
+                            }}
+                            title={t('emcomm.incident.outTitle', {
+                              defaultValue: 'Check this operator out of the shared net',
+                            })}
+                            style={{
+                              background: 'none',
+                              border: '1px solid #f59e0b55',
+                              borderRadius: '3px',
+                              color: '#f59e0b',
+                              fontSize: '9px',
+                              padding: '1px 4px',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            {t('emcomm.incident.out', { defaultValue: 'OUT' })}
+                          </button>
+                        )}
                       </div>
                     </div>
                     {op.status && op.status !== 'Checked in' && (
@@ -1824,43 +1902,50 @@ export default function EmcommLayout(props) {
           </PanelSection>
 
           {/* Event Log Panel — session record for After Action Review */}
-          <PanelSection title="Event Log" count={eventLog.length} color="#eab308" panels={panels}>
+          <PanelSection title="Event Log" count={displayEventLog.length} color="#eab308" panels={panels}>
             <div style={{ display: 'flex', gap: '6px', padding: '4px 8px 6px', alignItems: 'center' }}>
               <button
                 onClick={exportEventLogCsv}
-                disabled={eventLog.length === 0}
-                style={{ ...EVENT_BTN_STYLE, opacity: eventLog.length === 0 ? 0.4 : 1 }}
+                disabled={displayEventLog.length === 0}
+                style={{ ...EVENT_BTN_STYLE, opacity: displayEventLog.length === 0 ? 0.4 : 1 }}
                 title="Download the full event log as CSV"
               >
                 CSV
               </button>
               <button
                 onClick={printEventLog}
-                disabled={eventLog.length === 0}
-                style={{ ...EVENT_BTN_STYLE, opacity: eventLog.length === 0 ? 0.4 : 1 }}
+                disabled={displayEventLog.length === 0}
+                style={{ ...EVENT_BTN_STYLE, opacity: displayEventLog.length === 0 ? 0.4 : 1 }}
                 title="Open a print-friendly After Action Report (print to PDF from the dialog)"
               >
                 Print / PDF
               </button>
               <button
                 onClick={clearEventLog}
-                disabled={eventLog.length === 0}
+                disabled={incidentJoined || displayEventLog.length === 0}
                 style={{
                   ...EVENT_BTN_STYLE,
                   marginLeft: 'auto',
                   color: '#ef4444',
                   border: '1px solid #ef444455',
-                  opacity: eventLog.length === 0 ? 0.4 : 1,
+                  opacity: incidentJoined || displayEventLog.length === 0 ? 0.4 : 1,
                 }}
-                title="Clear the event log"
+                title={
+                  incidentJoined
+                    ? t('emcomm.incident.clearDisabled', {
+                        defaultValue:
+                          "The shared incident log can't be cleared. Leave the incident to manage this browser's own log.",
+                      })
+                    : 'Clear the event log'
+                }
               >
                 Clear
               </button>
             </div>
-            {eventLog.length === 0 ? (
+            {displayEventLog.length === 0 ? (
               <EmptyState text="No events yet — check-ins, alerts, messages, and reports are logged automatically for After Action Review." />
             ) : (
-              eventLog
+              displayEventLog
                 .slice(-50)
                 .reverse()
                 .map((ev) => (
@@ -1892,6 +1977,7 @@ export default function EmcommLayout(props) {
                     >
                       {ev.callsign ? <span style={{ color: '#ddd' }}>{ev.callsign} — </span> : null}
                       {ev.summary}
+                      {incidentJoined && ev.site ? <span style={{ color: '#38bdf8' }}> @{ev.site}</span> : null}
                     </span>
                   </div>
                 ))
