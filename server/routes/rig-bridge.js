@@ -17,6 +17,8 @@ const { getClientIP } = require('../utils/helpers');
 const crypto = require('crypto');
 const { validateCustomHost } = require('../utils/ssrf');
 
+const { sanitizeRelayIndicators, queueRelayCommand } = require('../utils/relay-indicators');
+
 module.exports = function (app, ctx) {
   const { ROOT_DIR, logInfo, logWarn, requireWriteAuth, RIG_BRIDGE_RELAY_KEY } = ctx;
 
@@ -509,11 +511,12 @@ module.exports = function (app, ctx) {
       if (!type) return res.status(400).json({ error: 'Missing command type' });
 
       const session = relaySessions.get(sessionId);
-      session.commands.push({ type, payload, timestamp: Date.now() });
-
-      if (session.commands.length > 50) {
-        session.commands = session.commands.slice(-50);
+      if (type === 'indicators' && !sanitizeRelayIndicators(payload)) {
+        return res.status(400).json({ error: 'Invalid indicators payload' });
       }
+      // Display indicators (incl. the lightning relay request) are state, not
+      // actions: only the newest is kept queued, whitelisted (see utils).
+      session.commands = queueRelayCommand(session.commands, type, payload, Date.now());
 
       // Wake any long-polling rig-bridge connection — delivers command immediately
       // instead of waiting for the next poll tick (up to pollInterval ms).
