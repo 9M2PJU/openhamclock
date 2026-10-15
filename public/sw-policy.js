@@ -20,8 +20,10 @@
    * Same-origin static content that is safe to serve cache-first within a
    * single deployed version (the whole cache is dropped on version change).
    * /assets/* files carry content hashes and are truly immutable.
+   * /vendor/* is the self-hosted Leaflet + fonts (scripts/vendor-download.sh):
+   * without it cached, an offline load has no map library at all.
    */
-  var STATIC_ASSET_PREFIXES = ['/assets/', '/icons/', '/geo/', '/models/', '/wasm/'];
+  var STATIC_ASSET_PREFIXES = ['/assets/', '/icons/', '/geo/', '/models/', '/wasm/', '/vendor/'];
   var STATIC_ASSET_FILES = ['/favicon.ico', '/favicon-32x32.png', '/manifest.json'];
 
   /** Cap on the runtime API cache (simple oldest-first pruning). */

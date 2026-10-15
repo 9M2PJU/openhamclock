@@ -27,6 +27,7 @@ function loadWorker({ fetchImpl, packTiles = {}, apiCache = {}, onLine = true })
           return m.has(k) ? m.get(k).clone() : undefined;
         },
         put: async (key, res) => m.set(typeof key === 'string' ? key : key.url, res),
+        add: async (url) => m.set(url, await fetchImpl(url)),
         keys: async () => [...m.keys()],
         delete: async (k) => m.delete(k),
       };
@@ -64,7 +65,12 @@ function loadWorker({ fetchImpl, packTiles = {}, apiCache = {}, onLine = true })
     await Promise.all(waits);
     return res;
   };
-  return { dispatchFetch, posted };
+  const dispatchInstall = async () => {
+    const waits = [];
+    listeners.install({ waitUntil: (p) => waits.push(p) });
+    await Promise.all(waits);
+  };
+  return { dispatchFetch, dispatchInstall, posted, stores };
 }
 
 const img = (body = 'pack') => new Response(body, { status: 200, headers: { 'Content-Type': 'image/jpeg' } });
@@ -135,5 +141,25 @@ describe('service worker: API fallback is marked stale', () => {
     expect(res.headers.get('x-ohc-stale')).toBe('1');
     expect(res.headers.get('date')).toBe('Thu, 15 Oct 2026 14:32:00 GMT');
     expect(await res.json()).toEqual([1]);
+  });
+});
+
+describe('service worker: install precache', () => {
+  it('precaches the self-hosted Leaflet and fonts along with the bundles', async () => {
+    const html =
+      '<link rel="stylesheet" href="/vendor/leaflet/leaflet.css" /><script src="/vendor/leaflet/leaflet.js"></script>' +
+      '<script type="module" src="/assets/index-abc.js"></script>';
+    const fetchImpl = vi.fn(async (url) =>
+      url === '/index.html' ? new Response(html, { headers: { 'Content-Type': 'text/html' } }) : new Response('x'),
+    );
+    const { dispatchInstall, stores } = loadWorker({ fetchImpl });
+    await dispatchInstall();
+    const app = stores['ohc-test-app'];
+    expect([...app.keys()].sort()).toEqual([
+      '/assets/index-abc.js',
+      '/index.html',
+      '/vendor/leaflet/leaflet.css',
+      '/vendor/leaflet/leaflet.js',
+    ]);
   });
 });

@@ -34,6 +34,9 @@ describe('classifyRequest', () => {
   it('classifies hashed bundles and static content as assets', () => {
     expect(classifyRequest(req({ url: `${ORIGIN}/assets/index-Ck2f9a.js` }))).toBe('asset');
     expect(classifyRequest(req({ url: `${ORIGIN}/assets/vendor-abc123.css` }))).toBe('asset');
+    // Self-hosted Leaflet + fonts: the map cannot start offline without them
+    expect(classifyRequest(req({ url: `${ORIGIN}/vendor/leaflet/leaflet.js` }))).toBe('asset');
+    expect(classifyRequest(req({ url: `${ORIGIN}/vendor/fonts/fonts.css` }))).toBe('asset');
     expect(classifyRequest(req({ url: `${ORIGIN}/icons/icon-192.png` }))).toBe('asset');
     expect(classifyRequest(req({ url: `${ORIGIN}/wasm/p533.wasm` }))).toBe('asset');
     expect(classifyRequest(req({ url: `${ORIGIN}/geo/cq-zones.geojson` }))).toBe('asset');
@@ -67,7 +70,7 @@ describe('classifyRequest', () => {
   });
 
   it('bypasses unrecognized same-origin paths and junk input', () => {
-    expect(classifyRequest(req({ url: `${ORIGIN}/vendor/leaflet/leaflet.js` }))).toBe('bypass');
+    expect(classifyRequest(req({ url: `${ORIGIN}/vendors.txt` }))).toBe('bypass');
     expect(classifyRequest(req({ url: `${ORIGIN}/metrics` }))).toBe('bypass');
     expect(classifyRequest(null)).toBe('bypass');
     expect(classifyRequest(req({ url: 'not a url', origin: undefined }))).toBe('bypass');

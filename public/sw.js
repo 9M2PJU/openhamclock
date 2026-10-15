@@ -44,7 +44,7 @@ var CACHE = POLICY.cacheNames(VERSION);
 /** Fixed cache key for the SPA shell — every navigation serves index.html. */
 var SHELL_KEY = '/index.html';
 
-// ── Install: precache the shell and the hashed bundles it references ──────
+// ── Install: precache the shell and the bundles it references ─────────────
 // No build-time precache manifest: we fetch index.html and pull the
 // /assets/* URLs out of it, so a single online visit is enough for the app
 // to load offline afterwards. Lazily loaded chunks (3D globe, etc.) are
@@ -58,7 +58,9 @@ self.addEventListener('install', function (event) {
         if (!res.ok) return;
         var html = await res.clone().text();
         await cache.put(SHELL_KEY, res);
-        var assetUrls = html.match(/\/assets\/[^"'\s>)]+/g) || [];
+        // Hashed bundles plus the self-hosted vendor files (Leaflet, fonts)
+        // that index.html loads directly.
+        var assetUrls = html.match(/\/(?:assets|vendor)\/[^"'\s>)]+/g) || [];
         var unique = Array.from(new Set(assetUrls));
         await Promise.all(
           unique.map(function (u) {
