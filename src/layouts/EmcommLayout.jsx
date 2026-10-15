@@ -348,15 +348,6 @@ export default function EmcommLayout(props) {
     return () => clearInterval(timer);
   }, []);
 
-  // "Messages ↗" in an APRS map popup → open that station's history (#1216)
-  useEffect(() => {
-    const onReq = (e) => {
-      if (e?.detail?.call) openHistory(e.detail.call);
-    };
-    window.addEventListener(APRS_HISTORY_EVENT, onReq);
-    return () => window.removeEventListener(APRS_HISTORY_EVENT, onReq);
-  }, [openHistory]);
-
   // Poll APRS shelter reports (RF-heard shelter status messages)
   useEffect(() => {
     const fetchAprsShelters = async () => {
@@ -912,6 +903,18 @@ export default function EmcommLayout(props) {
     },
     [openHistory],
   );
+
+  // "Messages ↗" in an APRS map popup → open that station's history (#1216).
+  // Declared after openHistory: the deps array is evaluated during render,
+  // so placing it earlier threw "Cannot access 'openHistory' before
+  // initialization" and crashed the whole EmComm layout (#1223).
+  useEffect(() => {
+    const onReq = (e) => {
+      if (e?.detail?.call) openHistory(e.detail.call);
+    };
+    window.addEventListener(APRS_HISTORY_EVENT, onReq);
+    return () => window.removeEventListener(APRS_HISTORY_EVENT, onReq);
+  }, [openHistory]);
   const cancelHistoryHover = useCallback(() => clearTimeout(historyHoverRef.current), []);
 
   const panToTarget = useCallback((item) => {
