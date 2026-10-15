@@ -17,6 +17,8 @@ import {
   _resetForTests,
   MSG_SEQ_KEY,
   messageNumbers,
+  peekNextMsgNo,
+  resetMessageNumbers,
 } from './emcommEventLog.js';
 
 beforeEach(() => {
@@ -242,10 +244,49 @@ describe('message numbers', () => {
     expect(messageNumbers(getEvents()).get(fresh.id)).toBe(3);
   });
 
-  it('restarts at 1 when the log is cleared', () => {
+  it('keeps numbering across an Event Log clear (and across a reload after it)', () => {
     recordEvent('aprs_msg_sent', { summary: 'Message to X' });
     recordEvent('aprs_msg_sent', { summary: 'Message to X' });
     clearEvents();
+    expect(getEvents()).toEqual([]);
+    expect(peekNextMsgNo()).toBe(3);
+    expect(recordEvent('aprs_msg_sent', { summary: 'Message to X' }).msgNo).toBe(3);
+    clearEvents();
+    _resetForTests();
+    expect(recordEvent('aprs_msg_rx', { summary: 'Message to K0CJH' }).msgNo).toBe(4);
+  });
+
+  it('keeps legacy derived numbers running across a clear before any new message', () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify([
+        { id: 'old1', ts: 1000, type: 'net_checkin', callsign: 'A', summary: '' },
+        { id: 'old2', ts: 2000, type: 'aprs_msg_rx', callsign: 'B', summary: '' },
+      ]),
+    );
+    _resetForTests();
+    clearEvents(); // nothing numbered was ever stored — the clear must not lose 1 and 2
+    expect(recordEvent('aprs_msg_sent', { summary: 'Message to B' }).msgNo).toBe(3);
+  });
+
+  it('restarts at 1 only on an explicit reset, which survives a reload', () => {
+    recordEvent('aprs_msg_sent', { summary: 'Message to X' });
+    recordEvent('aprs_msg_sent', { summary: 'Message to X' });
+    const listener = vi.fn();
+    subscribeEvents(listener);
+    resetMessageNumbers();
+    expect(listener).toHaveBeenCalled();
+    expect(peekNextMsgNo()).toBe(1);
+    expect(localStorage.getItem(MSG_SEQ_KEY)).toBe('0');
+    _resetForTests(); // reload: the stored 0 wins over the numbers still in the log
     expect(recordEvent('aprs_msg_sent', { summary: 'Message to X' }).msgNo).toBe(1);
+    // Events already logged keep the numbers they were given
+    expect(getEvents().map((e) => e.msgNo)).toEqual([1, 2, 1]);
+  });
+
+  it('peekNextMsgNo does not consume a number', () => {
+    expect(peekNextMsgNo()).toBe(1);
+    expect(peekNextMsgNo()).toBe(1);
+    expect(recordEvent('net_checkin', { callsign: 'A' }).msgNo).toBe(1);
   });
 });

@@ -12,7 +12,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import '../styles/icsForms.css';
-import { getEvents, subscribeEvents, recordEvent, EVENT_TYPE_META } from '../utils/emcommEventLog.js';
+import {
+  getEvents,
+  subscribeEvents,
+  recordEvent,
+  EVENT_TYPE_META,
+  peekNextMsgNo,
+  resetMessageNumbers,
+} from '../utils/emcommEventLog.js';
 import { loadNetSchedule } from '../utils/netSchedule.js';
 import { apiFetch } from '../utils/apiFetch.js';
 import { sendAprsParts } from '../utils/aprsMessageSend.js';
@@ -465,6 +472,18 @@ function Ics309Editor({ t, drafts, patch, setDrafts, rows }) {
       },
     }));
   const colLabel = (key) => t(`icsForms.309.col.${key}`, { defaultValue: COLS_309[key] });
+  // Re-read on every render: the panel re-renders on each event-log change,
+  // and resetMessageNumbers() notifies the same subscribers.
+  const nextNo = peekNextMsgNo();
+  const resetNumbers = () => {
+    const ok = window.confirm(
+      t('icsForms.309.resetNumbersConfirm', {
+        defaultValue:
+          'Restart station message numbers at 1? Messages already logged keep their numbers; the next message will be number 1.',
+      }),
+    );
+    if (ok) resetMessageNumbers();
+  };
   const cellInput = (row, key, width, upper = false) => (
     <input
       style={{ ...inputStyle, width }}
@@ -507,6 +526,21 @@ function Ics309Editor({ t, drafts, patch, setDrafts, rows }) {
             onChange={(e) => patch('ics309', { startNumber: e.target.value.replace(/[^0-9]/g, '') })}
           />
         </Field>
+      </div>
+      <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', marginTop: '6px' }}>
+        <span style={{ fontSize: '10px', color: 'var(--text-secondary, #aaa)' }}>
+          {t('icsForms.309.nextNumber', {
+            defaultValue: 'Next station message #: {{n}} — numbers keep running when the Event Log is cleared',
+            n: nextNo,
+          })}
+        </span>
+        <button
+          style={{ ...btnStyle, color: '#ef4444', borderColor: '#ef444455' }}
+          onClick={resetNumbers}
+          disabled={nextNo === 1}
+        >
+          {t('icsForms.309.resetNumbers', { defaultValue: 'Reset message numbers' })}
+        </button>
       </div>
       <div style={{ fontSize: '9px', color: 'var(--text-muted, #888)', margin: '8px 0 3px' }}>
         {t('icsForms.309.include', { defaultValue: 'Include from the event log:' })}
