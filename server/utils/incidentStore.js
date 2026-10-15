@@ -43,15 +43,21 @@ const MAX_BATCH = 200; // records per collection per apply()
 const PARTICIPANT_TTL = 150 * 1000; // counted as present while heard within this window
 const EVICT_GRACE = 60 * 60 * 1000; // at the cap, an incident idle this long with nobody present may be evicted
 
+// The EmComm Event Log's types (src/utils/emcommEventLog.js EVENT_TYPE_META) plus incident notes.
 const EVENT_TYPES = new Set([
   'net_checkin',
   'net_checkout',
+  'net_open',
+  'net_close',
+  'net_traffic',
+  'ics213_sent',
   'aprs_msg_sent',
   'aprs_msg_rx',
   'nws_alert',
   'shelter_report',
   'field_report',
   'station_heard',
+  'lightning',
   'incident_note',
 ]);
 const REPORT_KINDS = new Set(['field', 'shelter']);
@@ -358,6 +364,11 @@ function createIncidentStore(opts = {}) {
       if (!entry) continue;
       const existing = inc.roster.get(entry.call);
       if (existing) {
+        // A record sent without its timestamps keeps the stored ones, so a
+        // bare replay is a no-op rather than a fresh check-in.
+        if (!Number.isFinite(raw.checkinTime)) entry.checkinTime = existing.checkinTime;
+        if (!Number.isFinite(raw.lastHeard)) entry.lastHeard = existing.lastHeard;
+        if (!Number.isFinite(raw.updatedAt)) entry.updatedAt = Math.max(entry.updatedAt, existing.updatedAt);
         if (entry.updatedAt < existing.updatedAt) continue;
         if (sameRecord(existing, entry, ['seq', 'updatedAt'])) continue;
       }

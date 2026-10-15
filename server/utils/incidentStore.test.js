@@ -108,6 +108,14 @@ describe('incidentStore', () => {
       expect(store.snapshot(incident.id).counts.roster).toBe(0); // checked-out not counted as active
     });
 
+    it('treats a replay without timestamps as unchanged', () => {
+      const { incident } = make();
+      store.apply(incident.id, { roster: [{ call: 'W1AW', netName: 'ARES', status: 'At EOC' }] });
+      clock += 60000;
+      const again = store.apply(incident.id, { roster: [{ call: 'W1AW', netName: 'ARES', status: 'At EOC' }] });
+      expect(again.changed).toBe(false);
+    });
+
     it('caps the roster, dropping checked-out operators first', () => {
       const small = createIncidentStore({ now, limits: { maxRoster: 3 } });
       const { incident } = small.create({});
