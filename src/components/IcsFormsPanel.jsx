@@ -14,6 +14,7 @@ import { useTranslation } from 'react-i18next';
 import '../styles/icsForms.css';
 import { getEvents, subscribeEvents, recordEvent, EVENT_TYPE_META } from '../utils/emcommEventLog.js';
 import { loadNetSchedule } from '../utils/netSchedule.js';
+import { getNetControlRoster } from '../utils/netControl.js';
 import { apiFetch } from '../utils/apiFetch.js';
 import { sendAprsParts } from '../utils/aprsMessageSend.js';
 import { printIcsHtml, downloadCsv } from '../utils/icsPrint.js';
@@ -37,6 +38,7 @@ import {
   splitForAprs,
   ics205RowFromRepeater,
   ics205RowFromNet,
+  ics205RowFromVoiceNet,
   newSimplexRow,
   buildIcsHtml,
   utcDate,
@@ -436,12 +438,14 @@ function Ics309Editor({ t, drafts, patch, rowCount }) {
         {t('icsForms.309.include', { defaultValue: 'Include from the event log:' })}
       </div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 10px' }}>
-        {Object.entries(EVENT_TYPE_META).map(([type, meta]) => (
-          <label key={type} style={{ fontSize: '10px', display: 'flex', gap: '3px', color: meta.color }}>
-            <input type="checkbox" checked={types.includes(type)} onChange={() => toggleType(type)} />
-            {meta.label}
-          </label>
-        ))}
+        {Object.entries(EVENT_TYPE_META)
+          .filter(([, meta]) => !meta.internal)
+          .map(([type, meta]) => (
+            <label key={type} style={{ fontSize: '10px', display: 'flex', gap: '3px', color: meta.color }}>
+              <input type="checkbox" checked={types.includes(type)} onChange={() => toggleType(type)} />
+              {meta.label}
+            </label>
+          ))}
       </div>
       <div style={{ fontSize: '10px', color: 'var(--text-secondary, #aaa)', marginTop: '6px' }}>
         {t('icsForms.309.rowCount', {
@@ -835,6 +839,12 @@ function Ics205Editor({ t, drafts, patch, config }) {
   const [repLoading, setRepLoading] = useState(false);
   const [repError, setRepError] = useState('');
   const nets = useMemo(() => (picker === 'nets' ? loadNetSchedule() : []), [picker]);
+  // The voice net running in Net Control right now, if any
+  const voiceNet = useMemo(() => {
+    if (picker !== 'nets') return null;
+    const snap = getNetControlRoster();
+    return snap?.active ? snap : null;
+  }, [picker]);
   const lat = config?.location?.lat;
   const lon = config?.location?.lon;
 
@@ -940,7 +950,20 @@ function Ics205Editor({ t, drafts, patch, config }) {
 
       {picker === 'nets' && (
         <div style={pickerList}>
-          {nets.length === 0 && (
+          {voiceNet && (
+            <div style={pickerRow}>
+              <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                🎙️ <b>{voiceNet.net}</b> {voiceNet.frequency}{' '}
+                <span style={{ color: '#14b8a6' }}>
+                  {t('icsForms.205.runningNet', { defaultValue: 'running now' })}
+                </span>
+              </span>
+              <button style={btnStyle} onClick={() => addRow(ics205RowFromVoiceNet(voiceNet))}>
+                + {t('icsForms.add', { defaultValue: 'Add' })}
+              </button>
+            </div>
+          )}
+          {nets.length === 0 && !voiceNet && (
             <div style={{ padding: '6px' }}>
               {t('icsForms.205.noNets', { defaultValue: 'No nets saved — add them in the Nets panel.' })}
             </div>

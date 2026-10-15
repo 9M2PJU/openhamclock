@@ -23,6 +23,10 @@ export const EVENT_TYPE_META = {
   net_open: { label: 'Net Opened', color: '#14b8a6' },
   net_close: { label: 'Net Closed', color: '#14b8a6' },
   net_traffic: { label: 'Traffic Passed', color: '#ef4444' },
+  // Compensating entry written when Net Control's Undo reverses something
+  // already logged. `ref` names the event it withdraws (withdrawing a
+  // withdrawal reinstates the original). Never a form row of its own.
+  net_withdrawn: { label: 'Net Entry Withdrawn', color: '#6b7280', internal: true },
   aprs_msg_sent: { label: 'APRS Msg Sent', color: '#22d3ee' },
   aprs_msg_rx: { label: 'APRS Msg Rcvd', color: '#3b82f6' },
   nws_alert: { label: 'NWS Alert', color: '#dc2626' },
@@ -103,15 +107,16 @@ export function getEvents() {
 /**
  * Record an event.
  * @param {string} type - one of EVENT_TYPE_META keys
- * @param {object} data - { callsign, summary, details, ts, dedupeKey }
+ * @param {object} data - { callsign, summary, details, ts, dedupeKey, ref }
  *   ts: optional epoch ms override (defaults to now)
+ *   ref: optional id of another event this one refers to (net_withdrawn)
  *   dedupeKey: optional — if an event with the same type+dedupeKey already
  *   exists in the log, recording is skipped (returns null).
  * @returns {object|null} the stored event, or null when deduped
  */
 export function recordEvent(type, data = {}) {
   load();
-  const { callsign = '', summary = '', details = '', ts, dedupeKey } = data;
+  const { callsign = '', summary = '', details = '', ts, dedupeKey, ref } = data;
   if (dedupeKey != null) {
     const key = `${type}:${dedupeKey}`;
     if (dedupeIndex.has(key)) return null;
@@ -125,6 +130,7 @@ export function recordEvent(type, data = {}) {
     summary: String(summary || ''),
     details: String(details || ''),
     ...(dedupeKey != null ? { dedupeKey: String(dedupeKey) } : {}),
+    ...(ref != null ? { ref: String(ref) } : {}),
   };
   events.push(ev);
   if (events.length > MAX_EVENTS) events.splice(0, events.length - MAX_EVENTS);
@@ -149,6 +155,49 @@ export function clearEvents() {
 export function subscribeEvents(fn) {
   listeners.add(fn);
   return () => listeners.delete(fn);
+}
+
+/**
+ * Another tab wrote the log: drop the in-memory copy so the next read (and
+ * the next recordEvent) starts from what is stored, instead of this tab
+ * overwriting the other tab's entries with its older array.
+ */
+export function reloadFromStorage() {
+  events = null;
+  dedupeIndex = null;
+  notify();
+}
+
+if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+  window.addEventListener('storage', (e) => {
+    if (e.key === STORAGE_KEY || e.key === null) reloadFromStorage();
+  });
+}
+
+// ── Withdrawn entries ───────────────────────────────────────────────────────
+/**
+ * Ids of events that have been withdrawn by a net_withdrawn entry. Entries
+ * are applied in log order; withdrawing a withdrawal reinstates its target.
+ */
+export function withdrawnEventIds(evts) {
+  const byId = new Map((evts || []).map((ev) => [ev.id, ev]));
+  const out = new Set();
+  for (const ev of (evts || []).slice().sort((a, b) => a.ts - b.ts)) {
+    if (ev.type !== 'net_withdrawn' || !ev.ref) continue;
+    const target = byId.get(ev.ref);
+    if (target?.type === 'net_withdrawn') {
+      if (target.ref) out.delete(target.ref);
+    } else {
+      out.add(ev.ref);
+    }
+  }
+  return out;
+}
+
+/** The log without withdrawn entries and without the withdrawal records — what forms should use. */
+export function activeEvents(evts) {
+  const gone = withdrawnEventIds(evts);
+  return (evts || []).filter((ev) => ev.type !== 'net_withdrawn' && !gone.has(ev.id));
 }
 
 /** Reset in-memory state (test helper — forces reload from localStorage). */

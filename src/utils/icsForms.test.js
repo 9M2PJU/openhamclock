@@ -31,6 +31,7 @@ import {
   formatPlanFreq,
   ics205RowFromRepeater,
   ics205RowFromNet,
+  ics205RowFromVoiceNet,
   newSimplexRow,
   numberChannels,
   buildIcs309Html,
@@ -505,5 +506,59 @@ describe('print HTML', () => {
     expect(html).not.toContain('Flood Warning'); // nws_alert not in default types
     expect(buildIcsHtml('213', drafts)).toContain('GENERAL MESSAGE');
     expect(buildIcsHtml('999', drafts)).toBe('');
+  });
+});
+
+describe('Net Control integration', () => {
+  const ev = (id, mins, type, extra = {}) => ({
+    id,
+    ts: T0 + mins * 60_000,
+    type,
+    callsign: 'W1AW',
+    summary: type,
+    details: '',
+    ...extra,
+  });
+  it('drops withdrawn net entries and the withdrawal records from the 309 and 214', () => {
+    const log = [
+      ev('a', 1, 'net_checkin'),
+      ev('b', 2, 'net_checkin', { callsign: 'K0CJH' }),
+      ev('w1', 3, 'net_withdrawn', { ref: 'b' }),
+      ev('c', 4, 'net_traffic'),
+    ];
+    const rows = ics309RowsFromEvents(log, { operatorCall: 'K0CJH', types: ICS309_DEFAULT_TYPES });
+    expect(rows.map((r) => r.id)).toEqual(['a', 'c']);
+    expect(ics214RowsFromEvents(log).map((r) => r.id)).toEqual(['ev-a', 'ev-c']);
+    // undoing the withdrawal (a withdrawal of the withdrawal) reinstates the check-in
+    const reinstated = [...log, ev('w2', 5, 'net_withdrawn', { ref: 'w1' })];
+    expect(ics309RowsFromEvents(reinstated, { types: ICS309_DEFAULT_TYPES }).map((r) => r.id)).toEqual(['a', 'b', 'c']);
+  });
+  it('net traffic is on the 309 by default, from the station to the operator', () => {
+    expect(ICS309_DEFAULT_TYPES).toContain('net_traffic');
+    const [row] = ics309RowsFromEvents([ev('t', 1, 'net_traffic', { summary: 'Traffic passed on ARES' })], {
+      operatorCall: 'k0cjh',
+    });
+    expect(row).toMatchObject({ from: 'W1AW', to: 'K0CJH', message: 'Traffic passed on ARES' });
+  });
+  it('ics205RowFromVoiceNet reads the running net frequency, offset and tone', () => {
+    const row = ics205RowFromVoiceNet({ net: 'County ARES Net', ncs: 'K0CJH', frequency: '146.940 − PL 100.0' });
+    expect(row).toMatchObject({
+      function: 'Net',
+      name: 'County ARES Net',
+      rxFreq: '146.940',
+      txFreq: '146.340',
+      txTone: '100.0',
+      mode: 'A',
+      remarks: 'NCS K0CJH · 146.940 − PL 100.0',
+      source: 'net-control',
+    });
+    const scheduled = ics205RowFromVoiceNet({
+      net: 'DMR net',
+      freqMhz: 441.0,
+      mode: 'DMR',
+      frequency: '441.000 MHz DMR',
+    });
+    expect(scheduled).toMatchObject({ rxFreq: '441.000', txFreq: '441.000', mode: 'D' });
+    expect(ics205RowFromVoiceNet({ net: 'X', frequency: 'the usual' })).toMatchObject({ rxFreq: '', txFreq: '' });
   });
 });

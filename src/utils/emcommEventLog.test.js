@@ -15,6 +15,9 @@ import {
   diffAdded,
   buildPrintHtml,
   _resetForTests,
+  withdrawnEventIds,
+  activeEvents,
+  reloadFromStorage,
 } from './emcommEventLog.js';
 
 beforeEach(() => {
@@ -202,5 +205,33 @@ describe('buildPrintHtml', () => {
     const html = buildPrintHtml({ events: [], callsign: '' });
     expect(html).toContain('No events recorded');
     expect(html).toContain('N0CALL');
+  });
+});
+
+describe('withdrawn entries', () => {
+  it('records a ref and resolves withdrawals in order, including reinstatement', () => {
+    const a = recordEvent('net_checkin', { callsign: 'W1AW', ts: 1 });
+    const w = recordEvent('net_withdrawn', { callsign: 'W1AW', ref: a.id, ts: 2 });
+    expect(w.ref).toBe(a.id);
+    expect([...withdrawnEventIds(getEvents())]).toEqual([a.id]);
+    expect(activeEvents(getEvents())).toEqual([]);
+    recordEvent('net_withdrawn', { callsign: 'W1AW', ref: w.id, ts: 3 });
+    expect(withdrawnEventIds(getEvents()).size).toBe(0);
+    expect(activeEvents(getEvents()).map((e) => e.id)).toEqual([a.id]);
+    expect(activeEvents(null)).toEqual([]);
+  });
+  it('reloads from storage when another tab wrote the log', () => {
+    recordEvent('net_checkin', { callsign: 'W1AW' });
+    const other = [
+      ...JSON.parse(localStorage.getItem(STORAGE_KEY)),
+      { id: 'x', ts: 5, type: 'net_checkin', callsign: 'K0CJH' },
+    ];
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(other));
+    window.dispatchEvent(new StorageEvent('storage', { key: STORAGE_KEY }));
+    expect(getEvents()).toHaveLength(2);
+    recordEvent('net_checkout', { callsign: 'K0CJH' });
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY))).toHaveLength(3);
+    reloadFromStorage();
+    expect(getEvents()).toHaveLength(3);
   });
 });
