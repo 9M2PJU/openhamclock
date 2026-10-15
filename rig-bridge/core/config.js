@@ -288,6 +288,23 @@ const DEFAULT_CONFIG = {
     port: 7300,
     verbose: false,
   },
+  // NBEMS — fldigi over XML-RPC (status, RX text, send text, mode) plus
+  // flmsg form folders → the OHC server's EmComm Field Reports panel
+  fldigi: {
+    enabled: false,
+    url: 'http://127.0.0.1:7362', // fldigi XML-RPC server
+    pollInterval: 1000, // ms between status/RX polls
+    rxBufferChars: 4000, // receive text kept for browsers that connect later
+    maxTxSeconds: 600, // transmit watchdog — abort and return to RX after this
+    callsign: '', // station call written into the flmsg header of sent forms
+    flmsgEnabled: true, // watch the flmsg folders for received forms
+    flmsgDirs: '', // '' = ~/NBEMS.files/ICS/messages and ~/NBEMS.files/WRAP/recv; ';'-separated list otherwise
+    flmsgPollInterval: 15, // seconds between folder scans (fs.watch also reacts immediately)
+    flmsgMaxAgeHours: 72, // on start-up, forms older than this are not reported
+    serverForward: true, // POST forms to the OpenHamClock server
+    ohcUrl: 'http://localhost:3000', // OpenHamClock server URL
+    verbose: false,
+  },
   // TLS/HTTPS — enables HTTPS to avoid mixed-content errors when OHC is served over HTTPS
   tls: {
     enabled: false, // false = plain HTTP (backward-compatible default)
@@ -333,6 +350,7 @@ function loadConfig() {
           pat: { ...DEFAULT_CONFIG.winlink.pat, ...((raw.winlink || {}).pat || {}) },
         },
         hamalert: { ...DEFAULT_CONFIG.hamalert, ...(raw.hamalert || {}) },
+        fldigi: { ...DEFAULT_CONFIG.fldigi, ...(raw.fldigi || {}) },
         tls: { ...DEFAULT_CONFIG.tls, ...(raw.tls || {}) },
         gps: { ...DEFAULT_CONFIG.gps, ...(raw.gps || {}) },
         envSensors: {
@@ -374,6 +392,7 @@ function loadConfig() {
           'cloudRelay',
           'winlink',
           'hamalert',
+          'fldigi',
           'tls',
           'gps',
           'envSensors',
