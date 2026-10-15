@@ -207,6 +207,8 @@ const App = () => {
   useEffect(() => {
     if (!configLoaded || config.layout === 'emcomm') return;
     if (parseJoinUrl(window.location.hash)) handleSaveConfig({ ...config, layout: 'emcomm' });
+    // Once, when the config has loaded — not again on every config change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [configLoaded]);
 
   // ── Keyboard shortcuts for map layer toggling ──
