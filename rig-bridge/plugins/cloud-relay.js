@@ -90,6 +90,15 @@ const descriptor = {
     })();
     const warnedAt = new Map(); // reason → last log time
     let refusedCommands = 0;
+
+    // Every plugin-bus listener this instance adds, so disconnect() can remove
+    // them all — otherwise each restart of the relay added another set.
+    let busListeners = [];
+    let running = false;
+    function onBus(event, fn) {
+      pluginBus.on(event, fn);
+      busListeners.push([event, fn]);
+    }
     function warnOnce(key, msg, everyMs = 3600000) {
       const t = Date.now();
       if (t - (warnedAt.get(key) || 0) < everyMs) return;
@@ -487,6 +496,10 @@ const descriptor = {
         return;
       }
 
+      if (running) return; // already connected — never subscribe twice
+      running = true;
+      pollAborted = false;
+
       console.log(`[CloudRelay] Starting relay to ${serverUrl}`);
       if (commandKey() && !isValidKey(commandKey())) {
         console.warn(
@@ -550,7 +563,7 @@ const descriptor = {
         const subscribed = [];
 
         if (relayWsjtx) {
-          pluginBus.on('decode', (msg) => {
+          onBus('decode', (msg) => {
             pendingDecodes.push({
               source: msg.source,
               message: msg.message,
@@ -566,21 +579,21 @@ const descriptor = {
           subscribed.push('WSJT-X');
         }
         if (relayAprs) {
-          pluginBus.on('aprs', (packet) => {
+          onBus('aprs', (packet) => {
             pendingAprs.push(packet);
             if (pendingAprs.length > 200) pendingAprs.splice(0, pendingAprs.length - 200);
           });
           subscribed.push('APRS');
         }
         if (relayMeshCom) {
-          pluginBus.on('meshcom', (packet) => {
+          onBus('meshcom', (packet) => {
             pendingMeshCom.push(packet);
             if (pendingMeshCom.length > 200) pendingMeshCom.splice(0, pendingMeshCom.length - 200);
           });
           subscribed.push('MeshCom');
         }
         if (cfg.relayHamAlert !== false) {
-          pluginBus.on('hamalert', (alert) => {
+          onBus('hamalert', (alert) => {
             pendingHamAlerts.push(alert);
             if (pendingHamAlerts.length > 200) pendingHamAlerts.splice(0, pendingHamAlerts.length - 200);
           });
@@ -594,11 +607,11 @@ const descriptor = {
               pushState();
             }, 250);
           };
-          pluginBus.on('fldigi', (status) => {
+          onBus('fldigi', (status) => {
             pendingFldigiStatus = status;
             soon();
           });
-          pluginBus.on('fldigi-rx', (rx) => {
+          onBus('fldigi-rx', (rx) => {
             const text = String(rx?.text ?? '');
             if (rx?.reset || !pendingFldigiRx) {
               pendingFldigiRx = { text: text.slice(-FLDIGI_RX_MAX), reset: !!rx?.reset };
@@ -611,7 +624,7 @@ const descriptor = {
             soon();
           });
           for (const event of ['nbems-form', 'fldigi-cmd-result']) {
-            pluginBus.on(event, (data) => {
+            onBus(event, (data) => {
               const { fields, ...slim } = data || {};
               pendingFldigiOther.push({ event, source: 'fldigi', data: slim });
               if (pendingFldigiOther.length > 50) pendingFldigiOther.splice(0, pendingFldigiOther.length - 50);
@@ -644,6 +657,10 @@ const descriptor = {
       if (stateChangeHandler && typeof removeStateChangeListener === 'function') {
         removeStateChangeListener(stateChangeHandler);
       }
+      stateChangeHandler = null;
+      for (const [event, fn] of busListeners) pluginBus.removeListener(event, fn);
+      busListeners = [];
+      running = false;
       _currentInstance = null;
       console.log(`[CloudRelay] Stopped (pushed: ${totalPushed}, commands: ${totalCommands})`);
     }
