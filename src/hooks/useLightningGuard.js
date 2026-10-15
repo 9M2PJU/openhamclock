@@ -24,7 +24,7 @@
  * the map layer shows them too.
  */
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import i18n from '../lang/i18n';
+import i18next from 'i18next';
 import { subscribeStrikes, injectStrike } from '../utils/lightningFeed.js';
 import {
   cardinal,
@@ -158,15 +158,18 @@ export function simulateStrike(distanceKm = 10, bearingDeg = 45) {
 // ── Alerts ─────────────────────────────────────────────────────────────────
 // Notification titles follow the UI language; spoken text and the EmComm log
 // stay English like every other spoken alert and log entry.
+// The app initialises the shared i18next instance (src/lang/i18n.js); before
+// that (or in tests) the English default is used.
+const translate = (key, opts) => (i18next.isInitialized ? i18next.t(key, opts) : opts.defaultValue);
 const NOTIFY_TITLES = {
-  warn: () => i18n.t('lightningGuard.notify.warn', { defaultValue: 'Lightning warning' }),
-  alarm: () => i18n.t('lightningGuard.notify.alarm', { defaultValue: 'Lightning ALARM' }),
-  clear: () => i18n.t('lightningGuard.notify.clear', { defaultValue: 'Lightning all clear' }),
-  closer: () => i18n.t('lightningGuard.notify.closer', { defaultValue: 'Lightning closer' }),
-  downgraded: () =>
-    i18n.t('lightningGuard.notify.downgraded', { defaultValue: 'Lightning alarm ended — warning continues' }),
+  warn: (t) => t('lightningGuard.notify.warn', { defaultValue: 'Lightning warning' }),
+  alarm: (t) => t('lightningGuard.notify.alarm', { defaultValue: 'Lightning ALARM' }),
+  clear: (t) => t('lightningGuard.notify.clear', { defaultValue: 'Lightning all clear' }),
+  closer: (t) => t('lightningGuard.notify.closer', { defaultValue: 'Lightning closer' }),
+  downgraded: (t) =>
+    t('lightningGuard.notify.downgraded', { defaultValue: 'Lightning alarm ended — warning continues' }),
 };
-const notifyTitle = (key) => NOTIFY_TITLES[key]();
+const notifyTitle = (key) => NOTIFY_TITLES[key](translate);
 const LOG_TITLES = {
   warn: 'Lightning warning',
   alarm: 'Lightning ALARM',
