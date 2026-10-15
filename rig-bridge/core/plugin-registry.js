@@ -85,6 +85,7 @@ class PluginRegistry {
       'brightness',
       'mqtt-publish',
       'hamalert',
+      'fldigi',
     ]) {
       try {
         const p = require(`../plugins/${file}`);

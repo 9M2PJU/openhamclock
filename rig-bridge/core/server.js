@@ -1134,6 +1134,18 @@ function buildSetupHtml(version, firstRunToken = null) {
         { id: 'password', label: 'HamAlert Password', type: 'text', default: '' },
         { id: 'verbose', label: 'Verbose logging', type: 'checkbox', default: false },
       ]},
+      { key: 'fldigi', name: 'fldigi + flmsg (NBEMS)', maturity: 'beta', desc: 'fldigi status, receive text, send text and ICS-213 over XML-RPC; flmsg forms from the NBEMS folders go to the EmComm Field Reports panel', fields: [
+        { id: 'url', label: 'fldigi XML-RPC URL', type: 'text', default: 'http://127.0.0.1:7362' },
+        { id: 'pollInterval', label: 'Poll Interval (ms)', type: 'number', default: 1000 },
+        { id: 'callsign', label: 'Your Callsign (flmsg header)', type: 'text', default: '' },
+        { id: 'maxTxSeconds', label: 'TX watchdog (sec)', type: 'number', default: 600 },
+        { id: 'flmsgEnabled', label: 'Watch flmsg folders', type: 'checkbox', default: true },
+        { id: 'flmsgDirs', label: 'flmsg folders (blank = NBEMS.files defaults; separate with ;)', type: 'text', default: '' },
+        { id: 'flmsgMaxAgeHours', label: 'Ignore forms older than (hours, at start-up)', type: 'number', default: 72 },
+        { id: 'serverForward', label: 'Forward forms to OpenHamClock server', type: 'checkbox', default: true },
+        { id: 'ohcUrl', label: 'OpenHamClock server URL', type: 'text', default: 'http://localhost:3000' },
+        { id: 'verbose', label: 'Verbose logging', type: 'checkbox', default: false },
+      ]},
     ];
 
     function maturityBadge(level) {
@@ -2365,6 +2377,7 @@ function createServer(registry, version) {
       ...HW_KEYS,
       'mqtt',
       'hamalert',
+      'fldigi',
     ]) {
       if (newConfig[key]) {
         const incoming = newConfig[key];
@@ -2446,6 +2459,10 @@ function createServer(registry, version) {
     // Restart the MQTT publisher if its config changed (no bridge restart needed)
     if (newConfig.mqtt) {
       registry.restartIntegration('mqtt-publish');
+    }
+    // fldigi / flmsg: new URL, folders or forwarding apply without a bridge restart
+    if (newConfig.fldigi) {
+      registry.restartIntegration('fldigi');
     }
 
     res.json({ success: true, config });
