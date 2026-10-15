@@ -6,7 +6,11 @@ import {
   resolvePinMap,
   pulse,
   sanitizeIndicators,
+  mergeIndicators,
   computeOutputs,
+  physicalLevel,
+  OUTPUT_NAMES,
+  SUGGESTED_LIGHTNING_PIN,
   InputDebouncer,
   parseGpiodVersion,
   parseGpiomonLine,
@@ -51,6 +55,8 @@ describe('indicators + outputs', () => {
       satLosInSec: null,
       alarm: false,
       countdown: 'off',
+      lightning: null,
+      lightningRelay: null,
     });
     expect(sanitizeIndicators(null).countdown).toBe('off');
   });
@@ -163,5 +169,71 @@ describe('libgpiod CLI parsing', () => {
     expect(parseGpiogetOutput('active inactive')).toEqual([1, 0]);
     expect(parseGpiogetOutput('"16"=active "26"=inactive')).toEqual([1, 0]);
     expect(parseGpiogetOutput('')).toEqual([]);
+  });
+});
+
+describe('lightningOut (lightning antenna-protection relay)', () => {
+  it('is an output that stays unassigned unless configured', () => {
+    expect(OUTPUT_NAMES).toContain('lightningOut');
+    expect(DEFAULT_PINS.lightningOut).toBeNull();
+    expect(resolvePinMap({}).outputs.lightningOut).toBeUndefined();
+    expect(resolvePinMap({ lightningOut: -1 }).outputs.lightningOut).toBeUndefined();
+    expect(resolvePinMap({ lightningOut: SUGGESTED_LIGHTNING_PIN }).outputs.lightningOut).toBe(25);
+    expect(resolvePinMap({ lightningOut: 'P22' }).outputs.lightningOut).toBe(25);
+    // A pin already taken by another line is refused, not shared
+    expect(resolvePinMap({ lightningOut: 21 }).conflicts).toEqual(['lightningOut']);
+  });
+
+  it('sanitizes the tri-state lightning fields', () => {
+    expect(sanitizeIndicators({ lightning: 'alarm', lightningRelay: true })).toMatchObject({
+      lightning: 'alarm',
+      lightningRelay: true,
+    });
+    expect(sanitizeIndicators({ lightning: 'storm', lightningRelay: 'yes' })).toMatchObject({
+      lightning: null,
+      lightningRelay: null,
+    });
+    expect(sanitizeIndicators({ lightningRelay: false }).lightningRelay).toBe(false);
+  });
+
+  it('a report without lightning fields keeps the relay another display requested', () => {
+    let { indicators, lightningReported } = mergeIndicators(null, { lightning: 'alarm', lightningRelay: true });
+    expect(lightningReported).toBe(true);
+    ({ indicators, lightningReported } = mergeIndicators(indicators, { countdown: 'running' }));
+    expect(lightningReported).toBe(false);
+    expect(indicators.countdown).toBe('running');
+    expect(indicators.lightningRelay).toBe(true);
+    expect(indicators.lightning).toBe('alarm');
+    ({ indicators, lightningReported } = mergeIndicators(indicators, { lightning: 'clear', lightningRelay: false }));
+    expect(lightningReported).toBe(true);
+    expect(indicators.lightningRelay).toBe(false);
+  });
+
+  it('follows the request and holds it when reports stop (unless told not to)', () => {
+    const on = sanitizeIndicators({ lightning: 'alarm', lightningRelay: true });
+    expect(computeOutputs({ indicators: on }, 0).lightningOut).toBe(true);
+    expect(computeOutputs({ indicators: sanitizeIndicators({ lightningRelay: false }) }, 0).lightningOut).toBe(false);
+    expect(computeOutputs({ indicators: sanitizeIndicators({}) }, 0).lightningOut).toBe(false);
+    // Browser gone quiet: hold by default …
+    expect(computeOutputs({ indicators: on, indicatorsStale: true }, 0).lightningOut).toBe(true);
+    expect(computeOutputs({ indicators: on, lightningStale: true }, 0).lightningOut).toBe(true);
+    // … release only when holding is switched off
+    expect(
+      computeOutputs({ indicators: on, lightningStale: true, lightningHoldWhenStale: false }, 0).lightningOut,
+    ).toBe(false);
+    // Other outputs still go dark when stale; the relay does not depend on them
+    const stale = computeOutputs({ indicators: { ...on, alarm: true }, indicatorsStale: true }, 0);
+    expect(stale.alarmOut).toBe(false);
+    expect(stale.lightningOut).toBe(true);
+  });
+
+  it('physical level: active-low inverts every line, fail-safe inverts only the relay', () => {
+    expect(physicalLevel('lightningOut', true)).toBe(1);
+    expect(physicalLevel('lightningOut', false)).toBe(0);
+    expect(physicalLevel('lightningOut', true, { lightningFailSafe: true })).toBe(0); // protect = released
+    expect(physicalLevel('lightningOut', false, { lightningFailSafe: true })).toBe(1); // safe = energised
+    expect(physicalLevel('satOut', true, { lightningFailSafe: true })).toBe(1);
+    expect(physicalLevel('satOut', true, { outputActiveLow: true })).toBe(0);
+    expect(physicalLevel('lightningOut', true, { outputActiveLow: true, lightningFailSafe: true })).toBe(1);
   });
 });

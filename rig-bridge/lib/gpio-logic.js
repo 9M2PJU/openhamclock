@@ -62,10 +62,17 @@ const DEFAULT_PINS = {
   countdownGreenOut: 13, // header 33 — countdown running
   countdownRedOut: 19, // header 35 — countdown expired
   satOut: 20, // header 38 — satellite visible / AOS warning
+  // Lightning antenna-protection relay. Off by default: a new output must
+  // never start driving a pin someone already uses. Suggested: BCM 25
+  // (header 22), free on a bare Pi and on the common HATs.
+  lightningOut: null,
 };
 
+/** Suggested BCM line for lightningOut (shown in the setup UIs). */
+const SUGGESTED_LIGHTNING_PIN = 25;
+
 const INPUT_NAMES = ['pttIn', 'countdownResetIn', 'alarmSilenceIn'];
-const OUTPUT_NAMES = ['onAirOut', 'alarmOut', 'countdownGreenOut', 'countdownRedOut', 'satOut'];
+const OUTPUT_NAMES = ['onAirOut', 'alarmOut', 'countdownGreenOut', 'countdownRedOut', 'satOut', 'lightningOut'];
 
 /**
  * Parse one pin value: BCM number, "P37" header reference, or -1/''/null to
@@ -116,10 +123,16 @@ function pulse(nowMs, hz) {
 }
 
 const COUNTDOWN_STATES = new Set(['off', 'running', 'expired']);
+const LIGHTNING_LEVELS = new Set(['clear', 'warn', 'alarm']);
 
 /**
  * Normalise the indicator payload the browser POSTs to /api/indicators.
  * Unknown keys are dropped; wrong types fall back to "off".
+ *
+ * Lightning fields are tri-state: `lightningRelay` true/false when the
+ * browser's lightning guard drives the relay, null when this browser does
+ * not report it at all (guard or relay off there). A null report leaves the
+ * relay state another browser set untouched — see mergeIndicators().
  */
 function sanitizeIndicators(body) {
   const b = body && typeof body === 'object' ? body : {};
@@ -131,6 +144,26 @@ function sanitizeIndicators(body) {
     satLosInSec: n(b.satLosInSec),
     alarm: b.alarm === true,
     countdown: COUNTDOWN_STATES.has(b.countdown) ? b.countdown : 'off',
+    lightning: LIGHTNING_LEVELS.has(b.lightning) ? b.lightning : null,
+    lightningRelay: b.lightningRelay === true ? true : b.lightningRelay === false ? false : null,
+  };
+}
+
+/**
+ * Fold a new indicator report into the previous one. Everything is replaced
+ * except the lightning fields, which are only replaced when the report
+ * carries them (lightningRelay !== null): a second display without the
+ * lightning guard must not release a relay the first display engaged.
+ *
+ * @returns {{ indicators: object, lightningReported: boolean }}
+ */
+function mergeIndicators(prev, body) {
+  const next = sanitizeIndicators(body);
+  if (next.lightningRelay !== null) return { indicators: next, lightningReported: true };
+  const p = prev || sanitizeIndicators(null);
+  return {
+    indicators: { ...next, lightning: p.lightning ?? null, lightningRelay: p.lightningRelay ?? null },
+    lightningReported: false,
   };
 }
 
@@ -143,6 +176,11 @@ function sanitizeIndicators(body) {
  * @param {object}  s.indicators sanitized indicators from the browser
  * @param {boolean} s.indicatorsStale  browser hasn't refreshed in a while
  * @param {boolean} s.alarmSilenced    silence button pressed since alarm began
+ * @param {boolean} [s.lightningStale]  no lightning report for a while
+ *                                      (defaults to indicatorsStale)
+ * @param {boolean} [s.lightningHoldWhenStale=true]  keep the lightning relay
+ *        engaged when the browser goes quiet — a closed tab during a storm
+ *        must not reconnect the antenna
  * @param {number}  nowMs
  */
 function computeOutputs(s, nowMs) {
@@ -163,13 +201,36 @@ function computeOutputs(s, nowMs) {
       sat = pulse(nowMs, 1);
     }
   }
+
+  // Lightning relay: engaged while the browser asks for it. When reports
+  // stop, hold the last request (default) — releasing on silence would
+  // reconnect the antenna exactly when the display that watches the storm
+  // has gone away.
+  const lightningStale = s.lightningStale != null ? !!s.lightningStale : !!s.indicatorsStale;
+  const hold = s.lightningHoldWhenStale !== false;
+  const lightning = ind.lightningRelay === true && (!lightningStale || hold);
+
   return {
     onAirOut: onAir,
     alarmOut: alarm,
     countdownGreenOut: countdownGreen,
     countdownRedOut: countdownRed,
     satOut: sat,
+    lightningOut: lightning,
   };
+}
+
+/**
+ * Physical level (0/1) for an output line. `outputActiveLow` inverts every
+ * line; `lightningFailSafe` additionally inverts lightningOut so the relay is
+ * energised while the antenna may stay connected — power loss, a crash or a
+ * stopped bridge then releases it and the antenna is disconnected.
+ */
+function physicalLevel(name, asserted, { outputActiveLow = false, lightningFailSafe = false } = {}) {
+  let level = asserted ? 1 : 0;
+  if (outputActiveLow) level ^= 1;
+  if (name === 'lightningOut' && lightningFailSafe) level ^= 1;
+  return level;
 }
 
 /**
@@ -262,13 +323,16 @@ function parseGpiogetOutput(text) {
 module.exports = {
   HEADER_TO_BCM,
   DEFAULT_PINS,
+  SUGGESTED_LIGHTNING_PIN,
   INPUT_NAMES,
   OUTPUT_NAMES,
   parsePin,
   resolvePinMap,
   pulse,
   sanitizeIndicators,
+  mergeIndicators,
   computeOutputs,
+  physicalLevel,
   InputDebouncer,
   parseGpiodVersion,
   parseGpiomonLine,

@@ -204,6 +204,102 @@ describe('gpio plugin (mock backend)', () => {
     expect(st.pins.outputs.satOut).toBe(12);
     inst.disconnect();
   });
+
+  it('lightningOut: unassigned by default, so lightning reports drive nothing', async () => {
+    const svc = services();
+    const inst = gpio.create({ gpio: { enabled: true, backend: 'mock' } }, svc);
+    inst.connect();
+    await flush(1000);
+    svc.pluginBus.emit('indicators', { lightning: 'alarm', lightningRelay: true });
+    await flush(1000);
+    const st = inst.getStatus();
+    expect(st.pins.outputs.lightningOut).toBeUndefined();
+    expect(st.lightning.pin).toBeNull();
+    expect(st.lightning.requested).toBe(true);
+    expect(st.mockLevels[25]).toBeUndefined();
+    inst.disconnect();
+  });
+
+  it('lightningOut follows the browser relay request; other displays cannot release it', async () => {
+    const svc = services();
+    const inst = gpio.create({ gpio: { enabled: true, backend: 'mock', pins: { lightningOut: 25 } } }, svc);
+    inst.connect();
+    await flush(1000);
+    expect(inst.getStatus().outputs.lightningOut).toBe(false);
+    expect(inst.getStatus().mockLevels[25]).toBe(0);
+
+    svc.pluginBus.emit('indicators', { lightning: 'alarm', lightningRelay: true });
+    await flush(1000);
+    let st = inst.getStatus();
+    expect(st.outputs.lightningOut).toBe(true);
+    expect(st.mockLevels[25]).toBe(1);
+    expect(st.lightning).toMatchObject({ pin: 25, relay: true, level: 'alarm', failSafe: false });
+
+    // A second display without the guard posts its satellite/countdown state
+    svc.pluginBus.emit('indicators', { countdown: 'running' });
+    await flush(1000);
+    expect(inst.getStatus().outputs.lightningOut).toBe(true);
+    expect(inst.getStatus().outputs.countdownGreenOut).toBe(true);
+
+    // All-clear from the guard releases it
+    svc.pluginBus.emit('indicators', { lightning: 'clear', lightningRelay: false });
+    await flush(1000);
+    expect(inst.getStatus().outputs.lightningOut).toBe(false);
+    expect(inst.getStatus().mockLevels[25]).toBe(0);
+    inst.disconnect();
+  });
+
+  it('lightningOut holds through a quiet browser, and releases when hold is off', async () => {
+    const svc = services();
+    const inst = gpio.create({ gpio: { enabled: true, backend: 'mock', pins: { lightningOut: 25 } } }, svc);
+    inst.connect();
+    await flush(1000);
+    svc.pluginBus.emit('indicators', { lightning: 'alarm', lightningRelay: true, countdown: 'running' });
+    await flush(1000);
+    expect(inst.getStatus().outputs.lightningOut).toBe(true);
+    vi.advanceTimersByTime(95000); // > 90 s without a report
+    await flush(1000);
+    const st = inst.getStatus();
+    expect(st.outputs.countdownGreenOut).toBe(false); // ordinary indicators go dark
+    expect(st.outputs.lightningOut).toBe(true); // the relay holds
+    inst.disconnect();
+
+    const svc2 = services();
+    const inst2 = gpio.create(
+      { gpio: { enabled: true, backend: 'mock', pins: { lightningOut: 25 }, lightningHoldWhenStale: false } },
+      svc2,
+    );
+    inst2.connect();
+    await flush(1000);
+    svc2.pluginBus.emit('indicators', { lightning: 'alarm', lightningRelay: true });
+    await flush(1000);
+    expect(inst2.getStatus().outputs.lightningOut).toBe(true);
+    vi.advanceTimersByTime(95000);
+    await flush(1000);
+    expect(inst2.getStatus().outputs.lightningOut).toBe(false);
+    inst2.disconnect();
+  });
+
+  it('lightningFailSafe energises the line while the antenna may stay connected', async () => {
+    const svc = services();
+    const inst = gpio.create(
+      { gpio: { enabled: true, backend: 'mock', pins: { lightningOut: 'P22' }, lightningFailSafe: true } },
+      svc,
+    );
+    inst.connect();
+    await flush(1000);
+    let st = inst.getStatus();
+    expect(st.pins.outputs.lightningOut).toBe(25);
+    expect(st.outputs.lightningOut).toBe(false); // logical: not protecting
+    expect(st.mockLevels[25]).toBe(1); // physical: relay energised = antenna connected
+    svc.pluginBus.emit('indicators', { lightning: 'alarm', lightningRelay: true });
+    await flush(1000);
+    st = inst.getStatus();
+    expect(st.outputs.lightningOut).toBe(true);
+    expect(st.mockLevels[25]).toBe(0); // released = antenna disconnected
+    expect(st.mockLevels[21]).toBe(0); // other lines are not inverted
+    inst.disconnect();
+  });
 });
 
 describe('brightness plugin', () => {
