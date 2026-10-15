@@ -19,6 +19,8 @@ import {
   dropOutboxDocs,
   messageHistoryFromEvents,
   mergeMessageHistory,
+  annotateSharedEvents,
+  sharedMsgLabel,
   buildJoinUrl,
   parseJoinUrl,
   formatCode,
@@ -401,5 +403,83 @@ describe('event types', () => {
     const { EVENT_TYPE_META } = await import('./emcommEventLog.js');
     const { EVENT_TYPES } = await import('../../server/utils/incidentStore.js');
     for (const type of Object.keys(EVENT_TYPE_META)) expect(EVENT_TYPES.has(type), type).toBe(true);
+  });
+});
+
+describe('withdrawals and message numbers across sites', () => {
+  // EOC North (this browser) and EOC South each number their own traffic from 1.
+  const shared = [
+    { id: 'n-1', ts: 100, type: 'net_checkin', callsign: 'KD0ABC', summary: 'in', site: 'North', msgNo: 1 },
+    { id: 's-1', ts: 110, type: 'net_checkin', callsign: 'W1AW', summary: 'in', site: 'South', msgNo: 1 },
+    {
+      id: 'n-2',
+      ts: 120,
+      type: 'aprs_msg_sent',
+      callsign: 'K0CJH',
+      summary: 'Message to W1AW',
+      details: 'hi',
+      site: 'North',
+      msgNo: 2,
+    },
+    {
+      id: 's-2',
+      ts: 130,
+      type: 'aprs_msg_rx',
+      callsign: 'W1AW',
+      summary: 'Message to K1ABC',
+      details: 'yo',
+      site: 'South',
+      msgNo: 2,
+    },
+    // South withdraws North's check-in (a Net Control correction made over there)
+    {
+      id: 's-w',
+      ts: 140,
+      type: 'net_withdrawn',
+      callsign: 'KD0ABC',
+      summary: 'Check-in withdrawn',
+      ref: 'n-1',
+      site: 'South',
+    },
+  ];
+  const ownIds = new Set(['n-1', 'n-2']);
+
+  it('mirrors msgNo and ref', () => {
+    const out = eventForPush({ id: 'w', ts: 1, type: 'net_withdrawn', ref: 'n-1', msgNo: 4 });
+    expect(out).toMatchObject({ ref: 'n-1', msgNo: 4 });
+    expect('ref' in eventForPush({ id: 'x', ts: 1, type: 'nws_alert' })).toBe(false);
+  });
+
+  it('labels other sites’ numbers SITE:n and keeps our own plain', () => {
+    const view = annotateSharedEvents(shared, ownIds);
+    expect(view.map(sharedMsgLabel)).toEqual(['1', 'South:1', '2', 'South:2', '']);
+    expect(view.find((e) => e.id === 'n-2').foreign).toBeUndefined();
+    expect(annotateSharedEvents([{ id: 'z', type: 'aprs_msg_rx', msgNo: 3 }], [])[0].msgLabel).toBe('3');
+  });
+
+  it('a withdrawal logged at one site hides the entry in every site’s shared view', async () => {
+    const { activeEvents } = await import('./emcommEventLog.js');
+    for (const mine of [ownIds, new Set(['s-1', 's-2', 's-w'])]) {
+      const ids = activeEvents(annotateSharedEvents(shared, mine)).map((e) => e.id);
+      expect(ids).toEqual(['s-1', 'n-2', 's-2']);
+    }
+  });
+
+  it('the ICS 309 numbers our own traffic with our numbers and shows other sites’ as SITE:n', async () => {
+    const { ics309RowsFromEvents } = await import('./icsForms.js');
+    const rows = ics309RowsFromEvents(annotateSharedEvents(shared, ownIds), { operatorCall: 'K0CJH' });
+    const byId = Object.fromEntries(rows.map((r) => [r.eventId, r]));
+    expect(byId['n-2'].fromMsg).toBe('2'); // ours, sent: our own number
+    expect(byId['s-2'].toMsg).toBe('South:2'); // theirs, received there: their number, labelled
+    expect(byId['s-1'].toMsg).toBe('South:1');
+    expect(byId['n-1']).toBeUndefined(); // withdrawn
+    // renumbering a period only renumbers our own traffic
+    const renum = ics309RowsFromEvents(annotateSharedEvents(shared, ownIds), {
+      operatorCall: 'K0CJH',
+      startNumber: 50,
+    });
+    const r2 = Object.fromEntries(renum.map((r) => [r.eventId, r]));
+    expect(r2['n-2'].fromMsg).toBe('50');
+    expect(r2['s-2'].toMsg).toBe('South:2');
   });
 });

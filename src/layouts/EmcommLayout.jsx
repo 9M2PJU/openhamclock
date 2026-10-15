@@ -5,8 +5,10 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { APRS_HISTORY_EVENT } from '../utils/aprsSelect.js';
 import { useTranslation } from 'react-i18next';
-import { WorldMap, APRSTelemetryPanel } from '../components';
+import { WorldMap, APRSTelemetryPanel, RepeatersPanel } from '../components';
 import NbemsPanel from '../components/NbemsPanel.jsx';
+import OfflineAreaPacks from '../components/OfflineAreaPacks.jsx';
+import { formatAsOf } from '../utils/offlinePackManifest.js';
 import { useAPRSTelemetry } from '../hooks/useAPRSTelemetry.js';
 import { calculateDistance, formatDistance, maidenheadToLatLon, latLonToMaidenhead } from '../utils/geo.js';
 import { esc } from '../utils/escapeHtml.js';
@@ -24,6 +26,8 @@ import {
   mergeShelterReports,
   messageHistoryFromEvents,
   mergeMessageHistory,
+  annotateSharedEvents,
+  sharedMsgLabel,
 } from '../utils/incidentSync.js';
 
 // Sidebar panel collapse state (#1188). Mode decides what a fresh visit to
@@ -80,6 +84,8 @@ const PANEL_TOOL_BTN = {
   cursor: 'pointer',
 };
 import { winlinkModeLabel, winlinkModeColor } from '../utils/winlinkModes.js';
+import { useWinlinkReach, REACH_PRIORITY } from '../hooks/useWinlinkReach.js';
+import { STATUS_COLORS, STATUS_ORDER, reachColorKey } from '../utils/winlinkReach.js';
 import { stationAgeMinutes, formatStationAge } from '../utils/aprsStationAge.js';
 import { requestMapFocus } from '../utils/mapFocus.js';
 import {
@@ -90,6 +96,7 @@ import {
   eventsToCSV,
   buildPrintHtml,
   diffAdded,
+  activeEvents,
   EVENT_TYPE_META,
 } from '../utils/emcommEventLog.js';
 
@@ -327,6 +334,16 @@ export default function EmcommLayout(props) {
   // Nearby Winlink gateways
   const [winlinkRows, setWinlinkRows] = useState([]);
   const [winlinkServerHasKey, setWinlinkServerHasKey] = useState(true);
+  // Predicted HF reachability for the gateway list — the shared runner, so the
+  // Winlink panel and map layer reuse the same predictions (never a second run).
+  const winlinkReach = useWinlinkReach({
+    id: 'emcomm',
+    priority: REACH_PRIORITY.emcomm,
+    active: true,
+    deLocation: config.location,
+    propConfig: config.propagation,
+    throttleMs: 1000,
+  });
   // Field reports — Winlink Express forms ingested via rig-bridge CSV plugin
   const [fieldReports, setFieldReports] = useState([]);
   // Event log — session record for After Action Review
@@ -363,8 +380,16 @@ export default function EmcommLayout(props) {
     () => (incidentJoined ? mergeShelterReports(aprsShelterReports, incidentState) : aprsShelterReports),
     [incidentJoined, aprsShelterReports, incidentState],
   );
-  const incidentEvents = incident.events;
-  const displayEventLog = incidentJoined ? incidentEvents : eventLog;
+  // The shared log, each entry marked as this station's own or another site's
+  // (message numbers are per station: another site's read "SITE:n").
+  const rawIncidentEvents = incident.events;
+  const incidentEvents = useMemo(
+    () => (incidentJoined ? annotateSharedEvents(rawIncidentEvents, new Set(eventLog.map((e) => e.id))) : []),
+    [incidentJoined, rawIncidentEvents, eventLog],
+  );
+  // Joined: a withdrawal logged at any site hides its entry here too.
+  const sharedActiveEvents = useMemo(() => activeEvents(incidentEvents), [incidentEvents]);
+  const displayEventLog = incidentJoined ? sharedActiveEvents : eventLog;
   // Admin (holder of the incident's admin key): correct or remove shared records.
   const incidentEditRecord = incident.editRecord;
   const incidentDeleteRecord = incident.deleteRecord;
@@ -524,7 +549,7 @@ export default function EmcommLayout(props) {
     return () => clearInterval(timer);
   }, [logEpoch]);
 
-  const { alerts = [], shelters = [], disasters = [], loading } = emcommData || {};
+  const { alerts = [], shelters = [], disasters = [], loading, asOf: dataAsOf } = emcommData || {};
   const allAprsStations = aprsData?.stations || [];
 
   // Stations for the MAP: the hook's filteredStations (watchlist/group rules
@@ -737,6 +762,22 @@ export default function EmcommLayout(props) {
     if (haveQth) list.sort((a, b) => a.distance - b.distance);
     return list;
   }, [winlinkRows, config.location]);
+
+  // Panel order: predicted status first (Good → Marginal → Closed → Off the
+  // air → not predicted), nearest first within a status. VHF/UHF gateways
+  // rank by line of sight. The map keeps the distance order above.
+  const winlinkPanelGateways = useMemo(() => {
+    const byCall = winlinkReach.byCall;
+    if (!byCall) return winlinkGateways;
+    return winlinkGateways
+      .map((gw) => ({ ...gw, reach: byCall[gw.callsign] || null }))
+      .sort((a, b) => {
+        const ka = STATUS_ORDER[reachColorKey(a.reach)] ?? 9;
+        const kb = STATUS_ORDER[reachColorKey(b.reach)] ?? 9;
+        if (ka !== kb) return ka - kb;
+        return (a.distance ?? Infinity) - (b.distance ?? Infinity);
+      });
+  }, [winlinkGateways, winlinkReach.byCall]);
 
   // Sort alerts by severity
   const sortedAlerts = useMemo(() => {
@@ -1014,7 +1055,7 @@ export default function EmcommLayout(props) {
         }
         merged.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
         // Joined to a shared incident: messages other sites sent or received too.
-        const shared = incidentJoined ? messageHistoryFromEvents(incidentEvents, key) : [];
+        const shared = incidentJoined ? messageHistoryFromEvents(sharedActiveEvents, key) : [];
         setHistoryMsgs(shared.length ? mergeMessageHistory(merged, shared) : merged);
       } catch {
         setHistoryMsgs([]);
@@ -1022,7 +1063,7 @@ export default function EmcommLayout(props) {
         setHistoryLoading(false);
       }
     },
-    [eventLog, incidentJoined, incidentEvents],
+    [eventLog, incidentJoined, sharedActiveEvents],
   );
   const scheduleHistoryHover = useCallback(
     (call) => {
@@ -1311,7 +1352,13 @@ export default function EmcommLayout(props) {
           <ResourceSummary stations={emcommStationsWithDistance} panels={panels} />
 
           {/* NWS Alerts Panel */}
-          <PanelSection title="NWS Alerts" count={sortedAlerts.length} color="#dc2626" panels={panels}>
+          <PanelSection
+            title="NWS Alerts"
+            count={sortedAlerts.length}
+            color="#dc2626"
+            panels={panels}
+            extra={dataAsOf?.alerts ? <OfflineAsOf t={t} ts={dataAsOf.alerts} /> : null}
+          >
             {sortedAlerts.length === 0 ? (
               <EmptyState text="No active alerts for your area" />
             ) : (
@@ -1431,7 +1478,13 @@ export default function EmcommLayout(props) {
           </PanelSection>
 
           {/* Shelters Panel */}
-          <PanelSection title="Nearby Shelters" count={sheltersWithDistance.length} color="#22c55e" panels={panels}>
+          <PanelSection
+            title="Nearby Shelters"
+            count={sheltersWithDistance.length}
+            color="#22c55e"
+            panels={panels}
+            extra={dataAsOf?.shelters ? <OfflineAsOf t={t} ts={dataAsOf.shelters} /> : null}
+          >
             {sheltersWithDistance.length === 0 ? (
               <EmptyState text="No open shelters nearby" />
             ) : (
@@ -1516,6 +1569,14 @@ export default function EmcommLayout(props) {
                 );
               })
             )}
+          </PanelSection>
+
+          {/* Nearby Repeaters — live from the directory, last-known from an
+              offline area pack when the internet is down */}
+          <PanelSection title="Nearby Repeaters" color="#38bdf8" panels={panels}>
+            <div style={{ height: '230px' }}>
+              <RepeatersPanel config={config} />
+            </div>
           </PanelSection>
 
           {/* EmComm Stations Panel (APRS) */}
@@ -1688,7 +1749,7 @@ export default function EmcommLayout(props) {
             ) : winlinkGateways.length === 0 ? (
               <EmptyState text={winlinkRows.length ? 'No gateways within range' : 'Loading gateways…'} />
             ) : (
-              winlinkGateways.slice(0, 25).map((gw) => {
+              winlinkPanelGateways.slice(0, 25).map((gw) => {
                 // Show up to 3 channels closest to the operator (sorted by freq);
                 // the rest are summarized as "+N more". Avoids tall rows when a
                 // single gateway publishes 9+ channels.
@@ -1724,8 +1785,11 @@ export default function EmcommLayout(props) {
                         )}
                         <span style={{ color: '#888', marginLeft: '6px', fontSize: '10px' }}>{gw.gridsquare}</span>
                       </div>
-                      <span style={{ color: '#888', fontSize: '10px' }}>
-                        {formatDistance(gw.distance, config.allUnits?.dist || 'imperial')}
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                        {gw.reach && <EmcommReachChip entry={gw.reach} t={t} />}
+                        <span style={{ color: '#888', fontSize: '10px' }}>
+                          {formatDistance(gw.distance, config.allUnits?.dist || 'imperial')}
+                        </span>
                       </span>
                     </div>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '3px', marginTop: '3px' }}>
@@ -1839,7 +1903,7 @@ export default function EmcommLayout(props) {
             panels={panels}
             bodyMaxHeight="none"
           >
-            <NetControlPanel callsign={config.callsign} embedded />
+            <NetControlPanel callsign={config.callsign} timeZone={config.timezone} embedded />
           </PanelSection>
 
           {/* Net Operations Panel */}
@@ -2034,6 +2098,9 @@ export default function EmcommLayout(props) {
                       {ev.callsign ? <span style={{ color: '#ddd' }}>{ev.callsign} — </span> : null}
                       {ev.summary}
                       {incidentJoined && ev.site ? <span style={{ color: '#38bdf8' }}> @{ev.site}</span> : null}
+                      {incidentJoined && sharedMsgLabel(ev) ? (
+                        <span style={{ color: '#666', fontFamily: 'var(--font-mono)' }}> #{sharedMsgLabel(ev)}</span>
+                      ) : null}
                     </span>
                     {incident.isAdmin && incidentState.events?.[ev.id] && (
                       <IncidentAdminButtons
@@ -2064,6 +2131,14 @@ export default function EmcommLayout(props) {
                   📋 {label}
                 </button>
               ))}
+            </div>
+          </PanelSection>
+
+          {/* Offline map area: basemap tiles + alerts/shelters/repeaters
+              snapshot so the map and panels still work without internet */}
+          <PanelSection title="Offline Map Area" color="#fbbf24" panels={panels}>
+            <div style={{ padding: '4px 8px' }}>
+              <OfflineAreaPacks deLocation={config.location} compact />
             </div>
           </PanelSection>
 
@@ -2473,11 +2548,67 @@ function CapacityBar({ current, max }) {
   );
 }
 
+/** "Offline · as of 14:32Z" tag for a panel showing last-known data */
+function OfflineAsOf({ t, ts }) {
+  return (
+    <span
+      title={t('offlinePacks.asOfTitle', {
+        defaultValue: 'No connection — showing the last-known data saved at {{time}}',
+        time: formatAsOf(ts),
+      })}
+      style={{ color: '#fbbf24', fontSize: '9px', fontWeight: 400, letterSpacing: 0 }}
+    >
+      {t('offlinePacks.asOfOffline', { defaultValue: 'Offline — as of {{time}}', time: formatAsOf(ts) })}
+    </span>
+  );
+}
+
 /** Empty state placeholder */
 function EmptyState({ text }) {
   return (
     <div style={{ padding: '12px 8px', color: '#555', fontSize: '11px', textAlign: 'center', fontStyle: 'italic' }}>
       {text}
     </div>
+  );
+}
+
+/** Same status chip as the Winlink panel's Reachable view. */
+function EmcommReachChip({ entry, t }) {
+  const key = reachColorKey(entry);
+  let label;
+  if (entry.status === 'offair') label = t('winlinkReach.status.offair', { defaultValue: 'Off the air' });
+  else if (entry.kind === 'packet') {
+    label = {
+      los: t('winlinkReach.los.short.los', { defaultValue: 'LOS' }),
+      extended: t('winlinkReach.los.short.extended', { defaultValue: 'LOS?' }),
+      beyond: t('winlinkReach.los.short.beyond', { defaultValue: 'No LOS' }),
+    }[entry.los];
+  } else {
+    label = {
+      good: t('winlinkReach.status.good', { defaultValue: 'Good' }),
+      marginal: t('winlinkReach.status.marginal', { defaultValue: 'Marginal' }),
+      closed: t('winlinkReach.status.closed', { defaultValue: 'Closed' }),
+    }[entry.status];
+  }
+  if (!label) return null;
+  const title =
+    entry.kind === 'hf' && Number.isFinite(entry.reliability)
+      ? `${entry.reliability}%${entry.band ? ` · ${entry.band}` : ''}${entry.modeLabel ? ` · ${entry.modeLabel}` : ''}`
+      : undefined;
+  return (
+    <span
+      title={title}
+      data-status={key}
+      style={{
+        fontSize: '9px',
+        fontWeight: 700,
+        padding: '1px 5px',
+        borderRadius: '3px',
+        background: STATUS_COLORS[key],
+        color: key === 'offair' ? '#fff' : '#000',
+      }}
+    >
+      {label}
+    </span>
   );
 }

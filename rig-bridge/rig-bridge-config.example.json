@@ -72,6 +72,12 @@
     "ohcApiKey": "",
     "verbose": false
   },
+  "kiwiAudio": {
+    "enabled": false,
+    "host": "",
+    "port": 8073,
+    "password": ""
+  },
   "mqtt": {
     "enabled": false,
     "url": "mqtt://127.0.0.1:1883",

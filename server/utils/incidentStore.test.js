@@ -175,6 +175,45 @@ describe('incidentStore', () => {
       expect(store.snapshot(incident.id).events).toHaveLength(2);
     });
 
+    it('keeps a Net Control withdrawal and the id it withdraws', () => {
+      const { incident } = make();
+      const r = store.apply(incident.id, {
+        events: [
+          { id: 'c1', type: 'net_checkin', callsign: 'W1AW', summary: 'in' },
+          { id: 'w1', type: 'net_withdrawn', callsign: 'W1AW', summary: 'Check-in withdrawn', ref: 'c1' },
+        ],
+      });
+      expect(r.changes.events.map((e) => e.id)).toEqual(['c1', 'w1']);
+      expect(store.snapshot(incident.id).events.find((e) => e.id === 'w1').ref).toBe('c1');
+      expect(store.snapshot(incident.id).events.find((e) => e.id === 'c1').ref).toBeUndefined();
+    });
+
+    it('keeps each station’s own message number, and drops junk numbers', () => {
+      const { incident } = make();
+      store.apply(
+        incident.id,
+        {
+          events: [
+            { id: 'm1', type: 'aprs_msg_sent', callsign: 'K0CJH', summary: 'Message to W1AW', msgNo: 7 },
+            { id: 'm2', type: 'aprs_msg_rx', callsign: 'W1AW', summary: 'Message to K0CJH', msgNo: '8' },
+            { id: 'm3', type: 'aprs_msg_rx', callsign: 'W1AW', summary: 'x', msgNo: -1 },
+            { id: 'm4', type: 'aprs_msg_rx', callsign: 'W1AW', summary: 'y', msgNo: 'abc' },
+          ],
+        },
+        { site: 'EOC' },
+      );
+      const evs = store.snapshot(incident.id).events;
+      expect(evs.map((e) => [e.id, e.msgNo, e.site])).toEqual([
+        ['m1', 7, 'EOC'],
+        ['m2', 8, 'EOC'],
+        ['m3', undefined, 'EOC'],
+        ['m4', undefined, 'EOC'],
+      ]);
+      const restored = createIncidentStore({ now });
+      restored.hydrate(JSON.parse(JSON.stringify(store.serialise())));
+      expect(restored.snapshot(incident.id).events.find((e) => e.id === 'm1').msgNo).toBe(7);
+    });
+
     it('returns events oldest first in snapshots and caps the log by timestamp', () => {
       const small = createIncidentStore({ now, limits: { maxEvents: 3 } });
       const { incident } = small.create({});

@@ -3,22 +3,23 @@
  * runs a voice net on a repeater or simplex frequency.
  *
  * A running net:
- *   { id, name, frequency, ncs, scheduleId, startTime, endTime: null,
+ *   { id, name, frequency (free text), freqMhz?, mode?, ncs, scheduleId,
+ *     scriptId (template), rev (write counter), startTime, endTime: null,
  *     calling: null|call (traffic station called with "next"),
  *     stations: [station…] (display order, newest activity first),
- *     undo: [stations…] (snapshots, newest last, capped) }
+ *     undo: [{ stations, action, eventIds }…] (newest last, capped) }
  *
  * A station (one roster line):
  *   { id, call, name, location, flags: ['traffic'|'inout'|'relay'|'mobile'|
  *     'short'], note, checkinTime, lastActivity, checkoutTime: null|ms,
- *     recheckCount, trafficPassed: null|ms }
+ *     recheckCount, trafficPassed: null|ms, logIds: [event-log ids] }
  *
  * Every mutator is pure: it returns a new net (or the same object when
  * nothing changed) and never touches storage. The panel persists the result
  * with saveRunningNet().
  *
- * Storage: the net script (openhamclock_netControlScript) is listed in
- * config.js SYNC_KEYS and profiles.js like other user settings. The running
+ * Storage: the script templates (openhamclock_netControlScripts) are listed
+ * in config.js SYNC_KEYS and profiles.js like other user settings. The running
  * net, the history of past nets and the remembered station names stay
  * per-browser. The voice roster snapshot (openhamclock_emcommNetRoster) holds
  * the stations in the EmComm roster entry shape for the Net Roster panel and
@@ -29,7 +30,10 @@ import { esc } from './escapeHtml.js';
 
 export const NET_CONTROL_KEY = 'openhamclock_netControl';
 export const NET_CONTROL_HISTORY_KEY = 'openhamclock_netControlHistory';
+/** First-release single script — read once to migrate into the template list. */
 export const NET_CONTROL_SCRIPT_KEY = 'openhamclock_netControlScript';
+/** Named preamble/closing templates (synced and profiled). */
+export const NET_CONTROL_SCRIPTS_KEY = 'openhamclock_netControlScripts';
 export const NET_CONTROL_STATIONS_KEY = 'openhamclock_netControlStations';
 /** Running (or last closed) net's stations, in the EmComm roster entry shape (see toRosterEntries). */
 export const NET_CONTROL_ROSTER_KEY = 'openhamclock_emcommNetRoster';
@@ -125,7 +129,16 @@ export function parseCheckin(input) {
 const newId = (prefix) => `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
 /** Start a new net. `name` is required; blanks fall back to sensible defaults. */
-export function createNet({ name, frequency = '', ncs = '', scheduleId = null, now = Date.now() } = {}) {
+export function createNet({
+  name,
+  frequency = '',
+  ncs = '',
+  scheduleId = null,
+  scriptId = null,
+  freqMhz = null,
+  mode = '',
+  now = Date.now(),
+} = {}) {
   const n = String(name || '').trim();
   if (!n) return null;
   return {
@@ -136,7 +149,11 @@ export function createNet({ name, frequency = '', ncs = '', scheduleId = null, n
       .trim()
       .toUpperCase(),
     scheduleId: scheduleId || null,
+    scriptId: scriptId || null,
+    freqMhz: Number.isFinite(Number(freqMhz)) && Number(freqMhz) > 0 ? Number(freqMhz) : null,
+    mode: String(mode || '').toUpperCase(),
     startTime: now,
+    rev: 0,
     endTime: null,
     calling: null,
     stations: [],
@@ -144,11 +161,44 @@ export function createNet({ name, frequency = '', ncs = '', scheduleId = null, n
   };
 }
 
-const withUndo = (net, stations) => ({
+/**
+ * Undo entries: { stations (snapshot before the action), action: { kind,
+ * call }, eventIds: [event-log ids written for the action] }. Nets saved by
+ * the first release stored bare station arrays; undoEntry() reads both.
+ */
+const undoEntry = (e) => (Array.isArray(e) ? { stations: e, action: null, eventIds: [] } : e);
+
+const withUndo = (net, stations, action = null) => ({
   ...net,
   stations,
-  undo: [...(net.undo || []), net.stations].slice(-MAX_UNDO),
+  undo: [...(net.undo || []), { stations: net.stations, action, eventIds: [] }].slice(-MAX_UNDO),
 });
+
+/** The action the next Undo would reverse ({ stations, action, eventIds }), or null. */
+export function peekUndo(net) {
+  const undo = net?.undo || [];
+  return undo.length ? undoEntry(undo[undo.length - 1]) : null;
+}
+
+/**
+ * Remember that event-log entry `eventId` was written for the latest action:
+ * on the top undo entry (so Undo can withdraw it) and, when `call` is given,
+ * on the station (so removing a mistyped call withdraws everything logged
+ * for it). No undo entry of its own.
+ */
+export function attachEvent(net, eventId, call = null) {
+  if (!net || !eventId) return net;
+  const undo = (net.undo || []).slice();
+  if (undo.length) {
+    const top = undoEntry(undo[undo.length - 1]);
+    undo[undo.length - 1] = { ...top, eventIds: [...(top.eventIds || []), eventId] };
+  }
+  const c = call ? String(call).toUpperCase() : null;
+  const stations = c
+    ? net.stations.map((x) => (x.call === c ? { ...x, logIds: [...(x.logIds || []), eventId] } : x))
+    : net.stations;
+  return { ...net, undo, stations };
+}
 
 const findStation = (net, call) => {
   const c = String(call || '').toUpperCase();
@@ -181,7 +231,7 @@ export function checkIn(net, { call, flags = [], note = '', name = '', location 
       recheckCount: existing.recheckCount + 1,
     };
     const rest = net.stations.filter((s) => s.call !== c);
-    return { net: withUndo(net, [updated, ...rest]), station: updated, result };
+    return { net: withUndo(net, [updated, ...rest], { kind: result, call: c }), station: updated, result };
   }
   const station = {
     id: newId('stn'),
@@ -196,7 +246,7 @@ export function checkIn(net, { call, flags = [], note = '', name = '', location 
     recheckCount: 0,
     trafficPassed: null,
   };
-  return { net: withUndo(net, [station, ...net.stations]), station, result: 'new' };
+  return { net: withUndo(net, [station, ...net.stations], { kind: 'new', call: c }), station, result: 'new' };
 }
 
 /** Mark a station checked out (stays on the roster, greyed). */
@@ -206,6 +256,7 @@ export function checkOut(net, call, now = Date.now()) {
   return withUndo(
     net,
     net.stations.map((x) => (x.call === s.call ? { ...x, checkoutTime: now, lastActivity: now } : x)),
+    { kind: 'checkout', call: s.call },
   );
 }
 
@@ -217,6 +268,7 @@ export function toggleFlag(net, call, flag) {
   return withUndo(
     net,
     net.stations.map((x) => (x.call === s.call ? { ...x, flags } : x)),
+    { kind: 'flag', call: s.call },
   );
 }
 
@@ -239,14 +291,39 @@ export function removeStation(net, call) {
   return withUndo(
     net,
     net.stations.filter((x) => x.call !== s.call),
+    { kind: 'remove', call: s.call },
   );
 }
 
-/** Restore the roster to the state before the last check-in/out/flag/remove/pass. */
+/** Event-log summary for the compensating entry written when Undo reverses `action`. */
+export function withdrawalSummary(action, netName = '') {
+  const on = netName ? ` (${netName})` : '';
+  switch (action?.kind) {
+    case 'new':
+      return `Check-in withdrawn${on}`;
+    case 'recheck':
+    case 'return':
+      return `Re-check-in withdrawn${on}`;
+    case 'checkout':
+      return `Check-out withdrawn${on}`;
+    case 'traffic':
+      return `Traffic pass withdrawn${on}`;
+    case 'remove':
+      return `Removal undone, entries reinstated${on}`;
+    default:
+      return `Entry withdrawn${on}`;
+  }
+}
+
+/**
+ * Restore the roster to the state before the last check-in/out/flag/remove/
+ * pass. Event-log entries written for that action are not touched here — the
+ * panel reads peekUndo() first and logs compensating "withdrawn" events.
+ */
 export function undoLast(net) {
-  const undo = net?.undo || [];
-  if (undo.length === 0) return net;
-  return { ...net, stations: undo[undo.length - 1], undo: undo.slice(0, -1) };
+  const top = peekUndo(net);
+  if (!top) return net;
+  return { ...net, stations: top.stations, undo: net.undo.slice(0, -1) };
 }
 
 /**
@@ -266,6 +343,7 @@ export function passTraffic(net, call, now = Date.now()) {
   const next = withUndo(
     net,
     net.stations.map((x) => (x.call === s.call ? { ...x, trafficPassed: now, lastActivity: now } : x)),
+    { kind: 'traffic', call: s.call },
   );
   return net.calling === s.call ? { ...next, calling: null } : next;
 }
@@ -313,6 +391,71 @@ export function formatDuration(ms) {
 const fmtUtc = (ts) => (ts == null ? '' : new Date(ts).toISOString().replace('T', ' ').substring(0, 16) + 'Z');
 const fmtHHMM = (ts) => (ts == null ? '' : new Date(ts).toISOString().substring(11, 16));
 
+// ── Local time (the operator's timezone setting) ────────────────────────────
+const localFormatters = new Map();
+/** Intl formatter for `timeZone` ('' / undefined = browser zone); falls back to the browser zone when invalid. */
+function localFormatter(timeZone) {
+  const key = timeZone || '';
+  if (!localFormatters.has(key)) {
+    const opts = {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23',
+      timeZoneName: 'short',
+    };
+    let fmt;
+    try {
+      fmt = new Intl.DateTimeFormat('en-US', { ...opts, ...(timeZone ? { timeZone } : {}) });
+    } catch {
+      fmt = new Intl.DateTimeFormat('en-US', opts);
+    }
+    localFormatters.set(key, fmt);
+  }
+  return localFormatters.get(key);
+}
+
+/** { date: 'YYYY-MM-DD', time: 'HH:MM', zone: 'CDT' } in the given zone, or null for no timestamp. */
+export function localParts(ts, timeZone) {
+  if (ts == null || !Number.isFinite(Number(ts))) return null;
+  const parts = Object.fromEntries(
+    localFormatter(timeZone)
+      .formatToParts(new Date(ts))
+      .map((p) => [p.type, p.value]),
+  );
+  return {
+    date: `${parts.year}-${parts.month}-${parts.day}`,
+    time: `${parts.hour === '24' ? '00' : parts.hour}:${parts.minute}`,
+    zone: parts.timeZoneName || '',
+  };
+}
+/** 'HH:MM' local. */
+export const fmtLocalHHMM = (ts, timeZone) => localParts(ts, timeZone)?.time || '';
+/** 'YYYY-MM-DD HH:MM CDT' local. */
+export function fmtLocalDateTime(ts, timeZone) {
+  const p = localParts(ts, timeZone);
+  return p ? `${p.date} ${p.time}${p.zone ? ` ${p.zone}` : ''}` : '';
+}
+/** 'YYYY-MM-DD HH:MM' local, no zone (CSV cell; the zone has its own column). */
+const fmtLocalCsv = (ts, timeZone) => {
+  const p = localParts(ts, timeZone);
+  return p ? `${p.date} ${p.time}` : '';
+};
+/** The zone name for CSV/print: the IANA name when set, else the browser's. */
+export function zoneName(timeZone) {
+  if (timeZone) return timeZone;
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'local';
+  } catch {
+    return 'local';
+  }
+}
+
+/** Report time options: { times: 'utc' | 'both', timeZone }. */
+const withLocal = (opts) => opts?.times === 'both';
+
 /**
  * Build the net summary. Stations are listed in check-in order (oldest
  * first). totalCheckins counts rechecks; uniqueStations does not.
@@ -346,29 +489,34 @@ export function buildReport(net, now = Date.now()) {
   };
 }
 
-/** Plain-text report for the clipboard / email. */
-export function reportToText(report) {
+/**
+ * Plain-text report for the clipboard / email. With `{ times: 'both' }` each
+ * time is followed by the local time in `timeZone`.
+ */
+export function reportToText(report, opts = {}) {
   const r = report;
+  const both = withLocal(opts);
+  const tz = opts.timeZone;
+  const stamp = (ts) => (both ? `${fmtUtc(ts)} (${fmtLocalDateTime(ts, tz)})` : fmtUtc(ts));
   const lines = [
     `NET REPORT — ${r.name}`,
     `Net control: ${r.ncs || '—'}`,
     `Frequency: ${r.frequency || '—'}`,
-    `Opened: ${fmtUtc(r.startTime)}   Closed: ${fmtUtc(r.endTime)}   Duration: ${formatDuration(r.durationMs)}`,
+    `Opened: ${stamp(r.startTime)}   Closed: ${stamp(r.endTime)}   Duration: ${formatDuration(r.durationMs)}`,
     `Check-ins: ${r.totalCheckins}   Unique stations: ${r.uniqueStations}   Traffic: ${r.trafficCount} listed, ${r.trafficPassed} passed`,
     '',
-    'TIME  CALL        FLAGS        NAME / LOCATION',
+    both ? 'UTC   LOCAL CALL        FLAGS        NAME / LOCATION' : 'TIME  CALL        FLAGS        NAME / LOCATION',
   ];
   for (const s of r.stations) {
     const who = [s.name, s.location].filter(Boolean).join(', ');
-    const extra = [
-      s.recheckCount > 0 ? `recheck x${s.recheckCount}` : '',
-      s.checkoutTime != null ? `out ${fmtHHMM(s.checkoutTime)}` : '',
-      s.note,
-    ]
-      .filter(Boolean)
-      .join('; ');
+    const out =
+      s.checkoutTime != null
+        ? `out ${fmtHHMM(s.checkoutTime)}${both ? `/${fmtLocalHHMM(s.checkoutTime, tz)}` : ''}`
+        : '';
+    const extra = [s.recheckCount > 0 ? `recheck x${s.recheckCount}` : '', out, s.note].filter(Boolean).join('; ');
     const tail = [who, extra ? `(${extra})` : ''].filter(Boolean).join(' ');
-    lines.push(`${fmtHHMM(s.checkinTime)} ${s.call.padEnd(11)} ${flagsToText(s.flags).padEnd(12)} ${tail}`.trimEnd());
+    const time = both ? `${fmtHHMM(s.checkinTime)} ${fmtLocalHHMM(s.checkinTime, tz)}` : fmtHHMM(s.checkinTime);
+    lines.push(`${time} ${s.call.padEnd(11)} ${flagsToText(s.flags).padEnd(12)} ${tail}`.trimEnd());
   }
   lines.push('', 'Generated by OpenHamClock');
   return lines.join('\n');
@@ -379,64 +527,84 @@ const REPORT_CSV_HEADER = [
   'NCS',
   'Frequency',
   'Net Opened (UTC)',
+  'Net Opened (local)',
   'Net Closed (UTC)',
+  'Net Closed (local)',
   'Callsign',
   'Name',
   'Location',
   'Flags',
   'Check-In (UTC)',
+  'Check-In (local)',
   'Check-Out (UTC)',
+  'Check-Out (local)',
   'Rechecks',
   'Traffic Passed (UTC)',
+  'Traffic Passed (local)',
   'Note',
+  'Time Zone',
 ];
 
-const reportRows = (r) =>
+const iso = (ts) => (ts != null ? new Date(ts).toISOString() : '');
+
+const reportRows = (r, timeZone) =>
   r.stations.map((s) =>
     [
       r.name,
       r.ncs,
       r.frequency,
-      r.startTime != null ? new Date(r.startTime).toISOString() : '',
-      r.endTime != null ? new Date(r.endTime).toISOString() : '',
+      iso(r.startTime),
+      fmtLocalCsv(r.startTime, timeZone),
+      iso(r.endTime),
+      fmtLocalCsv(r.endTime, timeZone),
       s.call,
       s.name,
       s.location,
       flagsToText(s.flags),
-      new Date(s.checkinTime).toISOString(),
-      s.checkoutTime != null ? new Date(s.checkoutTime).toISOString() : '',
+      iso(s.checkinTime),
+      fmtLocalCsv(s.checkinTime, timeZone),
+      iso(s.checkoutTime),
+      fmtLocalCsv(s.checkoutTime, timeZone),
       s.recheckCount,
-      s.trafficPassed != null ? new Date(s.trafficPassed).toISOString() : '',
+      iso(s.trafficPassed),
+      fmtLocalCsv(s.trafficPassed, timeZone),
       s.note,
+      zoneName(timeZone),
     ]
       .map(csvEscape)
       .join(','),
   );
 
-/** One CSV row per station. */
-export function reportToCsv(report) {
-  return [REPORT_CSV_HEADER.join(','), ...reportRows(report)].join('\r\n') + '\r\n';
+/** One CSV row per station; every time in UTC and in local time (`timeZone`). */
+export function reportToCsv(report, { timeZone } = {}) {
+  return [REPORT_CSV_HEADER.join(','), ...reportRows(report, timeZone)].join('\r\n') + '\r\n';
 }
 
 /** All past nets as one CSV (one row per station per net). */
-export function historyToCsv(history) {
+export function historyToCsv(history, { timeZone } = {}) {
   const rows = [REPORT_CSV_HEADER.join(',')];
-  for (const net of history || []) rows.push(...reportRows(buildReport(net, net.endTime ?? net.startTime)));
+  for (const net of history || []) rows.push(...reportRows(buildReport(net, net.endTime ?? net.startTime), timeZone));
   return rows.join('\r\n') + '\r\n';
 }
 
-/** Self-contained print-ready HTML (caller opens a window and prints). */
-export function reportToPrintHtml(report) {
+/**
+ * Self-contained print-ready HTML (caller opens a window and prints).
+ * `{ times: 'both', timeZone }` adds local-time columns and header lines.
+ */
+export function reportToPrintHtml(report, opts = {}) {
   const r = report;
+  const both = withLocal(opts);
+  const tz = opts.timeZone;
+  const zone = esc(localParts(r.startTime ?? Date.now(), tz)?.zone || zoneName(tz));
   const rows = r.stations
     .map(
       (s) => `<tr>
-        <td class="mono">${fmtHHMM(s.checkinTime)}</td>
+        <td class="mono">${fmtHHMM(s.checkinTime)}</td>${both ? `\n        <td class="mono">${fmtLocalHHMM(s.checkinTime, tz)}</td>` : ''}
         <td class="mono">${esc(s.call)}</td>
         <td>${esc(flagsToText(s.flags))}</td>
         <td>${esc(s.name)}</td>
         <td>${esc(s.location)}</td>
-        <td class="mono">${s.checkoutTime != null ? fmtHHMM(s.checkoutTime) : ''}</td>
+        <td class="mono">${s.checkoutTime != null ? fmtHHMM(s.checkoutTime) + (both ? ` / ${fmtLocalHHMM(s.checkoutTime, tz)}` : '') : ''}</td>
         <td>${esc(
           [
             s.recheckCount > 0 ? `recheck x${s.recheckCount}` : '',
@@ -449,6 +617,10 @@ export function reportToPrintHtml(report) {
       </tr>`,
     )
     .join('\n');
+  const localRow = (label, ts) =>
+    both
+      ? `\n  <tr><td class="k">${label} (local)</td><td class="mono">${esc(fmtLocalDateTime(ts, tz))}</td></tr>`
+      : '';
   return `<!DOCTYPE html>
 <html>
 <head>
@@ -474,14 +646,14 @@ export function reportToPrintHtml(report) {
 <table class="head">
   <tr><td class="k">Net control</td><td class="mono">${esc(r.ncs || '—')}</td></tr>
   <tr><td class="k">Frequency</td><td class="mono">${esc(r.frequency || '—')}</td></tr>
-  <tr><td class="k">Opened (UTC)</td><td class="mono">${fmtUtc(r.startTime)}</td></tr>
-  <tr><td class="k">Closed (UTC)</td><td class="mono">${fmtUtc(r.endTime)}</td></tr>
+  <tr><td class="k">Opened (UTC)</td><td class="mono">${fmtUtc(r.startTime)}</td></tr>${localRow('Opened', r.startTime)}
+  <tr><td class="k">Closed (UTC)</td><td class="mono">${fmtUtc(r.endTime)}</td></tr>${localRow('Closed', r.endTime)}
   <tr><td class="k">Duration</td><td class="mono">${esc(formatDuration(r.durationMs))}</td></tr>
   <tr><td class="k">Check-ins</td><td class="mono">${r.totalCheckins} (${r.uniqueStations} unique)</td></tr>
   <tr><td class="k">Traffic</td><td class="mono">${r.trafficCount} listed, ${r.trafficPassed} passed</td></tr>
 </table>
 <table class="log">
-  <thead><tr><th>In (UTC)</th><th>Callsign</th><th>Flags</th><th>Name</th><th>Location</th><th>Out</th><th>Notes</th></tr></thead>
+  <thead><tr><th>In (UTC)</th>${both ? `<th>In (${zone})</th>` : ''}<th>Callsign</th><th>Flags</th><th>Name</th><th>Location</th><th>Out</th><th>Notes</th></tr></thead>
   <tbody>
 ${rows}
   </tbody>
@@ -545,14 +717,130 @@ export const DEFAULT_CLOSING = `Is there anything further for the net? ... Heari
 
 Thank you to all who participated. The frequency is returned to normal amateur use. This is {ncs}, clear.`;
 
+const SKYWARN_PREAMBLE = `This is {ncs}, net control for the {net}. This net is now in session as a directed net for severe weather reporting.
+
+The National Weather Service has issued watches or warnings for our area. This frequency is reserved for weather reports and emergency traffic. Please do not transmit unless you have a report or are called by net control.
+
+Report only what you observe directly: hail with its size compared to a coin or ball, measured or estimated wind speed and damage, rotation, funnel clouds or tornadoes, flooding, and heavy rain amounts. Give your callsign, your location, what you see, and the time you saw it.
+
+Emergency traffic — any threat to life or property — may break in at any time.
+
+Spotters in the warned area, please check in now with your callsign and location.
+
+All other spotters, please check in now.`;
+
+const SKYWARN_CLOSING = `The threat for our area has ended. This is {ncs} securing the {net} at {time}. {count} stations took part.
+
+Thank you to every spotter — your reports go directly to the National Weather Service. Stay safe. {ncs}, clear.`;
+
+const TACTICAL_PREAMBLE = `All stations, this is net control, {ncs}, for the {net} on {freq}. This is a directed tactical net. The time is {time}.
+
+Use tactical call signs: Net Control, Shelter One, EOC, Hospital, and so on. Identify with your FCC call sign at the end of each exchange and at least every ten minutes.
+
+Keep transmissions short. Priority traffic first, then welfare, then routine. Say "priority" or "emergency" before your call to break in.
+
+Stations taking an assignment, check in now with your tactical call, your FCC call sign, and your location.`;
+
+const TACTICAL_CLOSING = `All stations, this is net control. The {net} is secured at {time}. All tactical assignments are released. Report to your supervisor before leaving your post.
+
+{ncs}, clear.`;
+
+/** The scripts the panel ships with. Built-ins can be edited, reset or deleted like any other. */
+export const BUILTIN_TEMPLATES = [
+  { id: 'tpl-ares', builtin: 'ares', name: 'ARES weekly net', preamble: DEFAULT_PREAMBLE, closing: DEFAULT_CLOSING },
+  {
+    id: 'tpl-skywarn',
+    builtin: 'skywarn',
+    name: 'SKYWARN activation',
+    preamble: SKYWARN_PREAMBLE,
+    closing: SKYWARN_CLOSING,
+  },
+  {
+    id: 'tpl-tactical',
+    builtin: 'tactical',
+    name: 'Tactical net',
+    preamble: TACTICAL_PREAMBLE,
+    closing: TACTICAL_CLOSING,
+  },
+];
+
+/** Original text of a built-in template ({ preamble, closing }), or null for a user template. */
+export function builtinDefault(template) {
+  const b = BUILTIN_TEMPLATES.find((t) => t.builtin && t.builtin === template?.builtin);
+  return b ? { preamble: b.preamble, closing: b.closing } : null;
+}
+
+const cleanTemplate = (t) =>
+  t && typeof t === 'object' && t.id
+    ? {
+        id: String(t.id),
+        name: String(t.name || 'Untitled script').slice(0, 60),
+        preamble: typeof t.preamble === 'string' ? t.preamble : '',
+        closing: typeof t.closing === 'string' ? t.closing : '',
+        ...(t.builtin ? { builtin: String(t.builtin) } : {}),
+      }
+    : null;
+
+/** Template by id, falling back to the first one (never null). */
+export function getTemplate(templates, id) {
+  const list = Array.isArray(templates) && templates.length ? templates : BUILTIN_TEMPLATES;
+  return list.find((t) => t.id === id) || list[0];
+}
+
+/** "Name", "Name (2)", … — a name not already used in the list. */
+export function uniqueTemplateName(templates, name) {
+  const base = String(name || 'Untitled script').trim() || 'Untitled script';
+  const used = new Set((templates || []).map((t) => t.name.toLowerCase()));
+  if (!used.has(base.toLowerCase())) return base;
+  for (let n = 2; ; n++) if (!used.has(`${base} (${n})`.toLowerCase())) return `${base} (${n})`;
+}
+
+/** Add a template; returns { templates, id }. */
+export function addTemplate(templates, { name = 'New script', preamble = '', closing = '' } = {}) {
+  const t = { id: newId('tpl'), name: uniqueTemplateName(templates, name), preamble, closing };
+  return { templates: [...(templates || []), t], id: t.id };
+}
+
+/** Copy a template (user copy, no built-in tag); returns { templates, id }. */
+export function duplicateTemplate(templates, id) {
+  const src = getTemplate(templates, id);
+  return addTemplate(templates, { name: `${src.name} (copy)`, preamble: src.preamble, closing: src.closing });
+}
+
+export function renameTemplate(templates, id, name) {
+  const n = String(name || '').trim();
+  if (!n) return templates;
+  const others = (templates || []).filter((t) => t.id !== id);
+  return (templates || []).map((t) => (t.id === id ? { ...t, name: uniqueTemplateName(others, n).slice(0, 60) } : t));
+}
+
+export function updateTemplate(templates, id, { preamble, closing } = {}) {
+  return (templates || []).map((t) =>
+    t.id === id
+      ? {
+          ...t,
+          ...(typeof preamble === 'string' ? { preamble } : {}),
+          ...(typeof closing === 'string' ? { closing } : {}),
+        }
+      : t,
+  );
+}
+
+/** Delete a template; the last remaining one cannot be deleted. */
+export function deleteTemplate(templates, id) {
+  if (!Array.isArray(templates) || templates.length <= 1) return templates;
+  return templates.filter((t) => t.id !== id);
+}
+
 /** Date/time strings for the script placeholders. */
-export function scriptContext(net, now = Date.now()) {
+export function scriptContext(net, now = Date.now(), timeZone = undefined) {
   const d = new Date(now);
   let date = d.toDateString();
   let time = `${String(d.getHours()).padStart(2, '0')}${String(d.getMinutes()).padStart(2, '0')} local`;
+  const tz = timeZone ? { timeZone } : {};
   try {
-    date = d.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
-    time = `${d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })} local (${fmtHHMM(now)} UTC)`;
+    date = d.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', ...tz });
+    time = `${d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', ...tz })} local (${fmtHHMM(now)} UTC)`;
   } catch {
     /* Intl unavailable — keep the plain fallbacks */
   }
@@ -627,13 +915,136 @@ const writeJson = (key, value) => {
   }
 };
 
+const isLiveNet = (r) => !!(r && typeof r === 'object' && Array.isArray(r.stations) && r.name);
+const isTombstone = (r) => !!(r && typeof r === 'object' && r.closedId && !Array.isArray(r.stations));
+const normalizeNet = (r) => ({ undo: [], rev: 0, ...r });
+
+/**
+ * The stored running-net record as written: a live net (with `rev`), a
+ * tombstone `{ closedId, rev }` left when a net is closed, or null.
+ */
+export function readRunningNetRecord() {
+  const r = readJson(NET_CONTROL_KEY, null);
+  return isLiveNet(r) || isTombstone(r) ? r : null;
+}
+
 /** The in-progress net, or null. */
 export function loadRunningNet() {
-  const net = readJson(NET_CONTROL_KEY, null);
-  return net && typeof net === 'object' && Array.isArray(net.stations) && net.name ? { undo: [], ...net } : null;
+  const r = readRunningNetRecord();
+  return isLiveNet(r) ? normalizeNet(r) : null;
 }
 export const saveRunningNet = (net) => writeJson(NET_CONTROL_KEY, net);
 export const clearRunningNet = () => writeJson(NET_CONTROL_KEY, null);
+
+// ── Keeping tabs and panels in step ─────────────────────────────────────────
+//
+// Every write of the running net carries a revision counter (`rev`) that only
+// ever goes up within a browser. A panel applies a change from elsewhere only
+// when its rev is higher than what it holds, and refuses to write over a
+// stored state newer than the one its change was based on — so a stale tab
+// can never clobber a newer net. Other tabs hear about writes through the
+// `storage` event; other panels (any tab) through a BroadcastChannel.
+
+/** BroadcastChannel name for running-net changes and presence. */
+export const NET_CONTROL_CHANNEL = 'ohc-net-control';
+/** A panel that has not said hello for this long is assumed gone. */
+export const PEER_TTL_MS = 12 * 1000;
+
+/**
+ * Should `record` (a stored/received running-net record) replace `local`?
+ * Returns { net, changed }. Higher rev wins; a tombstone closes the matching
+ * net; anything older or unrelated leaves `local` alone.
+ */
+export function pickNewer(local, record) {
+  const localRev = local?.rev ?? 0;
+  if (isTombstone(record)) {
+    if (local && record.closedId === local.id && (record.rev ?? 0) >= localRev) return { net: null, changed: true };
+    return { net: local, changed: false };
+  }
+  if (isLiveNet(record) && (!local || (record.rev ?? 0) > localRev))
+    return { net: normalizeNet(record), changed: true };
+  return { net: local, changed: false };
+}
+
+/**
+ * Write `next` (null = the net was closed) as the successor of `base`.
+ * Refused when the stored state moved on since `base` was read (another tab
+ * or panel wrote first): returns { net: <the newer state>, conflict: true }
+ * and writes nothing. Otherwise returns { net: <next with its new rev>,
+ * conflict: false }.
+ */
+export function commitRunningNet(base, next, now = Date.now()) {
+  const stored = readRunningNetRecord();
+  const storedRev = stored?.rev ?? 0;
+  const baseRev = base?.rev ?? 0;
+  const conflict = base
+    ? storedRev > baseRev && (isLiveNet(stored) || stored?.closedId === base.id)
+    : isLiveNet(stored) && stored.id !== next?.id;
+  if (conflict) return { net: pickNewer(base, stored).net, conflict: true };
+  const rev = Math.max(storedRev, baseRev) + 1;
+  if (next == null) {
+    writeJson(NET_CONTROL_KEY, { closedId: base?.id || '', rev, updatedAt: now });
+    return { net: null, conflict: false };
+  }
+  const out = { ...next, rev, updatedAt: now };
+  writeJson(NET_CONTROL_KEY, out);
+  return { net: out, conflict: false };
+}
+
+/** Number of other Net Control panels heard from within PEER_TTL_MS ({ id: lastSeenMs }). */
+export function livePeerCount(peers, now = Date.now()) {
+  return Object.values(peers || {}).filter((ts) => now - ts < PEER_TTL_MS).length;
+}
+
+// ── Shared-incident adapters ────────────────────────────────────────────────
+//
+// For syncing the running net beyond this browser (a server-side shared
+// incident). serializeNetState() produces a plain JSON document without the
+// local undo stack; applyRemoteNetState() folds a received one into the local
+// net with the same revision rules the tabs use. The transport is not here.
+
+export const NET_STATE_VERSION = 1;
+
+/** Plain JSON for the running net (or a closed-net tombstone, or null = no net). */
+export function serializeNetState(netOrRecord, now = Date.now()) {
+  if (isTombstone(netOrRecord)) {
+    return {
+      v: NET_STATE_VERSION,
+      kind: 'net-control',
+      net: null,
+      closedId: netOrRecord.closedId,
+      rev: netOrRecord.rev ?? 0,
+      updatedAt: netOrRecord.updatedAt ?? now,
+    };
+  }
+  if (!isLiveNet(netOrRecord))
+    return { v: NET_STATE_VERSION, kind: 'net-control', net: null, closedId: null, rev: 0, updatedAt: now };
+  const { undo: _undo, ...net } = netOrRecord;
+  return {
+    v: NET_STATE_VERSION,
+    kind: 'net-control',
+    net,
+    closedId: null,
+    rev: net.rev ?? 0,
+    updatedAt: net.updatedAt ?? now,
+  };
+}
+
+/**
+ * Apply a serialized state from elsewhere. Returns { net, changed }. The
+ * local undo stack is kept only when the remote state is the same net at the
+ * same revision; a newer remote state starts with an empty undo stack (this
+ * operator cannot undo someone else's entries).
+ */
+export function applyRemoteNetState(local, remote) {
+  if (!remote || remote.kind !== 'net-control' || remote.v !== NET_STATE_VERSION) return { net: local, changed: false };
+  const record = remote.net
+    ? { ...remote.net, rev: remote.rev, undo: [] }
+    : remote.closedId
+      ? { closedId: remote.closedId, rev: remote.rev }
+      : null;
+  return pickNewer(local, record);
+}
 
 /** Past nets, newest first. */
 export function loadHistory() {
@@ -648,14 +1059,37 @@ export function pushHistory(list, net) {
   return [rest, ...(list || []).filter((n) => n.id !== rest.id)].slice(0, MAX_HISTORY);
 }
 
-export function loadScript() {
-  const s = readJson(NET_CONTROL_SCRIPT_KEY, null);
-  return {
-    preamble: typeof s?.preamble === 'string' ? s.preamble : DEFAULT_PREAMBLE,
-    closing: typeof s?.closing === 'string' ? s.closing : DEFAULT_CLOSING,
-  };
+/**
+ * Script templates: { templates: [{ id, name, preamble, closing, builtin? }],
+ * lastId }. First load seeds the built-ins; a single script saved by the
+ * first release (NET_CONTROL_SCRIPT_KEY) that differs from the default is
+ * carried over as "My net script".
+ */
+export function loadScriptTemplates() {
+  const stored = readJson(NET_CONTROL_SCRIPTS_KEY, null);
+  const list = Array.isArray(stored?.templates) ? stored.templates.map(cleanTemplate).filter(Boolean) : [];
+  if (list.length) return { templates: list, lastId: getTemplate(list, stored.lastId).id };
+  const templates = BUILTIN_TEMPLATES.map((t) => ({ ...t }));
+  const old = readJson(NET_CONTROL_SCRIPT_KEY, null);
+  if (old && (old.preamble !== DEFAULT_PREAMBLE || old.closing !== DEFAULT_CLOSING)) {
+    const mine = {
+      id: newId('tpl'),
+      name: 'My net script',
+      preamble: typeof old.preamble === 'string' ? old.preamble : DEFAULT_PREAMBLE,
+      closing: typeof old.closing === 'string' ? old.closing : DEFAULT_CLOSING,
+    };
+    return { templates: [mine, ...templates], lastId: mine.id };
+  }
+  return { templates, lastId: templates[0].id };
 }
-export const saveScript = (script) => writeJson(NET_CONTROL_SCRIPT_KEY, script);
+export const saveScriptTemplates = (state) => writeJson(NET_CONTROL_SCRIPTS_KEY, state);
+
+/** Preamble/closing of the last-used template (kept for callers of the single-script API). */
+export function loadScript() {
+  const { templates, lastId } = loadScriptTemplates();
+  const t = getTemplate(templates, lastId);
+  return { preamble: t.preamble, closing: t.closing };
+}
 
 /** callsign → { name, location, ts } remembered from previous nets. */
 export function loadStationCache() {
@@ -695,6 +1129,8 @@ export function saveRosterSnapshot(net, { active = false, now = Date.now() } = {
     net: net?.name || '',
     ncs: net?.ncs || '',
     frequency: net?.frequency || '',
+    freqMhz: net?.freqMhz ?? null,
+    mode: net?.mode || '',
     startTime: net?.startTime ?? null,
     endTime: net?.endTime ?? null,
     roster: toRosterEntries(net),
@@ -733,4 +1169,55 @@ export function mergeRosters(aprsRoster, snapshot, now = Date.now()) {
       return { ...op, age, stale: false };
     });
   return extra.length ? [...base, ...extra] : base;
+}
+
+// ── Frequency text ──────────────────────────────────────────────────────────
+
+/** Standard repeater offsets (MHz) by band, used when the text gives only "+" or "−". */
+const BAND_OFFSETS = [
+  [144, 148, 0.6],
+  [222, 225, 1.6],
+  [420, 450, 5],
+  [902, 928, 12],
+];
+
+const MODE_RE = /\b(NFM|FM|DMR|D-?STAR|YSF|C4FM|FUSION|P25|NXDN|M17|USB|LSB|SSB|AM|CW)\b/i;
+
+/**
+ * Read a free-text frequency/repeater description as typed when starting a
+ * net ("146.940 − PL 100.0", "442.150 +5 T 123.0 FM", "3.873 LSB").
+ * Returns { mhz, txMhz, tone, mode } — txMhz is the transmit frequency
+ * (output + offset; null when an offset direction is given without a known
+ * standard offset) — or null when no frequency is found.
+ */
+export function parseNetFrequency(text) {
+  const s = String(text || '').replace(/[−–—]/g, '-');
+  const m = /(\d{1,4}\.\d{1,6})/.exec(s);
+  if (!m) return null;
+  const mhz = Number(m[1]);
+  if (!Number.isFinite(mhz) || mhz <= 0) return null;
+  const rest = s.slice(m.index + m[0].length);
+  let txMhz = mhz;
+  const explicit = /^\s*(?:MHz)?\s*([+-])\s*(\d+(?:\.\d+)?)\s*(MHz|kHz)?/i.exec(rest);
+  const signOnly = /^\s*(?:MHz)?\s*([+-])(?=\s|$|[A-Za-z])/i.exec(rest);
+  if (explicit) {
+    let off = Number(explicit[2]);
+    if (/khz/i.test(explicit[3] || '') || off >= 100) off /= 1000;
+    txMhz = mhz + (explicit[1] === '-' ? -off : off);
+  } else if (signOnly) {
+    const band = BAND_OFFSETS.find(([lo, hi]) => mhz >= lo && mhz <= hi);
+    txMhz = band ? mhz + (signOnly[1] === '-' ? -band[2] : band[2]) : null;
+  }
+  if (txMhz != null) txMhz = Math.round(txMhz * 1e6) / 1e6;
+  const toneM =
+    /\b(?:PL|CTCSS|TONE|TSQ|T)\s*:?\s*(\d{2,3}(?:\.\d)?)\b/i.exec(rest) ||
+    /\b(\d{2,3}\.\d)\s*Hz\b/i.exec(rest) ||
+    /\b(?:DCS|DPL)\s*:?\s*(\d{3})\b/i.exec(rest);
+  const modeM = MODE_RE.exec(rest);
+  return {
+    mhz,
+    txMhz,
+    tone: toneM ? toneM[1] : '',
+    mode: modeM ? modeM[1].toUpperCase() : '',
+  };
 }

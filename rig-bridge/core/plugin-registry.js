@@ -79,6 +79,7 @@ class PluginRegistry {
       'rotator',
       'cloud-relay',
       'kiwi-beacon-monitor',
+      'kiwi-audio',
       'gps',
       'env-sensors',
       'gpio',

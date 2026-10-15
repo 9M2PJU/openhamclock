@@ -398,7 +398,39 @@ export function eventForPush(ev) {
     details: ev.details || '',
   };
   if (ev.dedupeKey != null) out.dedupeKey = ev.dedupeKey;
+  if (ev.ref != null) out.ref = ev.ref; // net_withdrawn → the entry it withdraws
+  if (ev.msgNo != null) out.msgNo = ev.msgNo; // this station's own message number
   return out;
+}
+
+/**
+ * Message numbers on a shared log. Each station numbers its own message
+ * traffic (see emcommEventLog), so two sites both have a message 12. In the
+ * shared log every event keeps its own number and its site:
+ *
+ *   - this station's events (ids also in its local log) are `own` and keep
+ *     their numbers as they are — the ICS 309 is this station's log;
+ *   - another site's events are marked `foreign`, are never numbered as ours,
+ *     and carry `msgLabel` = "SITE:n" (or "n" without a site) for display.
+ *
+ * @param {Array} events     the shared log
+ * @param {Set|Array} ownIds ids of this browser's own event-log entries
+ */
+export function annotateSharedEvents(events, ownIds) {
+  const own = ownIds instanceof Set ? ownIds : new Set(ownIds || []);
+  return (events || []).map((ev) => {
+    if (own.has(ev.id)) return ev.foreign ? { ...ev, foreign: false, msgLabel: undefined } : ev;
+    const n = Number(ev.msgNo);
+    const label = Number.isInteger(n) && n > 0 ? (ev.site ? `${ev.site}:${n}` : String(n)) : '';
+    return { ...ev, foreign: true, msgLabel: label };
+  });
+}
+
+/** How a message number reads in the shared Event Log: own "12", another site's "EOC:12". */
+export function sharedMsgLabel(ev) {
+  if (ev?.foreign) return ev.msgLabel || '';
+  const n = Number(ev?.msgNo);
+  return Number.isInteger(n) && n > 0 ? String(n) : '';
 }
 
 // ─── Outbox (offline buffer) ────────────────────────────────────────────────

@@ -15,6 +15,21 @@ import { esc } from './escapeHtml.js';
 
 export const STORAGE_KEY = 'openhamclock_emcommEventLog';
 export const MAX_EVENTS = 2000;
+/** Last message number handed out (persisted so numbers survive reloads). */
+export const MSG_SEQ_KEY = 'openhamclock_emcommMsgSeq';
+
+/**
+ * Event types that are message traffic and get a station message number at
+ * record time (shown in the ICS 309 Msg # columns). Alerts, first-heard
+ * stations and reports are logged but not numbered.
+ */
+export const MESSAGE_EVENT_TYPES = new Set([
+  'aprs_msg_sent',
+  'aprs_msg_rx',
+  'ics213_sent',
+  'net_checkin',
+  'net_checkout',
+]);
 
 /** Human-readable labels + colors per event type (used by UI + print export) */
 export const EVENT_TYPE_META = {
@@ -23,6 +38,10 @@ export const EVENT_TYPE_META = {
   net_open: { label: 'Net Opened', color: '#14b8a6' },
   net_close: { label: 'Net Closed', color: '#14b8a6' },
   net_traffic: { label: 'Traffic Passed', color: '#ef4444' },
+  // Compensating entry written when Net Control's Undo reverses something
+  // already logged. `ref` names the event it withdraws (withdrawing a
+  // withdrawal reinstates the original). Never a form row of its own.
+  net_withdrawn: { label: 'Net Entry Withdrawn', color: '#6b7280', internal: true },
   aprs_msg_sent: { label: 'APRS Msg Sent', color: '#22d3ee' },
   aprs_msg_rx: { label: 'APRS Msg Rcvd', color: '#3b82f6' },
   nws_alert: { label: 'NWS Alert', color: '#dc2626' },
@@ -39,6 +58,7 @@ let events = null; // lazy-loaded array, oldest first
 let dedupeIndex = null; // Set of `${type}:${dedupeKey}`
 const listeners = new Set();
 let idCounter = 0;
+let msgSeq = null; // last message number handed out (lazy-loaded)
 
 function safeStorage() {
   try {
@@ -97,6 +117,58 @@ function notify() {
   }
 }
 
+/**
+ * Message number for every message-type event, keyed by event id.
+ *
+ * Events recorded since numbering was introduced carry `msgNo`. Older events
+ * (and any whose number was lost) get one derived here: walking the log in
+ * time order, a missing number is the previous number + 1. Because the
+ * persisted sequence is seeded from this same walk, derived numbers never
+ * collide with ones handed out later.
+ *
+ * Events another site logged in a shared incident (`foreign: true`, see
+ * annotateSharedEvents in incidentSync.js) carry that station's own numbers
+ * and are left out: they are never numbered as this station's traffic.
+ * @returns {Map<string, number>}
+ */
+export function messageNumbers(evts) {
+  const out = new Map();
+  let last = 0;
+  const ordered = (evts || []).filter((ev) => ev && !ev.foreign && MESSAGE_EVENT_TYPES.has(ev.type));
+  ordered.sort((a, b) => (a.ts || 0) - (b.ts || 0));
+  for (const ev of ordered) {
+    const n = Number(ev.msgNo);
+    const no = Number.isInteger(n) && n > 0 ? n : last + 1;
+    out.set(ev.id, no);
+    last = Math.max(last, no);
+  }
+  return out;
+}
+
+function nextMsgNo() {
+  if (msgSeq == null) {
+    let stored = NaN;
+    const ls = safeStorage();
+    try {
+      stored = Number(ls?.getItem(MSG_SEQ_KEY));
+    } catch {
+      /* unreadable — derive below */
+    }
+    // Seed from the log so legacy (unnumbered) events keep their derived numbers
+    let derivedMax = 0;
+    for (const n of messageNumbers(events).values()) derivedMax = Math.max(derivedMax, n);
+    msgSeq = Math.max(Number.isFinite(stored) ? stored : 0, derivedMax);
+  }
+  msgSeq += 1;
+  const ls = safeStorage();
+  try {
+    ls?.setItem(MSG_SEQ_KEY, String(msgSeq));
+  } catch {
+    /* number still unique for this session */
+  }
+  return msgSeq;
+}
+
 /** Return a copy of all events, oldest first. */
 export function getEvents() {
   return load().slice();
@@ -105,15 +177,16 @@ export function getEvents() {
 /**
  * Record an event.
  * @param {string} type - one of EVENT_TYPE_META keys
- * @param {object} data - { callsign, summary, details, ts, dedupeKey }
+ * @param {object} data - { callsign, summary, details, ts, dedupeKey, ref }
  *   ts: optional epoch ms override (defaults to now)
+ *   ref: optional id of another event this one refers to (net_withdrawn)
  *   dedupeKey: optional — if an event with the same type+dedupeKey already
  *   exists in the log, recording is skipped (returns null).
  * @returns {object|null} the stored event, or null when deduped
  */
 export function recordEvent(type, data = {}) {
   load();
-  const { callsign = '', summary = '', details = '', ts, dedupeKey } = data;
+  const { callsign = '', summary = '', details = '', ts, dedupeKey, ref } = data;
   if (dedupeKey != null) {
     const key = `${type}:${dedupeKey}`;
     if (dedupeIndex.has(key)) return null;
@@ -131,6 +204,8 @@ export function recordEvent(type, data = {}) {
     summary: String(summary || ''),
     details: String(details || ''),
     ...(dedupeKey != null ? { dedupeKey: String(dedupeKey) } : {}),
+    ...(MESSAGE_EVENT_TYPES.has(type) ? { msgNo: nextMsgNo() } : {}),
+    ...(ref != null ? { ref: String(ref) } : {}),
   };
   events.push(ev);
   if (events.length > MAX_EVENTS) events.splice(0, events.length - MAX_EVENTS);
@@ -144,6 +219,13 @@ export function clearEvents() {
   load();
   events = [];
   dedupeIndex = new Set();
+  // A cleared log starts a new operation — message numbers restart at 1
+  msgSeq = 0;
+  try {
+    safeStorage()?.setItem(MSG_SEQ_KEY, '0');
+  } catch {
+    /* ignore */
+  }
   persist();
   notify();
 }
@@ -157,10 +239,64 @@ export function subscribeEvents(fn) {
   return () => listeners.delete(fn);
 }
 
+/**
+ * Another tab wrote the log: drop the in-memory copy so the next read (and
+ * the next recordEvent) starts from what is stored, instead of this tab
+ * overwriting the other tab's entries with its older array.
+ */
+export function reloadFromStorage() {
+  events = null;
+  dedupeIndex = null;
+  msgSeq = null; // re-seed from MSG_SEQ_KEY, which the other tab advanced
+  notify();
+}
+
+if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+  window.addEventListener('storage', (e) => {
+    if (e.key === STORAGE_KEY || e.key === null) reloadFromStorage();
+  });
+}
+
+// ── Withdrawn entries ───────────────────────────────────────────────────────
+/**
+ * Ids of events that have been withdrawn by a net_withdrawn entry. Entries
+ * are applied in log order; withdrawing a withdrawal reinstates its target.
+ */
+export function withdrawnEventIds(evts) {
+  const byId = new Map((evts || []).map((ev) => [ev.id, ev]));
+  const out = new Set();
+  for (const ev of (evts || []).slice().sort((a, b) => a.ts - b.ts)) {
+    if (ev.type !== 'net_withdrawn' || !ev.ref) continue;
+    const target = byId.get(ev.ref);
+    if (target?.type === 'net_withdrawn') {
+      if (target.ref) out.delete(target.ref);
+    } else {
+      out.add(ev.ref);
+    }
+  }
+  return out;
+}
+
+/**
+ * The log without withdrawn entries and without the withdrawal records — what
+ * forms should use.
+ *
+ * Message numbers: net_withdrawn is not a message type, so a withdrawal record
+ * never takes a number. A withdrawn check-in keeps the number it was given —
+ * it is skipped on the ICS 309, leaving a gap, but later numbers do not shift
+ * (numbers already read out on the air or written down stay valid). Number
+ * the rows with messageNumbers() over the full log, not over activeEvents().
+ */
+export function activeEvents(evts) {
+  const gone = withdrawnEventIds(evts);
+  return (evts || []).filter((ev) => ev.type !== 'net_withdrawn' && !gone.has(ev.id));
+}
+
 /** Reset in-memory state (test helper — forces reload from localStorage). */
 export function _resetForTests() {
   events = null;
   dedupeIndex = null;
+  msgSeq = null;
   listeners.clear();
 }
 

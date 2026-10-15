@@ -40,6 +40,7 @@ export { ImagePanel } from './ImagePanel.jsx';
 export { default as RotatorPanel } from './RotatorPanel.jsx';
 export { DXLocalTime } from './DXLocalTime.jsx';
 export { default as DigitalModesPanel } from './DigitalModesPanel.jsx';
+export { default as DecoderPanel } from './DecoderPanel.jsx';
 export { default as WinlinkPanel } from './WinlinkPanel.jsx';
 export { default as IBPPanel } from './IBPPanel.jsx';
 export { default as SWPCAlertsPanel } from './SWPCAlertsPanel.jsx';

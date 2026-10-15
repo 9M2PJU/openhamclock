@@ -105,6 +105,8 @@ const EVENT_TYPES = new Set([
   'net_open',
   'net_close',
   'net_traffic',
+  // Net Control's Undo: withdraws the event named by `ref` (kept below)
+  'net_withdrawn',
   'ics213_sent',
   'aprs_msg_sent',
   'aprs_msg_rx',
@@ -201,6 +203,11 @@ function sanitiseEvent(raw, now) {
     site: cleanStr(raw.site, 40),
   };
   if (raw.dedupeKey != null && raw.dedupeKey !== '') ev.dedupeKey = cleanStr(raw.dedupeKey, 120);
+  if (raw.ref != null && raw.ref !== '') ev.ref = cleanStr(raw.ref, ID_MAX);
+  // The originating station's own message number. Numbers are per station,
+  // so they are kept as sent and read together with `site` (see docs/API.md).
+  const msgNo = Number(raw.msgNo);
+  if (Number.isInteger(msgNo) && msgNo > 0 && msgNo < 1e7) ev.msgNo = msgNo;
   return ev;
 }
 

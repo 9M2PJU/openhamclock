@@ -37,6 +37,7 @@ import {
   KeybindingsPanel,
   DXLocalTime,
   DigitalModesPanel,
+  DecoderPanel,
   WinlinkPanel,
   WorldClockPanel,
   StopwatchPanel,
@@ -1493,7 +1494,7 @@ export const DockableApp = ({
           break;
 
         case 'net-control':
-          content = <NetControlPanel callsign={config.callsign} />;
+          content = <NetControlPanel callsign={config.callsign} timeZone={config.timezone} />;
           break;
 
         case 'callsign-search':
@@ -1589,6 +1590,17 @@ export const DockableApp = ({
 
         case 'digital-modes':
           content = <DigitalModesPanel />;
+          break;
+
+        case 'decoder':
+          content = (
+            <DecoderPanel
+              onSetDX={handleDXChange}
+              dxLocked={dxLocked}
+              onSpotClick={handleSpotClick}
+              apiToken={config.rigControl?.apiToken || ''}
+            />
+          );
           break;
 
         case 'winlink':
