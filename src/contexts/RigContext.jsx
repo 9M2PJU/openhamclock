@@ -623,6 +623,8 @@ export const RigProvider = ({ children, rigConfig }) => {
     // between direct rig-bridge requests and OHC server proxying.
     rigUrl,
     isCloudRelay,
+    // Relay session — hooks that send their own relay commands (useFldigi) use it
+    cloudRelaySession,
     setFreq,
     setMode,
     setPTT,
