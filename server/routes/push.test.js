@@ -60,6 +60,25 @@ async function callRoute(app, method, p, body) {
   return res;
 }
 
+/**
+ * Stand-in for the server's own Blitzortung feed (never opens a socket).
+ * By default every reported strike counts as seen; `seen(null)` makes reports
+ * unverifiable, `seen({ lat, lon, timestamp })` returns that strike instead.
+ */
+function makeFeedMock() {
+  let answer = 'echo';
+  return {
+    setWatchAreas: vi.fn(),
+    setActive: vi.fn(),
+    verify: vi.fn(async (report) => (answer === 'echo' ? report : answer)),
+    seen(v) {
+      answer = v;
+    },
+  };
+}
+
+let feedMock;
+
 function makeCtx(webpushMock) {
   return {
     ROOT_DIR: os.tmpdir(),
@@ -67,6 +86,7 @@ function makeCtx(webpushMock) {
     logWarn: () => {},
     logDebug: () => {},
     _webpush: webpushMock,
+    _lightningFeed: feedMock,
     // NOTE: no refreshSwpcAlerts / onSwpcAlertsRefreshed — keeps the module
     // from creating timers during tests; the trigger is exercised directly
     // via the returned _handleSwpcAlerts.
@@ -110,6 +130,7 @@ const ENV_KEYS = [
 const savedEnv = {};
 
 beforeEach(() => {
+  feedMock = makeFeedMock();
   for (const k of ENV_KEYS) {
     savedEnv[k] = process.env[k];
     delete process.env[k];
@@ -486,5 +507,56 @@ describe('lightning guard push', () => {
     });
     const again = await callRoute(app, 'POST', '/api/push/lightning', { level: 'alarm', distanceKm: 8 });
     expect(again.body.skipped).toBe(true);
+  });
+
+  describe("verification against the server's own feed", () => {
+    it('runs the feed only while some subscription has opted in, watching those areas', async () => {
+      const { app } = await setup();
+      expect(feedMock.setActive).toHaveBeenLastCalledWith(false);
+      await optIn(app, 1, HOME);
+      expect(feedMock.setActive).toHaveBeenLastCalledWith(true);
+      expect(feedMock.setWatchAreas).toHaveBeenLastCalledWith([{ lat: 40, lon: -105, radiusKm: 50 }]);
+      await callRoute(app, 'POST', '/api/push/lightning/prefs', { endpoint: makeSub(1).endpoint, lightning: null });
+      expect(feedMock.setActive).toHaveBeenLastCalledWith(false);
+      await optIn(app, 2, HOME);
+      await callRoute(app, 'POST', '/api/push/unsubscribe', { endpoint: makeSub(2).endpoint });
+      expect(feedMock.setActive).toHaveBeenLastCalledWith(false);
+    });
+
+    it('an unverifiable (fake) report reaches the sender only', async () => {
+      const { app, webpushMock } = await setup();
+      await optIn(app, 1, HOME);
+      await optIn(app, 2, HOME); // neighbour who would otherwise be warned
+      feedMock.seen(null);
+      const res = await callRoute(app, 'POST', '/api/push/lightning', {
+        endpoint: makeSub(1).endpoint,
+        level: 'alarm',
+        strike: strikeNear(HOME, 10),
+      });
+      expect(res.body).toMatchObject({ mode: 'self-unverified', sent: 1 });
+      expect(webpushMock.sendNotification.mock.calls.map(([s]) => s.endpoint)).toEqual([makeSub(1).endpoint]);
+    });
+
+    it('targets from the strike as the server saw it, not as reported', async () => {
+      const { app, webpushMock } = await setup();
+      await optIn(app, 1, HOME);
+      await optIn(app, 2, FAR);
+      // Reported 10 km from HOME, but the matching strike the server saw is near FAR
+      feedMock.seen({ ...strikeNear(FAR, 5), timestamp: Date.now() });
+      const res = await callRoute(app, 'POST', '/api/push/lightning', {
+        endpoint: makeSub(1).endpoint,
+        level: 'alarm',
+        strike: strikeNear(HOME, 10),
+      });
+      expect(res.body).toMatchObject({ mode: 'targeted', verified: true, inRange: 1 });
+      expect(webpushMock.sendNotification.mock.calls.map(([s]) => s.endpoint)).toEqual([makeSub(2).endpoint]);
+    });
+
+    it('the broadcast override needs no feed', async () => {
+      process.env.PUSH_LIGHTNING_BROADCAST = 'true';
+      const { app } = await setup();
+      await optIn(app, 1, HOME);
+      expect(feedMock.setActive).toHaveBeenLastCalledWith(false);
+    });
   });
 });
