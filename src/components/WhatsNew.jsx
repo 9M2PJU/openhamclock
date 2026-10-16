@@ -201,13 +201,31 @@ const CHANGELOG = [
       },
       {
         icon: '🩹',
-        title: 'FIX: APRS Sending, Sharp APRS on the Globe, Two Crashes, Update Ready, Microphone',
-        desc: 'APRS messages go straight to the Rig Bridge set in Settings, so a bridge on another port or computer transmits; before, the server always looked on its own port 5555, and a message that never went out was still logged as sent and the box closed. Now a failed message stays in the box with the reason (#1243). Every MSG button opens the message box in view with the cursor in it (#1242). Pick which panels the sidebar shows, or switch the whole sidebar between sets of them: All, Net control, Shelters & resources, or your own saved sets (Panels → Choose, #1241). APRS stations on the 3D globe are now drawn as their own sharp, outlined dots with crisp callsign tags and a hover tooltip, at any zoom; they used to be painted into the world-wide overlay image of the globe and turned into blurry squares when you zoomed in (#1234, KE8PLM). The Propagation panel could take the whole dashboard down with React error #310 when its data finished loading, and switching to the azimuthal view always failed and quietly fell back to the flat map; both are fixed. A first visit gets one prompt instead of a stack. Live streams no longer hold up Update ready → Reload in Chrome. The server had blocked the microphone for every page; OpenHamClock itself may now use it (the Decoder needs it), embedded frames still may not.',
+        title: 'FIX: Sharp APRS on the Globe, Two Crashes, Update Ready, Microphone',
+        desc: 'Pick which panels the sidebar shows, or switch the whole sidebar between sets of them: All, Net control, Shelters & resources, or your own saved sets (Panels → Choose, #1241). APRS stations on the 3D globe are now drawn as their own sharp, outlined dots with crisp callsign tags and a hover tooltip, at any zoom; they used to be painted into the world-wide overlay image of the globe and turned into blurry squares when you zoomed in (#1234, KE8PLM). The Propagation panel could take the whole dashboard down with React error #310 when its data finished loading, and switching to the azimuthal view always failed and quietly fell back to the flat map; both are fixed. A first visit gets one prompt instead of a stack. Live streams no longer hold up Update ready → Reload in Chrome. The server had blocked the microphone for every page; OpenHamClock itself may now use it (the Decoder needs it), embedded frames still may not.',
       },
       {
         icon: '📚',
         title: 'Manual and API Docs',
         desc: 'Every item above has a section in the built-in manual and, where it adds endpoints, in API.md — including the full remote-control command table.',
+      },
+    ],
+  },
+  {
+    version: '26.10.5',
+    date: '2026-10-16',
+    heading:
+      'Hotfix: APRS messages sent from OpenHamClock now reach the Rig Bridge you set up. Before, they only went out if that Rig Bridge was on the same computer as the OpenHamClock server, at port 5555, and a message that never left was still shown as sent. Also: cleaner shelter beacons.',
+    features: [
+      {
+        icon: '📨',
+        title: 'FIX: APRS Messages Go Out Through Your Rig Bridge',
+        desc: 'The MSG box in the EmComm layout handed each message to the OpenHamClock server, which always looked for Rig Bridge on its own computer at port 5555. A Rig Bridge on another port or another computer (a Pi next to the radio, say) never got the message, while incoming APRS kept working, because your browser reads Rig Bridge directly. Messages now go straight to the Rig Bridge set in Settings → Rig Bridge (through the server only over Cloud Relay or with rig control off). A message that does not go out now stays in the box with the reason, such as "TNC not connected", instead of being logged as sent. And every MSG button opens the box in view at the bottom of the sidebar with the cursor in it (#1242). Reported by Michael, KE8PLM (#1243).',
+      },
+      {
+        icon: '🏠',
+        title: 'FIX: Altitude No Longer Shows in Shelter Reports',
+        desc: 'A shelter beacon from the aprs.fi app that included altitude showed as "/A=000921OPEN": the altitude was read but left in the text. Altitude and course/speed are position data and now come out of the comment once read, so the report shows OPEN with its Beds and Water badges. Reported by Michael, KE8PLM (#1235).',
       },
     ],
   },
