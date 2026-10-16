@@ -402,7 +402,12 @@ common ancestor, using Net Control's `rebaseCheck`:
   other site's state as its parent. Its stations are listed newest check-in
   first, then by callsign, so every site holds the same net at once.
 - If the same station line or field was changed at both sites, both sites
-  keep the later change: the later commit time, with the tag as a tie-break.
+  keep the change the server received later. Each accepted net state's
+  `docRev` is its server sequence; a site compares the remote state's
+  `docRev` with its own state's (from the sync response `docRevs` or the
+  echo). A state the server has not recorded yet will arrive later. Clocks
+  don't matter. Commit time, then tag, decides only for states without a
+  server sequence.
   - The earlier site takes the later version. Net Control shows which call
     changed, and at which site. The earlier site's own version is kept in
     the browser (`openhamclock_netControlConflicts`) and shown as a
@@ -432,9 +437,14 @@ drafts.
 - `docRevs` gives each accepted document's new revision.
 - To put the refused copy back anyway, send it again with
   `baseRev: current.docRev`.
-- A write without `baseRev` is applied unconditionally. Net Control's net
-  documents are sent that way, because the running net reconciles through
-  its own merge.
+- A write without `baseRev` is applied unconditionally. The running net
+  (`net-running`) is sent that way, because it reconciles through its own
+  merge.
+- Net history (`net-history`) is conditional too. A refused history write
+  happens when two sites close a net at once. It is not shown to anyone: the
+  client merges the two lists by net id against the copy it was based on and
+  sends the merge on top. Merging keeps the other site's nets, adds its own,
+  and keeps its own deletions.
 
 **Withdrawals.** A `net_withdrawn` event names the entry it withdraws in
 `ref`. Clients hide withdrawn entries from the merged log, so a withdrawal
