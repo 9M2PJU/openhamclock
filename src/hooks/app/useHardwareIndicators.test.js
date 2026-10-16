@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildIndicatorPayload, deriveSatIndicators } from './useHardwareIndicators.js';
+import { buildIndicatorPayload, deriveSatIndicators, getDisplayId } from './useHardwareIndicators.js';
 
 const now = 1_000_000_000_000;
 
@@ -45,8 +45,35 @@ describe('buildIndicatorPayload', () => {
       lightning: 'alarm',
       lightningRelay: true,
     });
+    // With a display id, all-clear time and a manual override
+    expect(
+      buildIndicatorPayload(sat, 'off', { level: 'warn', relay: false, allClearMin: 20, override: 'off' }, 'abc12345'),
+    ).toMatchObject({
+      lightningRelay: false,
+      lightningAllClearMin: 20,
+      lightningOverride: 'off',
+      displayId: 'abc12345',
+    });
+    expect(buildIndicatorPayload(sat, 'off', { level: 'warn', relay: false, override: 'auto' })).not.toHaveProperty(
+      'lightningOverride',
+    );
+    // Guard settings + location for the bridge's headless guard ride along
+    const guard = { lat: 45, lon: 7, warnKm: 50, alarmKm: 25, allClearMin: 30, relayOn: 'alarm' };
+    expect(buildIndicatorPayload(sat, 'off', { level: 'clear', relay: false, guard }).lightningGuard).toEqual(guard);
+    expect(buildIndicatorPayload(sat, 'off', { level: 'clear', relay: null, guard })).not.toHaveProperty(
+      'lightningGuard',
+    );
     // Relay switched off here: one explicit release, without a level
     expect(buildIndicatorPayload(sat, 'off', { level: 'off', relay: false })).toMatchObject({ lightningRelay: false });
     expect(buildIndicatorPayload(sat, 'off', { level: 'off', relay: false })).not.toHaveProperty('lightning');
+  });
+});
+
+describe('getDisplayId', () => {
+  it('is stable per browser', () => {
+    localStorage.removeItem('ohc_display_id');
+    const a = getDisplayId();
+    expect(a).toMatch(/^[a-z0-9]{8,24}$/);
+    expect(getDisplayId()).toBe(a);
   });
 });

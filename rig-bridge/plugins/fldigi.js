@@ -18,14 +18,19 @@
  *   • reconnect: when a call fails the plugin marks fldigi disconnected and
  *     retries with backoff (2 s → 30 s) until it answers again.
  *
- * flmsg side — watches the NBEMS receive folders (default
- * ~/NBEMS.files/ICS/messages and ~/NBEMS.files/WRAP/recv) for form files,
- * parses ICS-213, radiograms and other flmsg forms (lib/flmsg-format), and
- * POSTs them to the OpenHamClock server's /api/emcomm/field-reports, where
- * they appear in the EmComm layout's Field Reports panel (and on the map when
- * the form carries a position). "Send ICS-213" builds an flmsg ICS-213 file,
- * wraps it in the [WRAP:...] envelope with its CRC-16, and transmits it
- * through fldigi like any other text.
+ * flmsg side — watches the NBEMS folders (default ~/NBEMS.files/WRAP/recv,
+ * where fldigi saves every transfer it decodes, and ~/NBEMS.files/ICS/messages,
+ * where flmsg saves forms). Forms are parsed with lib/flmsg-format (including
+ * flmsg's LZMA-compressed transfers) and classified by lib/flmsg-watcher:
+ * received traffic is POSTed to the OpenHamClock server's
+ * /api/emcomm/field-reports and appears in the EmComm Field Reports panel
+ * (and on the map when the text carries a position); the station's own
+ * drafts and sent forms are kept out unless flmsgIncludeLocal is on.
+ * "Send ICS-213" writes the form exactly as flmsg does (plain ASCII), wraps it
+ * with flmsg's checksum and transmits it through fldigi.
+ *
+ * Cloud relay: plugins/cloud-relay.js carries the browser events below and
+ * the send / mode / abort / send-ics213 commands for hosted servers.
  *
  * Browser events (pluginBus → rig-bridge.js → SSE /stream):
  *   'fldigi'       status object (connected, freq, mode, trx, tx queue, ...)
@@ -44,6 +49,9 @@
  *                               a string may list several separated by ';' or newlines)
  *   flmsgPollInterval  number   seconds between folder scans (default 15)
  *   flmsgMaxAgeHours   number   on start-up, ignore forms older than this (default 72)
+ *   flmsgIncludeLocal  boolean  also forward drafts / sent forms from ICS/messages (default false)
+ *   flmsgDateFormat    string   'auto' | 'mdy' | 'dmy' | 'ymd' | 'ydm' — how ambiguous form
+ *                               dates are read; auto = flmsg's own setting, else system locale
  *   serverForward      boolean  POST forms to the OpenHamClock server (default true)
  *   ohcUrl             string   OpenHamClock server URL (default 'http://localhost:3000')
  *   verbose            boolean
@@ -63,8 +71,11 @@ const https = require('https');
 const { URL } = require('url');
 const { StringDecoder } = require('string_decoder');
 const { createXmlRpcClient } = require('../lib/xmlrpc-client');
-const { buildIcs213, wrapFlmsg, flmsgStamp } = require('../lib/flmsg-format');
-const { createFlmsgWatcher } = require('../lib/flmsg-watcher');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { buildIcs213, wrapFlmsg, asciiFold, resolveDateOrder, parseFlmsgPrefs } = require('../lib/flmsg-format');
+const { createFlmsgWatcher, defaultFlmsgDirs } = require('../lib/flmsg-watcher');
 
 let _currentInstance = null;
 
@@ -234,6 +245,8 @@ const descriptor = {
     function statusPayload() {
       return {
         connected,
+        // '' = no callsign in the plugin or in flmsg: the panel warns
+        stationCall: stationCall(),
         version,
         freq,
         mode,
@@ -370,6 +383,14 @@ const descriptor = {
         const item = txQueue.shift();
         txActive = { ...item, startedAt: Date.now(), sawTx: false };
         try {
+          // text.add_tx puts the text in fldigi's TX pane (FTextTX::add_text);
+          // get_tx_char() reads it through the control-code path, where "^r"
+          // clears the pane and returns GET_TX_CHAR_ETX, i.e. back to receive
+          // once everything before it has gone out (fldigi
+          // src/dialogs/fl_digi.cxx get_tx_char(), case 'r'). flmsg's own
+          // autosend uses text.add_tx_queu instead, whose characters bypass
+          // that path and end on queue exhaustion — "^r" would go out literally
+          // there, so we deliberately use text.add_tx.
           const body = item.text.endsWith('\n') ? item.text : `${item.text}\n`;
           await call('text.add_tx', [`${body}^r`]);
           await call('main.tx');
@@ -454,22 +475,29 @@ const descriptor = {
 
     async function sendIcs213(input = {}) {
       const form = {};
+      let folded = false;
       for (const [k, max] of Object.entries(ICS213_FIELDS)) {
         if (input[k] == null) continue;
-        const v = cleanTx(input[k]).trim();
+        const clean = cleanTx(input[k]).trim();
+        // Plain ASCII only: flmsg's checksum of other characters depends on
+        // the receiving computer (see lib/flmsg-format flmsgCrc16).
+        const v = asciiFold(clean);
+        if (v !== clean) folded = true;
         if (v.length > max) throw badRequest(`${k} exceeds ${max} characters`);
         if (v) form[k] = v;
       }
       if (!form.message && !form.subject) throw badRequest('An ICS-213 needs a subject or a message');
-      const station = String(input.callsign || cfg().callsign || '')
-        .toUpperCase()
-        .replace(/[^A-Z0-9/]/g, '');
+      const station = stationCall().replace(/[^A-Z0-9/-]/g, '');
       const now = Date.now();
       const content = buildIcs213(form, { call: station, when: now });
-      const filename = `${station.replace(/\//g, '_') || 'OHC'}-${flmsgStamp(now)}.213`;
+      const iso = new Date(now).toISOString();
+      const stamp = `${iso.slice(0, 10).replace(/-/g, '')}-${iso.slice(11, 19).replace(/:/g, '')}`;
+      const filename = `${station.replace(/\//g, '_') || 'OHC'}-${stamp}.213`;
       const wrapped = wrapFlmsg(content, filename);
-      const r = enqueue(`\n${wrapped}\n`, `ICS-213 ${filename}`);
-      return { ...r, filename, bytes: Buffer.byteLength(wrapped) };
+      // Same framing flmsg uses when it hands a transfer to fldigi
+      // (src/utils/wrap.cxx xfr_via_socket()).
+      const r = enqueue(`... start\n${wrapped}\n... end`, `ICS-213 ${filename}`);
+      return { ...r, filename, bytes: Buffer.byteLength(wrapped), folded };
     }
 
     async function setMode(name) {
@@ -548,8 +576,12 @@ const descriptor = {
     let postTimer = null;
     function queueForPost(record) {
       if (!forwardEnabled()) return;
-      const { fields, form, ...report } = record;
-      pending.push({ ...report, receivedVia: 'nbems-flmsg' });
+      const { fields, form, senders, wrapped, origin, ...report } = record;
+      pending.push({
+        ...report,
+        extra: { ...report.extra, ...(origin === 'local' || origin === 'unknown' ? { origin } : {}) },
+        receivedVia: origin === 'local' ? 'nbems-flmsg-local' : 'nbems-flmsg',
+      });
       if (!postTimer) {
         postTimer = setTimeout(() => {
           postTimer = null;
@@ -558,14 +590,72 @@ const descriptor = {
       }
     }
 
+    // Drafts and sent forms (origin 'local') stay out of Field Reports unless
+    // flmsgIncludeLocal is on; they are still listed by GET /api/fldigi/forms.
+    const includeLocal = () => cfg().flmsgIncludeLocal === true;
+
     function onForm(record, file) {
       forms.unshift({ ...record, file });
       if (forms.length > FORMS_RING_MAX) forms.length = FORMS_RING_MAX;
-      log(
-        `flmsg form: ${record.formType} from ${record.callsign || 'unknown'}${record.text ? ` — ${record.text.slice(0, 60)}` : ''}`,
+      const show = record.origin !== 'local' || includeLocal();
+      vlog(
+        `flmsg ${record.origin || 'form'}: ${record.formType} from ${record.callsign || 'unknown'}${show ? '' : ' (not forwarded)'}`,
       );
+      if (record.origin === 'unknown') {
+        log(
+          `flmsg form of unknown origin (no station callsign set): ${record.formType} sent by ${record.callsign || 'unknown'} — forwarded, tagged "origin unknown"`,
+        );
+      } else if (record.origin !== 'local') {
+        log(
+          `flmsg form received: ${record.formType} from ${record.callsign || 'unknown'}${record.text ? ` — ${record.text.slice(0, 60)}` : ''}`,
+        );
+      }
+      if (!show) return;
       if (bus) bus.emit('nbems-form', record);
       queueForPost(record);
+    }
+
+    // ── flmsg's own preferences (NBEMS.files/w1hkj.com/flmsg.prefs) ────────
+    // FLTK writes Fl_Preferences(FLMSG_dir, "w1hkj.com", "flmsg") there
+    // (src/utils/status.cxx saveLastState()); we read dtformat and mycall.
+    let prefsCache = { at: 0, value: { dtformat: null, mycall: '' }, file: null };
+    function flmsgPrefs() {
+      if (services.flmsgPrefs) return services.flmsgPrefs();
+      if (Date.now() - prefsCache.at < 60000) return prefsCache.value;
+      const dirs = splitDirs(cfg().flmsgDirs);
+      const candidates = [
+        ...(dirs.length ? dirs : defaultFlmsgDirs()).map((d) =>
+          path.resolve(d, '..', '..', 'w1hkj.com', 'flmsg.prefs'),
+        ),
+        path.join(os.homedir(), 'NBEMS.files', 'w1hkj.com', 'flmsg.prefs'),
+      ];
+      prefsCache = { at: Date.now(), value: { dtformat: null, mycall: '' }, file: null };
+      for (const file of candidates) {
+        try {
+          prefsCache.value = parseFlmsgPrefs(fs.readFileSync(file, 'utf8'));
+          prefsCache.file = file;
+          break;
+        } catch (e) {
+          // not there — try the next
+        }
+      }
+      return prefsCache.value;
+    }
+
+    /** This station's callsign: plugin setting, else flmsg's own. */
+    function stationCall() {
+      return String(cfg().callsign || flmsgPrefs().mycall || '')
+        .trim()
+        .toUpperCase();
+    }
+
+    /** How ambiguous form dates are read (setting → flmsg's dtformat → system locale). */
+    function dateOrder() {
+      return resolveDateOrder({
+        setting: cfg().flmsgDateFormat || 'auto',
+        flmsgDtformat: flmsgPrefs().dtformat,
+        locale: services.locale,
+      });
     }
 
     // ── Lifecycle ──────────────────────────────────────────────────────────
@@ -586,6 +676,8 @@ const descriptor = {
           maxAgeMs: Math.max(0, Number(cfg().flmsgMaxAgeHours ?? 72)) * 3600 * 1000,
           onForm,
           onError: (m) => log(`flmsg: ${m}`),
+          stationCall,
+          dateOrder,
         });
         watcher.start();
         const st = watcher.getStatus();
@@ -620,7 +712,14 @@ const descriptor = {
         modes: modemNames || [],
         ...statusPayload(),
         lastError: connected ? null : lastError,
-        flmsg: watcher ? watcher.getStatus() : { running: false },
+        flmsg: watcher
+          ? {
+              ...watcher.getStatus(),
+              includeLocal: includeLocal(),
+              dateOrder: dateOrder(),
+              prefsFile: prefsCache.file,
+            }
+          : { running: false },
         serverForward: forwardEnabled(),
         ohcUrl: forwardEnabled() ? ohcBase() : undefined,
         formsPosted,

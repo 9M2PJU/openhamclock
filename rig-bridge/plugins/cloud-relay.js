@@ -25,15 +25,38 @@
  *   relayRig:       boolean  Relay rig state (default: true)
  *   relayWsjtx:     boolean  Relay WSJT-X decodes (default: true)
  *   relayAprs:      boolean  Relay APRS packets (default: true)
+ *   relayFldigi:    boolean  Relay the fldigi plugin's status, receive text and
+ *                            flmsg forms, and accept NBEMS commands (default: true)
  *   relayAudio:     boolean  Carry KiwiSDR audio to the Decoder panel while it
  *                            listens (µ-law, ~12 kB/s; default: false — opt-in)
  *   verbose:        boolean  Log all relay activity (default: false)
+ *   commandKey:     string   64-hex key shared with the browser that pressed
+ *                            Connect Cloud Relay (never sent to the server).
+ *                            When set, every command must carry a valid
+ *                            HMAC (lib/relay-sign.js) or it is refused.
+ *   allowUnsigned:  boolean  Accept unsigned commands of every kind, as before
+ *                            command signing existed (default: false — unsafe)
+ *   unsignedGraceUntil: string  Without a commandKey, unsigned tuning
+ *                            (setFreq / setMode) is still accepted until this
+ *                            date (default '2027-01-31'); PTT and anything that
+ *                            transmits never is.
+ *
+ * Command authentication: the hosted server only queues commands, and anyone
+ * who learns a session id can queue one, so Rig Bridge decides. See
+ * authorizeCommand() below.
  */
 
 const http = require('http');
 const https = require('https');
 const { URL } = require('url');
 const { createRelayAudio } = require('../lib/relay-audio');
+const { nextLongPollDelay, heartbeatDue } = require('../lib/relay-timing');
+const { createCommandVerifier, isValidKey, deriveReadToken, readTokenHash } = require('../lib/relay-sign');
+
+// Unsigned commands a bridge that has not been re-paired still accepts during
+// the grace period: they tune, they never transmit.
+const LEGACY_UNSIGNED_TYPES = new Set(['setFreq', 'setMode']);
+const DEFAULT_UNSIGNED_GRACE_UNTIL = '2027-01-31';
 
 let _currentInstance = null;
 
@@ -56,6 +79,72 @@ const descriptor = {
     const apiKey = cfg.apiKey || '';
     const session = cfg.session || '';
     const pushInterval = cfg.pushInterval || 2000; // Fallback interval for data batches
+
+    // ── Command authentication ─────────────────────────────────────────────
+    // Read live so a key pasted into the setup page applies without a restart
+    const live = () => config.cloudRelay || cfg;
+    const commandKey = () =>
+      String(live().commandKey || '')
+        .trim()
+        .toLowerCase();
+    const verifier = createCommandVerifier({ key: commandKey, session: () => session });
+    const graceUntil = (() => {
+      const t = Date.parse(cfg.unsignedGraceUntil || DEFAULT_UNSIGNED_GRACE_UNTIL);
+      return Number.isFinite(t) ? t : Date.parse(DEFAULT_UNSIGNED_GRACE_UNTIL);
+    })();
+    // sha256 of the relay read token (lib/relay-sign deriveReadToken); '' unpaired
+    let readHashCache = { key: null, hash: '' };
+    function readHash() {
+      const k = commandKey();
+      if (readHashCache.key !== k) {
+        readHashCache = { key: k, hash: isValidKey(k) ? readTokenHash(deriveReadToken(k, session)) : '' };
+      }
+      return readHashCache.hash;
+    }
+    const warnedAt = new Map(); // reason → last log time
+    let refusedCommands = 0;
+
+    // Every plugin-bus listener this instance adds, so disconnect() can remove
+    // them all — otherwise each restart of the relay added another set.
+    let busListeners = [];
+    let running = false;
+    function onBus(event, fn) {
+      pluginBus.on(event, fn);
+      busListeners.push([event, fn]);
+    }
+    function warnOnce(key, msg, everyMs = 3600000) {
+      const t = Date.now();
+      if (t - (warnedAt.get(key) || 0) < everyMs) return;
+      warnedAt.set(key, t);
+      console.warn(`[CloudRelay] ${msg}`);
+    }
+
+    /**
+     * Decide whether a relayed command may run.
+     *  - paired (commandKey set): only a valid, fresh, unreplayed signature.
+     *  - not paired: allowUnsigned restores the old accept-everything
+     *    behaviour; otherwise tuning only, and only until unsignedGraceUntil.
+     * @returns {{ ok: boolean, reason?: string }}
+     */
+    function authorizeCommand(cmd) {
+      const paired = isValidKey(commandKey());
+      const r = verifier.verify(cmd);
+      if (r.ok) return r;
+      if (paired) return r;
+      if (live().allowUnsigned === true) {
+        warnOnce('allow', 'allowUnsigned is on — relay commands are accepted without proof they came from you');
+        return { ok: true };
+      }
+      if (LEGACY_UNSIGNED_TYPES.has(cmd?.type) && Date.now() < graceUntil) {
+        warnOnce(
+          'grace',
+          `Accepting unsigned ${cmd.type} until ${new Date(graceUntil).toISOString().slice(0, 10)} — ` +
+            're-run Connect Cloud Relay in OpenHamClock and paste the new settings (they include a command key)',
+        );
+        return { ok: true };
+      }
+      return { ok: false, reason: 'unsigned-refused' };
+    }
     const { state, pluginBus, onStateChange, removeStateChangeListener } = services;
 
     let pushTimer = null;
@@ -70,11 +159,55 @@ const descriptor = {
     let totalCommands = 0;
     let totalDecodes = 0;
     let consecutiveErrors = 0;
+    let lastPushAt = 0; // last successful push, for the heartbeat
     let lastState = {};
     let pendingDecodes = []; // Batched decodes to push
     let pendingAprs = []; // Batched APRS packets to push
     let pendingMeshCom = []; // Batched MeshCom packets to push
     let pendingHamAlerts = []; // Batched HamAlert spots to push
+    // fldigi / NBEMS: latest status, accumulated receive text, forms and
+    // command results — pushed as `pluginEvents` with the same
+    // { event, source, data } shape the local /stream uses.
+    let pendingFldigiStatus = null;
+    let pendingFldigiRx = null; // { text, reset }
+    let pendingFldigiOther = []; // nbems-form / fldigi-cmd-result
+    let fldigiPushTimer = null;
+    function schedulePluginPush() {
+      if (fldigiPushTimer) return;
+      fldigiPushTimer = setTimeout(() => {
+        fldigiPushTimer = null;
+        pushState();
+      }, 250);
+    }
+    // Refusals reported back to the browser, at most one per type + reason
+    // every 30 s (indicators repeat every few seconds).
+    const refusalReportedAt = new Map();
+    const cleanRequestId = (v) =>
+      String(v || '')
+        .replace(/[^A-Za-z0-9-]/g, '')
+        .slice(0, 40);
+    function queueRelayEvent(event, data) {
+      pendingFldigiOther.push({ event, source: 'cloud-relay', data });
+      if (pendingFldigiOther.length > 50) pendingFldigiOther.splice(0, pendingFldigiOther.length - 50);
+      schedulePluginPush();
+    }
+    // A refusal for a command that carried a requestId is always reported
+    // (someone is waiting for it); anonymous ones are rate-limited.
+    function reportRefusal(type, reason, requestId = '') {
+      const key = `${type}|${reason}`;
+      const t = Date.now();
+      if (!requestId) {
+        if (t - (refusalReportedAt.get(key) || 0) < 30000) return;
+        refusalReportedAt.set(key, t);
+      }
+      queueRelayEvent('relay-cmd-refused', {
+        type: String(type || '').slice(0, 40),
+        reason,
+        at: t,
+        ...(requestId ? { requestId } : {}),
+      });
+    }
+    const FLDIGI_RX_MAX = 8000;
 
     // Opt-in KiwiSDR audio over the relay (see lib/relay-audio.js)
     const relayAudio = cfg.relayAudio
@@ -83,6 +216,7 @@ const descriptor = {
           apiKey,
           session,
           getKiwiAudio: () => {
+            if (services && services.kiwiAudio) return services.kiwiAudio; // tests
             try {
               return require('./kiwi-audio').getActive();
             } catch (e) {
@@ -91,6 +225,8 @@ const descriptor = {
           },
           parseTune: (f, m) => require('./kiwi-audio').parseTune(f, m),
           log: (m) => console.log(`[CloudRelay] ${m}`),
+          // same read-token registration as every other bridge → server call
+          extraHeaders: () => (readHash() ? { 'X-Relay-Read-Hash': readHash() } : {}),
         })
       : null;
     let audioRefusedLogged = false;
@@ -110,6 +246,10 @@ const descriptor = {
         Authorization: `Bearer ${apiKey}`,
         'X-Relay-Session': session,
       };
+      // Register the read-token hash on every authenticated request, so the
+      // server protects this session's reads even right after it restarts.
+      const rh = readHash();
+      if (rh) headers['X-Relay-Read-Hash'] = rh;
 
       const options = {
         hostname: parsed.hostname,
@@ -186,18 +326,28 @@ const descriptor = {
       const hasAprs = pendingAprs.length > 0;
       const hasMeshCom = pendingMeshCom.length > 0;
       const hasHamAlerts = pendingHamAlerts.length > 0;
+      const hasPluginEvents = !!(pendingFldigiStatus || pendingFldigiRx || pendingFldigiOther.length);
       const stateChanged =
         currentState.freq !== lastState.freq ||
         currentState.mode !== lastState.mode ||
         currentState.ptt !== lastState.ptt ||
         currentState.connected !== lastState.connected;
 
-      // Only push if state changed or there's data to send
-      if (!stateChanged && !hasDecodes && !hasAprs && !hasMeshCom && !hasHamAlerts) return;
+      // Only push if state changed or there's data to send — or a heartbeat is
+      // due: the server forgets sessions on restart and after an idle TTL, and
+      // an unchanged rig would otherwise never re-register.
+      const hasData = hasDecodes || hasAprs || hasMeshCom || hasHamAlerts || hasPluginEvents;
+      if (!stateChanged && !hasData && !heartbeatDue(Date.now(), lastPushAt)) return;
       lastState = { ...currentState };
 
       // Include batched data in the push
-      const payload = { ...currentState, session };
+      // commandAuth tells the server to refuse unsigned commands for this session
+      const payload = {
+        ...currentState,
+        session,
+        commandAuth: isValidKey(commandKey()) ? 'hmac-sha256' : 'none',
+        ...(readHash() ? { readTokenHash: readHash() } : {}),
+      };
       if (hasDecodes) {
         payload.decodes = pendingDecodes.splice(0, 50);
         totalDecodes += payload.decodes.length;
@@ -211,6 +361,17 @@ const descriptor = {
       if (hasHamAlerts) {
         payload.hamAlerts = pendingHamAlerts.splice(0, 50);
       }
+      let sentFldigi = null;
+      if (hasPluginEvents) {
+        sentFldigi = { status: pendingFldigiStatus, rx: pendingFldigiRx, other: pendingFldigiOther.splice(0, 20) };
+        pendingFldigiStatus = null;
+        pendingFldigiRx = null;
+        payload.pluginEvents = [
+          ...(sentFldigi.status ? [{ event: 'fldigi', source: 'fldigi', data: sentFldigi.status }] : []),
+          ...(sentFldigi.rx ? [{ event: 'fldigi-rx', source: 'fldigi', data: sentFldigi.rx }] : []),
+          ...sentFldigi.other,
+        ];
+      }
 
       makeRequest(`${serverUrl}/api/rig-bridge/relay/state`, 'POST', payload, (err, status, data) => {
         if (err) {
@@ -222,12 +383,27 @@ const descriptor = {
           if (payload.aprsPackets) pendingAprs.unshift(...payload.aprsPackets);
           if (payload.meshcomPackets) pendingMeshCom.unshift(...payload.meshcomPackets);
           if (payload.hamAlerts) pendingHamAlerts.unshift(...payload.hamAlerts);
+          if (sentFldigi) {
+            pendingFldigiStatus = pendingFldigiStatus || sentFldigi.status;
+            if (sentFldigi.rx) {
+              pendingFldigiRx = pendingFldigiRx
+                ? pendingFldigiRx.reset
+                  ? pendingFldigiRx
+                  : {
+                      text: (sentFldigi.rx.text + pendingFldigiRx.text).slice(-FLDIGI_RX_MAX),
+                      reset: sentFldigi.rx.reset,
+                    }
+                : sentFldigi.rx;
+            }
+            pendingFldigiOther.unshift(...sentFldigi.other);
+          }
           return;
         }
         if (status === 200) {
           serverReachable = true;
           consecutiveErrors = 0;
           totalPushed++;
+          lastPushAt = Date.now();
           if (cfg.verbose) {
             const decodeInfo = payload.decodes ? ` + ${payload.decodes.length} decodes` : '';
             console.log(`[CloudRelay] Pushed state (${currentState.freq} Hz ${currentState.mode}${decodeInfo})`);
@@ -241,12 +417,14 @@ const descriptor = {
     // Long-poll loop — holds the connection open for up to LONG_POLL_WAIT ms.
     // The server resolves the request immediately when a command is queued,
     // so latency is ~network RTT rather than the push interval.
-    // On timeout (no commands) it restarts immediately. On network error it
-    // waits 1 s before retrying to avoid hammering a temporarily unreachable server.
+    // On timeout (no commands) it restarts immediately. On network error, or an
+    // empty response the server did not hold, it waits before retrying — see
+    // lib/relay-timing.js.
     const LONG_POLL_WAIT = 28000; // ms to hold open (server caps at 30 s)
 
     function longPollCommands() {
       if (pollAborted) return;
+      const startedAt = Date.now();
       const url =
         `${serverUrl}/api/rig-bridge/relay/commands` + `?session=${encodeURIComponent(session)}&wait=${LONG_POLL_WAIT}`;
 
@@ -257,21 +435,24 @@ const descriptor = {
         (err, status, data) => {
           if (pollAborted) return;
 
-          if (!err && status === 200) {
+          if (!err && (status === 401 || status === 403)) {
+            // Invalid credentials — stop permanently, no retry
+            handleCredentialsInvalid(status, data);
+            return;
+          }
+          const ok = !err && status === 200;
+          let commandCount = 0;
+          if (ok) {
             try {
               const response = JSON.parse(data);
               const commands = response.commands || [];
+              commandCount = commands.length;
               for (const cmd of commands) executeCommand(cmd);
             } catch (e) {}
-            // Restart immediately — no delay when things are healthy
-            longPollCommands();
-          } else if (!err && (status === 401 || status === 403)) {
-            // Invalid credentials — stop permanently, no retry
-            handleCredentialsInvalid(status, data);
-          } else {
-            // Network error or unexpected status — back off 1 s before retry
-            pollRetryTimer = setTimeout(longPollCommands, 1000);
           }
+          const delay = nextLongPollDelay({ ok, elapsedMs: Date.now() - startedAt, commandCount });
+          if (delay === 0) longPollCommands();
+          else pollRetryTimer = setTimeout(longPollCommands, delay);
         },
         LONG_POLL_WAIT + 4000, // HTTP timeout = hold window + 4 s network buffer
       );
@@ -282,6 +463,30 @@ const descriptor = {
     // All requests have an error handler to prevent unhandled-error crashes.
     function executeCommand(cmd) {
       totalCommands++;
+      const verdict = authorizeCommand(cmd);
+      if (!verdict.ok) {
+        refusedCommands++;
+        reportRefusal(cmd?.type, verdict.reason, cleanRequestId(cmd?.payload?.requestId));
+        warnOnce(
+          `refused-${verdict.reason}`,
+          `Refused relay command ${cmd?.type} (${verdict.reason})` +
+            (verdict.reason === 'unsigned-refused' || verdict.reason === 'unsigned'
+              ? ' — re-run Connect Cloud Relay in OpenHamClock and paste the new settings into Rig Bridge'
+              : ''),
+          60000,
+        );
+        if (cmd?.type === 'fldigi' && pluginBus && cmd.payload?.requestId) {
+          pluginBus.emit('fldigi-cmd-result', {
+            requestId: String(cmd.payload.requestId)
+              .replace(/[^A-Za-z0-9-]/g, '')
+              .slice(0, 40),
+            ok: false,
+            status: 401,
+            error: `Relay command refused by Rig Bridge (${verdict.reason})`,
+          });
+        }
+        return;
+      }
       if (cfg.verbose) console.log(`[CloudRelay] Command: ${cmd.type} ${JSON.stringify(cmd.payload || {})}`);
 
       if (relayAudio && relayAudio.handleCommand(cmd)) return;
@@ -335,9 +540,72 @@ const descriptor = {
             pttReq.end();
           }
           break;
+        case 'fldigi':
+          runFldigiCommand(cmd.payload || {}, localMod, localOptions);
+          break;
+        case 'indicators':
+          // Display indicator state (satellite, countdown, alarm, lightning
+          // guard relay) from a browser in cloud-relay mode → the same local
+          // /api/indicators the browser would POST to directly.
+          // A browser waiting to acknowledge a lightning-relay report sends a
+          // requestId; the bridge's answer goes back as 'relay-cmd-result'.
+          if (cmd.payload && typeof cmd.payload === 'object') {
+            const requestId = cleanRequestId(cmd.payload.requestId);
+            const answer = (ok, status) => {
+              if (requestId) queueRelayEvent('relay-cmd-result', { requestId, type: 'indicators', ok, status });
+            };
+            const indReq = localMod.request(localOptions('/api/indicators'), (res) => {
+              res.resume();
+              answer(res.statusCode >= 200 && res.statusCode < 300, res.statusCode);
+            });
+            indReq.on('error', (err) => {
+              if (cfg.verbose) console.error(`[CloudRelay] indicators dispatch error: ${err.message}`);
+              answer(false, 502);
+            });
+            indReq.write(JSON.stringify(cmd.payload));
+            indReq.end();
+          }
+          break;
         default:
           if (cfg.verbose) console.log(`[CloudRelay] Unknown command type: ${cmd.type}`);
       }
+    }
+
+    // NBEMS commands from the browser: run against the local fldigi plugin
+    // routes once authorizeCommand() has accepted the command's signature
+    // (they transmit, so they are never accepted unsigned unless
+    // allowUnsigned is on). The signature, not a token carried through the
+    // server, is the proof that the paired browser sent it. The outcome goes
+    // back as a 'fldigi-cmd-result' plugin event.
+    const FLDIGI_ACTIONS = new Set(['send', 'send-ics213', 'mode', 'abort']);
+    function runFldigiCommand(p, localMod, localOptions) {
+      const requestId = String(p.requestId || '')
+        .replace(/[^A-Za-z0-9-]/g, '')
+        .slice(0, 40);
+      const done = (result) => {
+        if (pluginBus && requestId) pluginBus.emit('fldigi-cmd-result', { requestId, ...result });
+      };
+      if (cfg.relayFldigi === false)
+        return done({ ok: false, status: 403, error: 'fldigi relay is off in Rig Bridge' });
+      if (!FLDIGI_ACTIONS.has(p.action)) return done({ ok: false, status: 400, error: 'Unknown fldigi action' });
+      const body = JSON.stringify(p.body && typeof p.body === 'object' ? p.body : {});
+      const opts = localOptions(`/api/fldigi/${p.action}`);
+      const req = localMod.request(opts, (res) => {
+        let data = '';
+        res.on('data', (c) => (data += c));
+        res.on('end', () => {
+          let parsed = {};
+          try {
+            parsed = JSON.parse(data);
+          } catch (e) {}
+          const ok = res.statusCode >= 200 && res.statusCode < 300;
+          done({ ...parsed, ok, status: res.statusCode });
+        });
+      });
+      req.on('error', (err) => done({ ok: false, status: 502, error: err.message }));
+      req.setTimeout(10000, () => req.destroy(new Error('Timeout')));
+      req.write(body);
+      req.end();
     }
 
     function connect() {
@@ -346,7 +614,22 @@ const descriptor = {
         return;
       }
 
+      if (running) return; // already connected — never subscribe twice
+      running = true;
+      pollAborted = false;
+
       console.log(`[CloudRelay] Starting relay to ${serverUrl}`);
+      if (commandKey() && !isValidKey(commandKey())) {
+        console.warn(
+          '[CloudRelay] commandKey is not 64 hex characters — ignored; paste it again from Connect Cloud Relay',
+        );
+      } else if (!commandKey()) {
+        console.warn(
+          '[CloudRelay] No commandKey: PTT and transmit commands from the relay are refused, tuning is accepted until ' +
+            new Date(graceUntil).toISOString().slice(0, 10) +
+            ' — re-run Connect Cloud Relay in OpenHamClock and paste the new settings',
+        );
+      }
       console.log(`[CloudRelay] Push interval: ${pushInterval}ms, Command delivery: long-poll`);
 
       // Initial health check
@@ -398,7 +681,7 @@ const descriptor = {
         const subscribed = [];
 
         if (relayWsjtx) {
-          pluginBus.on('decode', (msg) => {
+          onBus('decode', (msg) => {
             pendingDecodes.push({
               source: msg.source,
               message: msg.message,
@@ -414,25 +697,59 @@ const descriptor = {
           subscribed.push('WSJT-X');
         }
         if (relayAprs) {
-          pluginBus.on('aprs', (packet) => {
+          onBus('aprs', (packet) => {
             pendingAprs.push(packet);
             if (pendingAprs.length > 200) pendingAprs.splice(0, pendingAprs.length - 200);
           });
           subscribed.push('APRS');
         }
         if (relayMeshCom) {
-          pluginBus.on('meshcom', (packet) => {
+          onBus('meshcom', (packet) => {
             pendingMeshCom.push(packet);
             if (pendingMeshCom.length > 200) pendingMeshCom.splice(0, pendingMeshCom.length - 200);
           });
           subscribed.push('MeshCom');
         }
         if (cfg.relayHamAlert !== false) {
-          pluginBus.on('hamalert', (alert) => {
+          onBus('hamalert', (alert) => {
             pendingHamAlerts.push(alert);
             if (pendingHamAlerts.length > 200) pendingHamAlerts.splice(0, pendingHamAlerts.length - 200);
           });
           subscribed.push('HamAlert');
+        }
+        if (cfg.relayFldigi !== false) {
+          const soon = () => {
+            if (fldigiPushTimer) return;
+            fldigiPushTimer = setTimeout(() => {
+              fldigiPushTimer = null;
+              pushState();
+            }, 250);
+          };
+          onBus('fldigi', (status) => {
+            pendingFldigiStatus = status;
+            soon();
+          });
+          onBus('fldigi-rx', (rx) => {
+            const text = String(rx?.text ?? '');
+            if (rx?.reset || !pendingFldigiRx) {
+              pendingFldigiRx = { text: text.slice(-FLDIGI_RX_MAX), reset: !!rx?.reset };
+            } else {
+              pendingFldigiRx = {
+                text: (pendingFldigiRx.text + text).slice(-FLDIGI_RX_MAX),
+                reset: pendingFldigiRx.reset,
+              };
+            }
+            soon();
+          });
+          for (const event of ['nbems-form', 'fldigi-cmd-result']) {
+            onBus(event, (data) => {
+              const { fields, ...slim } = data || {};
+              pendingFldigiOther.push({ event, source: 'fldigi', data: slim });
+              if (pendingFldigiOther.length > 50) pendingFldigiOther.splice(0, pendingFldigiOther.length - 50);
+              soon();
+            });
+          }
+          subscribed.push('fldigi');
         }
         console.log(`[CloudRelay] Subscribed to plugin bus (${subscribed.join(', ')})`);
       }
@@ -453,9 +770,15 @@ const descriptor = {
         clearTimeout(immediatePushTimer);
         immediatePushTimer = null;
       }
+      clearTimeout(fldigiPushTimer);
+      fldigiPushTimer = null;
       if (stateChangeHandler && typeof removeStateChangeListener === 'function') {
         removeStateChangeListener(stateChangeHandler);
       }
+      stateChangeHandler = null;
+      for (const [event, fn] of busListeners) pluginBus.removeListener(event, fn);
+      busListeners = [];
+      running = false;
       if (relayAudio) relayAudio.stop('relay stopped');
       _currentInstance = null;
       console.log(`[CloudRelay] Stopped (pushed: ${totalPushed}, commands: ${totalCommands})`);
@@ -473,10 +796,17 @@ const descriptor = {
         pushInterval,
         commandDelivery: 'long-poll',
         audio: relayAudio ? relayAudio.status() : { enabled: false },
+        commandAuth: isValidKey(commandKey())
+          ? 'hmac-sha256'
+          : live().allowUnsigned === true
+            ? 'unsigned-allowed'
+            : 'legacy',
+        unsignedGraceUntil: new Date(graceUntil).toISOString().slice(0, 10),
+        refusedCommands,
       };
     }
 
-    const instance = { connect, disconnect, getStatus };
+    const instance = { connect, disconnect, getStatus, _pushState: pushState, _executeCommand: executeCommand };
     _currentInstance = instance;
     return instance;
   },

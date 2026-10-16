@@ -22,6 +22,7 @@ import { DecoderAudioEngine, audioDecoderSupported, listAudioInputs } from '../u
 import { findCallsigns, tokenizeCallsigns } from '../utils/cwDecoder.js';
 import { kiwiTuneRequest, KIWI_CW_PITCH_HZ } from '../utils/kiwiAudioClient.js';
 import { createFt8Client } from '../services/ft8/client.js';
+import { sendRelayCommand } from '../utils/relaySign.js';
 import { FT8_DIALS } from '../utils/ft8Dsp.js';
 import {
   MY_DECODES_EVENT,
@@ -365,7 +366,10 @@ export default function DecoderPanel({ onSetDX, dxLocked = false, onSpotClick, a
     const req = kiwiTuneRequest({ bridgeUrl, token: apiToken, relaySession, freqKhz, mode: kiwiMode });
     if (!req) return;
     try {
-      await fetch(req.url, req.init);
+      if (req.relayCommand) {
+        const r = await sendRelayCommand(relaySession, req.relayCommand.type, req.relayCommand.payload);
+        if (!r.ok) throw new Error(r.error || 'Cloud Relay refused the retune');
+      } else await fetch(req.url, req.init);
       if (isFt8) setFt8Slots([]);
       else engineRef.current?.resetDecoder();
     } catch (err) {
@@ -593,7 +597,7 @@ export default function DecoderPanel({ onSetDX, dxLocked = false, onSpotClick, a
             : relaySession
               ? t('decoder.kiwi.viaRelay', {
                   defaultValue:
-                    'Through the Cloud Relay (~12 kB/s while listening) — turn on “Relay KiwiSDR audio” in the bridge’s Cloud Relay plugin.',
+                    'Through the Cloud Relay (~12 kB/s while listening) — turn on “Relay KiwiSDR audio” in the bridge’s Cloud Relay plugin; this browser must be paired (Connect Cloud Relay).',
                 })
               : kiwiStatus?.unreachable
                 ? t('decoder.kiwi.unreachable', { defaultValue: 'Rig Bridge is not reachable.' })

@@ -333,69 +333,146 @@ Everything is in memory: a server restart forgets reports, queues and frames.
 
 The EmComm layout's **Incident** panel uses these endpoints to share one
 operating picture between operators and sites: a net roster, an event log,
-field and shelter reports, and an incident board (name, IC, net frequency,
-notes). Anything that can make an HTTP request can join in. For example, a
-script can post check-ins from a voice net logger, or a dashboard can show the
-live roster.
+field and shelter reports, an incident board (name, IC, net frequency,
+notes), and shared working documents (ICS form drafts, the running voice net
+and its history). Anything that can make an HTTP request can join in. For
+example, a script can post check-ins from a voice net logger, or a dashboard
+can show the live roster.
 
-**Auth.** `POST /api/incident` returns an `id` (8 characters) and a `joinKey`
-(16 characters). The key is shown only once, and the server stores only a
-salted SHA-256 of it. Every other call must present the key as an
-`X-Incident-Key: <key>` header, as `key` in a JSON body, or as `?key=` (needed
-for `EventSource`, which cannot set headers). Ids and keys use
-`A–Z 2–9` without `I L O 0 1`. Case, spaces and dashes are ignored. A wrong key
-returns `403`. An unknown id returns `404` on a self-hosted server and the same
-`403` as a wrong key when `OHC_HOSTED` is set, so ids cannot be probed. This
-key is separate from `API_WRITE_KEY`: the join key alone admits a caller.
+**Keys and roles.** `POST /api/incident` returns an `id` (8 characters) and
+two keys of 16 characters, each shown only once. The server stores only a
+salted SHA-256 of each key and checks both in constant time.
+
+- **`joinKey`** admits an **operator**. An operator can read, append roster
+  entries, events and reports, check stations out, and save the shared
+  documents.
+- **`adminKey`** admits an **admin**, normally the creator. An admin can do
+  everything an operator can, and also:
+  - edit and delete events and reports (`/admin`),
+  - change or clear the board (operator board writes are ignored and listed
+    in `denied`),
+  - replace the join key (`/rotate`),
+  - read the current join key: admin replies to join, read and the stream
+    snapshot include `joinKey`, so any device holding the admin key can hand
+    out invites.
+
+The join key is never stored in plaintext. Besides its hash, the server keeps
+a copy sealed with AES-256-GCM under a key derived (HKDF-SHA256) from the
+admin key. Only a request that presents the admin key can open it.
+
+A key travels only as an `X-Incident-Key: <key>` header or as `key` in a JSON
+body. It is never accepted in a URL, so proxy logs never see it. The live
+stream, which cannot send headers, uses a one-time ticket instead.
+
+Ids and keys use `A–Z 2–9` without `I L O 0 1`. Case, spaces and dashes are
+ignored. A wrong key returns `403`. An unknown id returns `404` on a
+self-hosted server, and the same `403` as a wrong key when `OHC_HOSTED` is
+set, so ids cannot be probed. These keys are separate from `API_WRITE_KEY`.
 
 **Records and merging.** Every record has a stable id, so sending the same
 thing twice (a retry, a reconnect, two browsers seeing the same event) changes
 nothing:
 
-| Collection | Key                  | Fields                                                                                                            | Merge rule                                                                                         |
-| ---------- | -------------------- | ----------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| `roster`   | `call`               | `netName, status, checkinTime, lastHeard, lat, lon, tokens[], source, site, checkedOut, updatedAt`                | Newest `updatedAt` wins. A check-out is `checkedOut: true`, never a delete, so late joiners see it |
-| `events`   | `id` (+ `dedupeKey`) | `ts, type, callsign, summary, details, site, dedupeKey` · `type` is one of the Event Log types or `incident_note` | First write wins. A second event with the same `type` + `dedupeKey` is ignored                     |
-| `reports`  | `id`                 | `kind` (`field` \| `shelter`), `callsign, formType, text, lat, lon, timestamp, tokens[], extra{}, site`           | First write wins                                                                                   |
-| `board`    | —                    | `name, ic, netFreq, notes, updatedAt`                                                                             | Newest `updatedAt` wins                                                                            |
+| Collection | Key                  | Fields                                                                                                                                             | Merge rule                                                                                                            |
+| ---------- | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `roster`   | `call`               | `netName, status, checkinTime, lastHeard, lat, lon, tokens[], source, site, checkedOut, updatedAt`                                                 | Newest `updatedAt` wins. A check-out is `checkedOut: true`, never a delete, so late joiners see it                    |
+| `events`   | `id` (+ `dedupeKey`) | `ts, type, callsign, summary, details, site, dedupeKey, ref, msgNo` · `type` is one of the Event Log types or `incident_note`; `rev` after an edit | First write wins. A second event with the same `type` + `dedupeKey` is ignored. An admin edit replaces (higher `rev`) |
+| `reports`  | `id`                 | `kind` (`field` \| `shelter`), `callsign, formType, text, lat, lon, timestamp, tokens[], extra{}, site`; `rev` after an edit                       | First write wins; an admin edit replaces                                                                              |
+| `docs`     | `id`                 | `ics-drafts`, `net-running`, `net-history` → `{ id, data, docRev, receivedAt, updatedAt, by }`; `data` up to 256 KB (64 KB hosted)                 | The last one the server receives wins (server `docRev`); `413` when too large                                         |
+| `board`    | —                    | `name, ic, netFreq, notes, updatedAt`                                                                                                              | Newest `updatedAt` wins; admin only                                                                                   |
+
+A deleted event or report leaves a tombstone, `{kind, id, seq, deleted: true}`.
+Tombstones travel in `deleted[]`, and a deleted id cannot be added again,
+even after a server restart (tombstones are saved with the incident).
+
+**Message numbers.** Each station numbers its own message traffic, so two
+sites can both have a message 12. Events keep their own `msgNo` together with
+their `site`. The app shows another site's number as `SITE:12`. In an ICS
+309, a station numbers only its own traffic, and other sites' rows keep their
+`SITE:n` label.
+
+**The running net (`net-running`).** The document is Net Control's own
+serialised net state plus `tag` (`rev:updatedAt`), `parentTag` (the state it
+was made from) and `origin` (`{site, call}`). When two sites change the net
+at the same moment, each site reconciles the other's state through their
+common ancestor, using Net Control's `rebaseCheck`:
+
+- If the two changes touched different station lines and different net
+  fields, both changes are kept. The merged state is published with the
+  other site's state as its parent. Its stations are listed newest check-in
+  first, then by callsign, so every site holds the same net at once.
+- If the same station line or field was changed at both sites, the other
+  site's version is kept and Net Control shows which call changed, and at
+  which site. Our version is kept in the browser (`openhamclock_netControlConflicts`)
+  and shown as a "your change" chip with **Apply mine**.
+
+**Document order.** The server orders documents by when it receives them,
+never by client clocks. Each accepted copy gets `docRev` (rising per
+document) and `receivedAt`; a copy identical to the stored one is ignored.
+Clients compare `docRev`. The client's own `updatedAt` is kept only for
+display, so a site whose clock is wrong can still save.
+
+**Withdrawals.** A `net_withdrawn` event names the entry it withdraws in
+`ref`. Clients hide withdrawn entries from the merged log, so a withdrawal
+logged at one site applies at every site.
 
 Each accepted change increments the incident's `seq` and stamps the record
 with it. `GET ?since=<seq>` and the stream return only what changed after a
-cursor. Records sent with a `site` keep it; otherwise the request's `site` is
-stamped on them.
+cursor. When a cursor is older than the oldest tombstone the server still
+holds (for example after a server restart), the reply is the full state with
+`full: true`, and the client replaces what it has. Records sent with a `site`
+keep it; otherwise the request's `site` is stamped on them.
 
-| Endpoint                               | Body / query                                                                                     | Returns                                                                                                                                       |
-| -------------------------------------- | ------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /api/incident`                    | —                                                                                                | `{hosted, listing, limits}`                                                                                                                   |
-| `POST /api/incident`                   | `{name?, ic?, netFreq?, notes?, clientId?, call?}`                                               | `{ok, id, joinKey, incident}` — `incident` is the full state (below)                                                                          |
-| `POST /api/incident/:id/join`          | `{key, clientId?, call?}`                                                                        | `{ok, id, incident}`                                                                                                                          |
-| `POST /api/incident/:id/leave`         | `{key, clientId}`                                                                                | `{ok, participants}`                                                                                                                          |
-| `GET /api/incident/:id`                | `?since=<seq>&clientId=` + key                                                                   | `{id, seq, since, board, participants, counts, roster[], events[], reports[]}` — only records after `since`; `board` is `null` when unchanged |
-| `POST /api/incident/:id/sync`          | `{key, clientId?, call?, site?, roster?[], events?[], reports?[], board?}` (≤200 per collection) | `{ok, seq, accepted:{roster, events, reports, board}}` — counts of records that actually changed                                              |
-| `GET /api/incident/:id/stream`         | `?key=&clientId=&since=` (or `Last-Event-ID`)                                                    | Server-sent events (below)                                                                                                                    |
-| `GET /api/incident/list` (self-hosted) | `API_WRITE_KEY` when set                                                                         | `{incidents:[{id, name, createdAt, lastActivity, participants, counts}]}` — never keys. `403` when `OHC_HOSTED` is set                        |
+| Endpoint                               | Body / query                                                                                         | Returns                                                                                                                                                           |
+| -------------------------------------- | ---------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/incident`                    | —                                                                                                    | `{hosted, listing, requireCallsign, limits}`                                                                                                                      |
+| `POST /api/incident`                   | `{name?, ic?, netFreq?, notes?, clientId?, call}`                                                    | `{ok, id, joinKey, adminKey, role, incident}`. `incident` is the full state (below)                                                                               |
+| `POST /api/incident/:id/join`          | key + `{clientId?, call?}`                                                                           | `{ok, id, role, joinKey?, incident}`. `role` is `admin` or `operator`, depending on the key; `joinKey` for an admin                                               |
+| `POST /api/incident/:id/leave`         | key + `{clientId}`                                                                                   | `{ok, participants}`                                                                                                                                              |
+| `GET /api/incident/:id`                | key + `?since=<seq>&clientId=`                                                                       | `{id, seq, since, full, role, board, participants, counts, roster[], events[], reports[], docs[], deleted[]}`. Only what changed after `since`                    |
+| `POST /api/incident/:id/sync`          | key + `{clientId?, call?, site?, roster?[], events?[], reports?[], docs?[], board?}` (≤200 per list) | `{ok, seq, accepted:{roster, events, reports, docs, board}, denied[]}`. Counts of records that actually changed                                                   |
+| `POST /api/incident/:id/admin`         | admin key + `{edit?: {events?[], reports?[]}, delete?: {events?[], reports?[], board?}}`             | `{ok, seq, edited:{events, reports}, deleted, board}`. An edit is `{id, …fields}` and keeps `id`, `kind`/`type` and `site`. `delete.board: true` clears the board |
+| `POST /api/incident/:id/rotate`        | admin key                                                                                            | `{ok, joinKey, keyGen, disconnected}`. The old join key stops working at once                                                                                     |
+| `POST /api/incident/:id/ticket`        | key + `{clientId?}`                                                                                  | `{ok, ticket, expiresIn: 60, role}`. A one-time stream ticket                                                                                                     |
+| `GET /api/incident/:id/stream`         | `?ticket=&clientId=&since=` (or `Last-Event-ID`)                                                     | Server-sent events (below)                                                                                                                                        |
+| `GET /api/incident/list` (self-hosted) | `API_WRITE_KEY` when set                                                                             | `{incidents:[{id, name, createdAt, lastActivity, participants, counts}]}`. Never keys. `403` when `OHC_HOSTED` is set                                             |
 
-**Stream.** `GET /api/incident/:id/stream` first sends `event: snapshot` (the
-full state, or changes since `since` / `Last-Event-ID`), then
-`event: change` (`{seq, roster[], events[], reports[], board}`) whenever any
-client syncs, and `event: presence` (`{participants}`) when the number of
-connected stations changes. `snapshot` and `change` carry `id: <seq>`, so a
-browser's automatic reconnect resumes where it left off. A comment line
-keeps the connection alive every 25 s. `event: expired` arrives if the
-incident expires while you are listening. A station counts as connected while
-it holds a stream or has synced or read within the last 150 s with a
-`clientId`.
+**Stream.**
+
+1. Get a ticket with `POST /:id/ticket` (key in the header). A ticket works
+   once, for 60 s. It is bound to the incident, to the `clientId` you send,
+   and to the current join key.
+2. Open `GET /:id/stream?ticket=<ticket>&clientId=<same id>`.
+3. Every reconnect needs a fresh ticket; do not let `EventSource` retry the
+   same URL.
+
+The stream first sends `event: snapshot` (the full state, or the changes since
+`since` / `Last-Event-ID`, plus your `role`, and for an admin the current
+`joinKey`). After that it sends:
+
+- `event: change` (`{seq, roster[], events[], reports[], docs[], board, deleted[]}`)
+  whenever anything changes.
+- `event: presence` (`{participants}`) when the number of connected stations
+  changes.
+- `event: rekeyed` after a join-key rotation. An operator stream gets
+  `{keyGen}` and is closed. An admin stream gets `{keyGen, joinKey}` and stays
+  open.
+- `event: expired` if the incident expires while you are listening.
+
+`snapshot` and `change` carry `id: <seq>`. A comment line keeps the
+connection alive every 25 s. A station counts as connected while it holds a
+stream, or for 150 s after it last synced or read with a `clientId`.
 
 ```bash
 B=http://localhost:3000/api/incident
 
-# Create (keep the joinKey — it is not shown again)
+# Create (keep both keys — they are not shown again). The hosted site needs your callsign.
 curl -s -X POST $B -H 'Content-Type: application/json' \
-  -d '{"name":"River flood","ic":"K0CJH","netFreq":"146.520"}' | jq '{id, joinKey}'
-ID=SG4U6D2M; KEY=JKMNPQRSTUVWXYZ2
+  -d '{"name":"River flood","ic":"K0CJH","netFreq":"146.520","call":"K0CJH"}' | jq '{id, joinKey, adminKey}'
+ID=SG4U6D2M; KEY=JKMNPQRSTUVWXYZ2; ADMIN=ABCDEFGHJKMNPQRS
 
 # Join, read everything, read only what changed after seq 12
-curl -s -X POST $B/$ID/join -H 'Content-Type: application/json' -d "{\"key\":\"$KEY\",\"call\":\"W1AW\"}" | jq .incident.seq
+curl -s -X POST $B/$ID/join -H 'Content-Type: application/json' -H "X-Incident-Key: $KEY" -d '{"call":"W1AW"}' | jq .role
 curl -s $B/$ID -H "X-Incident-Key: $KEY" | jq '.roster[].call'
 curl -s "$B/$ID?since=12" -H "X-Incident-Key: $KEY" | jq '.events[] | [.type, .callsign, .summary]'
 
@@ -403,7 +480,7 @@ curl -s "$B/$ID?since=12" -H "X-Incident-Key: $KEY" | jq '.events[] | [.type, .c
 curl -s -X POST $B/$ID/sync -H 'Content-Type: application/json' -H "X-Incident-Key: $KEY" -d '{
   "site": "EOC North",
   "roster":  [{"call":"KD0ABC","netName":"ARES","status":"At shelter [Beds 30/100]","source":"manual","updatedAt":1792106419000}],
-  "events":  [{"id":"logger-0001","type":"net_checkin","callsign":"KD0ABC","summary":"Checked into ARES","dedupeKey":"KD0ABC-1792106419000"}],
+  "events":  [{"id":"logger-0001","type":"net_checkin","callsign":"KD0ABC","summary":"Checked into ARES","dedupeKey":"KD0ABC-1792106419000","msgNo":14}],
   "reports": [{"id":"fsr-17","kind":"field","callsign":"KD0ABC","formType":"Field Situation Report","text":"Bridge out on Rt 9","lat":39.1,"lon":-94.6}]
 }'
 
@@ -411,31 +488,81 @@ curl -s -X POST $B/$ID/sync -H 'Content-Type: application/json' -H "X-Incident-K
 curl -s -X POST $B/$ID/sync -H 'Content-Type: application/json' -H "X-Incident-Key: $KEY" \
   -d '{"roster":[{"call":"KD0ABC","status":"Checked out","checkedOut":true,"updatedAt":1792110000000}]}'
 
-# Follow live changes
-curl -N "$B/$ID/stream?key=$KEY"
+# Follow live changes: a ticket first, then the stream (the key never goes in the URL)
+T=$(curl -s -X POST $B/$ID/ticket -H 'Content-Type: application/json' -H "X-Incident-Key: $KEY" \
+  -d '{"clientId":"script-1"}' | jq -r .ticket)
+curl -N "$B/$ID/stream?ticket=$T&clientId=script-1"
 
-# Update the board, leave
-curl -s -X POST $B/$ID/sync -H 'Content-Type: application/json' -H "X-Incident-Key: $KEY" \
+# Admin: update the board, correct one entry, delete another, issue a new join key
+curl -s -X POST $B/$ID/sync -H 'Content-Type: application/json' -H "X-Incident-Key: $ADMIN" \
   -d '{"board":{"name":"River flood","ic":"K0CJH","netFreq":"146.520","notes":"Shelter open at the high school","updatedAt":1792110100000}}'
-curl -s -X POST $B/$ID/leave -H 'Content-Type: application/json' -d "{\"key\":\"$KEY\",\"clientId\":\"script-1\"}"
+curl -s -X POST $B/$ID/admin -H 'Content-Type: application/json' -H "X-Incident-Key: $ADMIN" \
+  -d '{"edit":{"events":[{"id":"logger-0001","summary":"Checked into ARES (relay)"}]},"delete":{"reports":["fsr-17"]}}'
+curl -s -X POST $B/$ID/rotate -H "X-Incident-Key: $ADMIN" | jq .joinKey
+
+# Leave
+curl -s -X POST $B/$ID/leave -H 'Content-Type: application/json' -H "X-Incident-Key: $KEY" -d '{"clientId":"script-1"}'
 ```
 
-**Limits.** Self-hosted: 500 incidents, and per incident 300 roster entries,
-2000 events, 500 reports and 100 tracked participants, with 50 streams per
-incident and 20 streams per IP (`INCIDENT_MAX_SSE_PER_IP`). With `OHC_HOSTED`:
-50 incidents, 100 / 500 / 200 records, 25 streams per incident and 3 creates
-per IP per hour (20 self-hosted). When a collection is full, the oldest
-records are dropped, and checked-out operators leave the roster first. When
-the server is full, a new incident replaces the longest-idle one that nobody
-has used for an hour. Otherwise create returns `503`. Rate limits: create and
-join share `writeLimiter` (20/min per IP). Sync and leave allow 240/min per
-IP, because several browsers at one site often share an address.
+**Limits.**
+
+| Limit                                      | Self-hosted | `OHC_HOSTED`                         |
+| ------------------------------------------ | ----------- | ------------------------------------ |
+| Incidents on the server                    | 500         | 50                                   |
+| Roster entries per incident                | 300         | 100                                  |
+| Events per incident                        | 2000        | 500                                  |
+| Reports per incident                       | 500         | 200                                  |
+| Tracked participants per incident          | 100         | 50                                   |
+| Size of one shared document                | 256 KB      | 64 KB                                |
+| Streams per incident                       | 50          | 25                                   |
+| Streams per IP (`INCIDENT_MAX_SSE_PER_IP`) | 20          | 20                                   |
+| Creates per IP per hour                    | 20          | 3                                    |
+| Creates per hour, whole server             | no limit    | 30                                   |
+| Creator callsign                           | optional    | required, real-looking (no `N0CALL`) |
+| Open incidents per creator callsign        | 20          | 2                                    |
+
+When a collection is full, the oldest records are dropped, and checked-out
+operators leave the roster first.
+
+Incidents with nobody connected are evicted sooner as the server fills up:
+
+| Server full | An unattended incident is evicted after |
+| ----------- | --------------------------------------- |
+| under 50 %  | 7 days idle                             |
+| 50–80 %     | 24 hours idle                           |
+| 80–100 %    | 1 hour idle                             |
+| full        | 10 minutes idle                         |
+
+An incident someone is connected to is never evicted. If the server is full
+and nothing can be evicted, create returns `503`.
+
+Rate limits: create, join and rotate share `writeLimiter` (20/min per IP).
+Sync, admin, ticket and leave allow 240/min per IP, because several browsers
+at one site often share an address.
 
 **Persistence.** Incidents are written to `data/incidents.json` (override with
 `INCIDENT_FILE`; same location rules as the group-log file) a couple of
-seconds after each change, atomically, and reloaded at start-up. Incidents
-idle for 7 days expire. Presence is held in memory, so after a restart it
-rebuilds as clients reconnect.
+seconds after each change, atomically, and reloaded at start-up. The file
+holds:
+
+- both key hashes and the sealed join key,
+- the documents and edit revisions,
+- the tombstones (up to 1000 per incident).
+
+Because the tombstones are saved, a deleted record stays deleted after a
+restart, and a client that was up to date before the restart still gets a
+delta rather than a full snapshot. Presence and tickets are not saved.
+Incidents idle for 7 days expire, together with their tombstones.
+
+**Net roster boot id.** `GET /api/aprs/net` returns `bootId` (new on every
+server start) and `generation` (bumped on every roster change). A browser
+mirroring its server's roster into an incident uses them to tell two cases
+apart:
+
+- When the server restarts, its roster comes back empty and the empty roster
+  is ignored.
+- When the roster really empties on the same boot, every station is checked
+  out in the incident.
 
 ---
 

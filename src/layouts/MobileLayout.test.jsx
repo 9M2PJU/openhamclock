@@ -22,10 +22,13 @@ vi.mock('../components', () => {
   };
 });
 vi.mock('../components/LogbookPanel.jsx', () => ({ default: () => <div data-stub="LogbookPanel">LogbookPanel</div> }));
+vi.mock('../components/MobileEmcommCard.jsx', () => ({
+  default: () => <div data-stub="MobileEmcommCard">MobileEmcommCard</div>,
+}));
 vi.mock('../contexts/RigContext.jsx', () => ({ useRig: () => ({ tuneTo: () => {} }) }));
 
 import MobileLayout from './MobileLayout.jsx';
-import { MOBILE_CARD_KEY } from '../utils/mobileLayout.js';
+import { MOBILE_CARD_KEY, MOBILE_CARD_PREFS_KEY, PREVIOUS_LAYOUT_KEY } from '../utils/mobileLayout.js';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -81,11 +84,18 @@ describe('MobileLayout', () => {
     expect(text).toContain('A12');
     expect(container.querySelector('[data-stub="WorldMap"]')).not.toBeNull();
 
+    const ids = [...container.querySelectorAll('.ohc-mobile-card')].map((c) => c.dataset.card);
+    expect(ids[0]).toBe('dx-cluster');
+    expect(ids).toContain('logbook');
+    expect(ids).not.toContain('aprs'); // APRS layer is off
+    expect(container.querySelectorAll('.ohc-mobile-dot')).toHaveLength(ids.length);
+
+    // Each name appears once: panels with their own header get no card title,
+    // plain cards (weather, satellites) keep a tappable title bar.
     const heads = [...container.querySelectorAll('.ohc-mobile-card-head')].map((b) => b.textContent);
-    expect(heads[0]).toContain('DX Cluster');
-    expect(heads.some((h) => h.includes('Logbook'))).toBe(true);
-    expect(heads.some((h) => h.includes('APRS'))).toBe(false); // APRS layer is off
-    expect(container.querySelectorAll('.ohc-mobile-dot')).toHaveLength(heads.length);
+    expect(heads.some((h) => h.includes('DX Cluster'))).toBe(false);
+    expect(heads.some((h) => h.includes('Weather'))).toBe(true);
+    expect(container.querySelector('.ohc-mobile-expand-btn')).not.toBeNull(); // full screen for the active card
 
     // Only the first card and its neighbour are mounted
     expect(container.querySelector('[data-stub="DXClusterPanel"]')).not.toBeNull();
@@ -112,10 +122,11 @@ describe('MobileLayout', () => {
   it('opens a card full screen and Back returns', async () => {
     setViewport(390, 844);
     const { container, unmount } = mount();
-    act(() => container.querySelector('.ohc-mobile-card-head').click());
+    act(() => container.querySelector('.ohc-mobile-expand-btn').click());
     const dlg = container.querySelector('.ohc-mobile-fullscreen');
     expect(dlg).not.toBeNull();
-    expect(dlg.textContent).toContain('DX Cluster');
+    expect(dlg.getAttribute('aria-label')).toBe('DX Cluster');
+    expect(dlg.querySelector('.ohc-mobile-card-title')).toBeNull(); // the panel names itself
     expect(dlg.querySelector('[data-stub="DXClusterPanel"]')).not.toBeNull();
     // Not mounted twice while expanded
     expect(container.querySelectorAll('[data-stub="DXClusterPanel"]')).toHaveLength(1);
@@ -125,6 +136,11 @@ describe('MobileLayout', () => {
       await new Promise((r) => setTimeout(r, 30));
     });
     expect(container.querySelector('.ohc-mobile-fullscreen')).toBeNull();
+
+    // A plain card's own title bar still opens it, and shows its name
+    act(() => container.querySelectorAll('.ohc-mobile-dot')[6].click()); // Weather
+    act(() => container.querySelector('.ohc-mobile-card[data-card="weather"] .ohc-mobile-card-head').click());
+    expect(container.querySelector('.ohc-mobile-fullscreen .ohc-mobile-card-title').textContent).toContain('Weather');
     unmount();
   });
 
@@ -136,8 +152,43 @@ describe('MobileLayout', () => {
     const row = container.querySelector('.ohc-mobile-body-row');
     expect(row.firstElementChild.classList.contains('ohc-mobile-map')).toBe(true);
     expect(row.querySelector('.ohc-mobile-side .ohc-mobile-strip')).not.toBeNull();
-    const heads = [...container.querySelectorAll('.ohc-mobile-card-head')].map((b) => b.textContent);
-    expect(heads.some((h) => h.includes('APRS'))).toBe(true);
+    const ids = [...container.querySelectorAll('.ohc-mobile-card')].map((c) => c.dataset.card);
+    expect(ids).toContain('aprs');
+    unmount();
+  });
+
+  it('EmComm card is opt-in through the card picker and saved', () => {
+    setViewport(390, 844);
+    const { container, unmount } = mount();
+    const ids = () => [...container.querySelectorAll('.ohc-mobile-card')].map((c) => c.dataset.card);
+    expect(ids()).not.toContain('emcomm');
+    expect(container.querySelector('[data-stub="MobileEmcommCard"]')).toBeNull();
+
+    act(() => container.querySelector('button[aria-label="Choose cards"]').click());
+    const sheet = container.querySelector('.ohc-mobile-picker');
+    expect(sheet).not.toBeNull();
+    const emcommRow = [...sheet.querySelectorAll('label')].find((l) => l.textContent.includes('EmComm'));
+    expect(emcommRow.querySelector('input').checked).toBe(false);
+    act(() => emcommRow.querySelector('input').click());
+    expect(ids()[0]).toBe('emcomm');
+    expect(JSON.parse(localStorage.getItem(MOBILE_CARD_PREFS_KEY)).enabled.emcomm).toBe(true);
+
+    // Switching a regular card off removes it
+    const solarRow = [...sheet.querySelectorAll('label')].find((l) => l.textContent.includes('Solar'));
+    act(() => solarRow.querySelector('input').click());
+    expect(ids()).not.toContain('solar');
+    unmount();
+  });
+
+  it('EmComm card defaults on for an operator arriving from the EmComm layout', () => {
+    setViewport(390, 844);
+    localStorage.setItem(PREVIOUS_LAYOUT_KEY, 'emcomm');
+    const { container, unmount } = mount();
+    expect(container.querySelector('.ohc-mobile-card').dataset.card).toBe('emcomm');
+    // Its data component is mounted because it is the visible card
+    expect(container.querySelector('[data-stub="MobileEmcommCard"]')).not.toBeNull();
+    // ...and the default is saved so a later layout hop can't flip it
+    expect(JSON.parse(localStorage.getItem(MOBILE_CARD_PREFS_KEY)).enabled.emcomm).toBe(true);
     unmount();
   });
 

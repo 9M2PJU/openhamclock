@@ -13,14 +13,23 @@ import { useAPRSTelemetry } from '../hooks/useAPRSTelemetry.js';
 import { calculateDistance, formatDistance, maidenheadToLatLon, latLonToMaidenhead } from '../utils/geo.js';
 import { esc } from '../utils/escapeHtml.js';
 import { apiFetch } from '../utils/apiFetch.js';
+import { useAprsShelterReports } from '../hooks/useAprsShelterReports.js';
 import { mergeShelters } from '../utils/emcommShelters.js';
 import { sendAprsMessage } from '../utils/aprsMessageSend.js';
 import { IcsFormsOverlay } from '../components/IcsFormsPanel.jsx';
 import NetControlPanel from '../components/NetControlPanel.jsx';
 import { getNetControlRoster, mergeRosters, NET_CONTROL_ROSTER_EVENT } from '../utils/netControl.js';
 import { useSharedIncident } from '../hooks/useSharedIncident.js';
-import EmcommIncidentPanel, { IncidentStatusPill } from '../components/EmcommIncidentPanel.jsx';
-import { mergeDisplayedRoster, mergeFieldReports, mergeShelterReports } from '../utils/incidentSync.js';
+import EmcommIncidentPanel, { IncidentStatusPill, IncidentAdminButtons } from '../components/EmcommIncidentPanel.jsx';
+import {
+  mergeDisplayedRoster,
+  mergeFieldReports,
+  mergeShelterReports,
+  messageHistoryFromEvents,
+  mergeMessageHistory,
+  annotateSharedEvents,
+  sharedMsgLabel,
+} from '../utils/incidentSync.js';
 
 // Sidebar panel collapse state (#1188). Mode decides what a fresh visit to
 // the layout starts with: 'remember' restores each section's last state,
@@ -77,7 +86,8 @@ const PANEL_TOOL_BTN = {
 };
 import { winlinkModeLabel, winlinkModeColor } from '../utils/winlinkModes.js';
 import { useWinlinkReach, REACH_PRIORITY } from '../hooks/useWinlinkReach.js';
-import { STATUS_COLORS, STATUS_ORDER, reachColorKey } from '../utils/winlinkReach.js';
+import { STATUS_COLORS, STATUS_ORDER, reachColorKey, reachMarkerStyle } from '../utils/winlinkReach.js';
+import { reachPopupLine } from '../utils/winlinkReachPopup.js';
 import { stationAgeMinutes, formatStationAge } from '../utils/aprsStationAge.js';
 import { requestMapFocus } from '../utils/mapFocus.js';
 import {
@@ -88,6 +98,7 @@ import {
   eventsToCSV,
   buildPrintHtml,
   diffAdded,
+  activeEvents,
   EVENT_TYPE_META,
 } from '../utils/emcommEventLog.js';
 
@@ -199,7 +210,9 @@ const FIELD_REPORTS_DOCS_URL =
   'https://github.com/accius/openhamclock/blob/main/rig-bridge/README.md#winlink-express-csv-ingest-beta';
 
 /** Field reports from the fldigi plugin's flmsg watcher (vs Winlink Express CSV). */
-const isNbemsReport = (r) => r?.source === 'nbems-flmsg' || /\(NBEMS\)/.test(r?.formType || '');
+const isNbemsReport = (r) => /^nbems-flmsg/.test(r?.source || '') || /\(NBEMS\)/.test(r?.formType || '');
+/** An NBEMS draft or sent form (only forwarded when the plugin's flmsgIncludeLocal is on). */
+const isLocalNbems = (r) => r?.source === 'nbems-flmsg-local' || r?.extra?.origin === 'local';
 
 const EVENT_BTN_STYLE = {
   background: '#1a1f2e',
@@ -272,6 +285,7 @@ export default function EmcommLayout(props) {
   const [aprsSource, setAprsSource] = useState('all');
   // Net operations
   const [netRoster, setNetRoster] = useState([]);
+  const [rosterBootId, setRosterBootId] = useState(null);
   // Voice-net check-ins from the Net Control panel, in the same roster entry
   // shape. Merged into the roster for display and the EmComm-only map filter
   // only — the event-log diff below keeps watching the APRS roster alone,
@@ -291,7 +305,7 @@ export default function EmcommLayout(props) {
   const localRoster = useMemo(() => mergeRosters(netRoster, voiceRoster), [netRoster, voiceRoster]);
   // RF-heard APRS shelter reports (kept alongside FEMA data — still works
   // via local TNC when internet infrastructure is down)
-  const [aprsShelterReports, setAprsShelterReports] = useState([]);
+  const aprsShelterReports = useAprsShelterReports({ enabled: true });
   // APRS telemetry (sensor dashboards)
   const { telemetry } = useAPRSTelemetry({ enabled: true });
   const [messageTarget, setMessageTarget] = useState(null); // callsign to message
@@ -352,6 +366,7 @@ export default function EmcommLayout(props) {
   const incident = useSharedIncident({
     callsign: config.callsign,
     localRoster,
+    rosterBootId,
     fieldReports,
     shelterReports: aprsShelterReports,
   });
@@ -369,7 +384,52 @@ export default function EmcommLayout(props) {
     () => (incidentJoined ? mergeShelterReports(aprsShelterReports, incidentState) : aprsShelterReports),
     [incidentJoined, aprsShelterReports, incidentState],
   );
-  const displayEventLog = incidentJoined ? incident.events : eventLog;
+  // The shared log, each entry marked as this station's own or another site's
+  // (message numbers are per station: another site's read "SITE:n").
+  const rawIncidentEvents = incident.events;
+  const incidentEvents = useMemo(
+    () => (incidentJoined ? annotateSharedEvents(rawIncidentEvents, new Set(eventLog.map((e) => e.id))) : []),
+    [incidentJoined, rawIncidentEvents, eventLog],
+  );
+  // Joined: a withdrawal logged at any site hides its entry here too.
+  const sharedActiveEvents = useMemo(() => activeEvents(incidentEvents), [incidentEvents]);
+  const displayEventLog = incidentJoined ? sharedActiveEvents : eventLog;
+  // Admin (holder of the incident's admin key): correct or remove shared records.
+  const incidentEditRecord = incident.editRecord;
+  const incidentDeleteRecord = incident.deleteRecord;
+  const editSharedRecord = useCallback(
+    async (kind, id, field, current) => {
+      const next = window.prompt(
+        t('emcomm.incident.editPrompt', { defaultValue: 'Correct this entry for every station:' }),
+        current || '',
+      );
+      if (next == null || next === current) return;
+      try {
+        await incidentEditRecord(kind, id, { [field]: next });
+      } catch (err) {
+        window.alert(err?.message || String(err));
+      }
+    },
+    [incidentEditRecord, t],
+  );
+  const deleteSharedRecord = useCallback(
+    async (kind, id) => {
+      if (
+        !window.confirm(
+          t('emcomm.incident.deleteConfirm', {
+            defaultValue: 'Delete this entry from the shared incident for everyone?',
+          }),
+        )
+      )
+        return;
+      try {
+        await incidentDeleteRecord(kind, id);
+      } catch (err) {
+        window.alert(err?.message || String(err));
+      }
+    },
+    [incidentDeleteRecord, t],
+  );
   // High-water mark for received-APRS-message polling (only log traffic from this session on)
   const sessionStartRef = useRef(Date.now());
   const msgSinceRef = useRef(sessionStartRef.current);
@@ -403,7 +463,7 @@ export default function EmcommLayout(props) {
     };
   }, []);
 
-  // Poll net roster
+  // Poll net roster (the boot id tells a server restart from a real roster clear)
   useEffect(() => {
     const fetchRoster = async () => {
       try {
@@ -411,27 +471,12 @@ export default function EmcommLayout(props) {
         if (res.ok) {
           const data = await res.json();
           setNetRoster(data.roster || []);
+          setRosterBootId(data.bootId || null);
         }
       } catch (e) {}
     };
     fetchRoster();
     const timer = setInterval(fetchRoster, 10000);
-    return () => clearInterval(timer);
-  }, []);
-
-  // Poll APRS shelter reports (RF-heard shelter status messages)
-  useEffect(() => {
-    const fetchAprsShelters = async () => {
-      try {
-        const res = await apiFetch('/api/aprs/shelters', { cache: 'no-store' });
-        if (res?.ok) {
-          const data = await res.json();
-          setAprsShelterReports(Array.isArray(data.shelters) ? data.shelters : []);
-        }
-      } catch (e) {}
-    };
-    fetchAprsShelters();
-    const timer = setInterval(fetchAprsShelters, 30000);
     return () => clearInterval(timer);
   }, []);
 
@@ -875,48 +920,6 @@ export default function EmcommLayout(props) {
       overlayLayersRef.current.push(marker);
     });
 
-    // Winlink gateway markers — match the panel data exactly. Closest 25 get
-    // a thin EMCOMM-aware ring; the rest are small mode-coloured dots so the
-    // dashboard shows full coverage without drowning out APRS/shelter pins.
-    winlinkGateways.forEach((gw, idx) => {
-      const channelsByFreq = gw.channels.slice().sort((a, b) => a.frequency - b.frequency);
-      const dominantMode = channelsByFreq[0]?.mode;
-      const color = winlinkModeColor(dominantMode);
-      const isNearby = idx < 25;
-      const marker = L.circleMarker([gw.lat, gw.lon], {
-        radius: isNearby ? 5 : 3,
-        color: gw.hasEmcomm ? '#ef4444' : color,
-        fillColor: color,
-        fillOpacity: isNearby ? 0.7 : 0.45,
-        weight: gw.hasEmcomm ? 2 : 1,
-      });
-      const channelRows = channelsByFreq
-        .slice(0, 6)
-        .map(
-          (c) =>
-            `<tr><td style="padding:1px 6px 1px 0;color:#aaa">${(c.frequency / 1e6).toFixed(3)}</td>` +
-            `<td style="padding:1px 6px 1px 0;color:${winlinkModeColor(c.mode)};font-weight:600">${esc(c.modeLabel)}</td>` +
-            `<td style="padding:1px 0;color:#888;font-size:9px">${esc(c.serviceCode)}</td></tr>`,
-        )
-        .join('');
-      const moreCount = channelsByFreq.length - 6;
-      const distanceLine =
-        gw.distance != null
-          ? `<br><span style="color:#888">${formatDistance(gw.distance, config.allUnits?.dist || 'imperial')} away</span>`
-          : '';
-      const popupHtml = `
-        <div style="font-family:var(--font-mono);font-size:11px;min-width:180px">
-          <b style="color:#3b82f6">📬 ${esc(gw.callsign)}</b>
-          ${gw.hasEmcomm ? ' <span style="color:#ef4444;font-size:9px;font-weight:700">EMCOMM</span>' : ''}
-          <br><span style="color:#888;font-size:10px">Grid ${esc(gw.gridsquare)}</span>${distanceLine}
-          <table style="border-collapse:collapse;font-size:10px;margin-top:4px">${channelRows}</table>
-          ${moreCount > 0 ? `<div style="color:#666;font-size:9px;margin-top:3px">+${moreCount} more channel${moreCount === 1 ? '' : 's'}</div>` : ''}
-        </div>`;
-      marker.bindPopup(popupHtml);
-      marker.addTo(map);
-      overlayLayersRef.current.push(marker);
-    });
-
     // Field report markers (Winlink Express forms via rig-bridge) — clipboard icon
     displayFieldReports.forEach((r) => {
       if (r.lat == null || r.lon == null) return;
@@ -950,7 +953,74 @@ export default function EmcommLayout(props) {
       });
       overlayLayersRef.current = [];
     };
-  }, [config.location, alerts, mergedShelters, emcommStationsWithDistance, winlinkGateways, displayFieldReports]);
+  }, [config.location, alerts, mergedShelters, emcommStationsWithDistance, displayFieldReports]);
+
+  // Winlink gateway markers — their own layer set so reachability updates
+  // (throttled to 1/s while predictions stream in) redraw only these, not the
+  // alert/shelter/station overlays. Coloured like the Winlink Gateways map
+  // layer: predicted status when the shared runner has results (grey, faded
+  // dots for gateways it did not predict), mode family otherwise. The
+  // EMCOMM red ring and the nearest-25 emphasis are kept.
+  const winlinkLayersRef = useRef([]);
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!map || typeof window.L === 'undefined') return undefined;
+    const L = window.L;
+    const byCall = winlinkReach.byCall;
+    const units = config.allUnits?.dist || 'imperial';
+
+    winlinkGateways.forEach((gw, idx) => {
+      const channelsByFreq = gw.channels.slice().sort((a, b) => a.frequency - b.frequency);
+      const modeColor = winlinkModeColor(channelsByFreq[0]?.mode);
+      const isNearby = idx < 25;
+      const style = reachMarkerStyle(byCall, gw.callsign, { opacity: 1, modeColor });
+      const radius = byCall ? (style.dim ? 3 : isNearby ? 6 : 5) : isNearby ? 5 : 3;
+      const fillOpacity = byCall ? (style.dim ? 0.35 : 0.8) : isNearby ? 0.7 : 0.45;
+      const marker = L.circleMarker([gw.lat, gw.lon], {
+        radius,
+        color: gw.hasEmcomm ? '#ef4444' : style.fillColor,
+        fillColor: style.fillColor,
+        fillOpacity,
+        weight: gw.hasEmcomm ? 2 : 1,
+      });
+      const channelRows = channelsByFreq
+        .slice(0, 6)
+        .map(
+          (c) =>
+            `<tr><td style="padding:1px 6px 1px 0;color:#aaa">${(c.frequency / 1e6).toFixed(3)}</td>` +
+            `<td style="padding:1px 6px 1px 0;color:${winlinkModeColor(c.mode)};font-weight:600">${esc(c.modeLabel)}</td>` +
+            `<td style="padding:1px 0;color:#888;font-size:9px">${esc(c.serviceCode)}</td></tr>`,
+        )
+        .join('');
+      const moreCount = channelsByFreq.length - 6;
+      const distanceLine =
+        gw.distance != null ? `<br><span style="color:#888">${formatDistance(gw.distance, units)} away</span>` : '';
+      const reachHtml = byCall ? reachPopupLine(byCall[gw.callsign], t) : '';
+      const popupHtml = `
+        <div style="font-family:var(--font-mono);font-size:11px;min-width:180px">
+          <b style="color:#3b82f6">📬 ${esc(gw.callsign)}</b>
+          ${gw.hasEmcomm ? ' <span style="color:#ef4444;font-size:9px;font-weight:700">EMCOMM</span>' : ''}
+          <br><span style="color:#888;font-size:10px">Grid ${esc(gw.gridsquare)}</span>${distanceLine}
+          ${reachHtml ? `<div style="margin-top:4px">${reachHtml}</div>` : ''}
+          <table style="border-collapse:collapse;font-size:10px;margin-top:4px">${channelRows}</table>
+          ${moreCount > 0 ? `<div style="color:#666;font-size:9px;margin-top:3px">+${moreCount} more channel${moreCount === 1 ? '' : 's'}</div>` : ''}
+        </div>`;
+      marker.bindPopup(popupHtml);
+      marker.addTo(map);
+      winlinkLayersRef.current.push(marker);
+    });
+
+    return () => {
+      winlinkLayersRef.current.forEach((layer) => {
+        try {
+          map.removeLayer(layer);
+        } catch (e) {
+          /* ignore */
+        }
+      });
+      winlinkLayersRef.current = [];
+    };
+  }, [winlinkGateways, winlinkReach.byCall, config.allUnits?.dist, t]);
 
   // Click shelter to pan map
   // Bring a panel row's target (shelter, station, gateway, roster op, field
@@ -997,14 +1067,16 @@ export default function EmcommLayout(props) {
           if (!seen.has(k)) merged.push(m);
         }
         merged.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
-        setHistoryMsgs(merged);
+        // Joined to a shared incident: messages other sites sent or received too.
+        const shared = incidentJoined ? messageHistoryFromEvents(sharedActiveEvents, key) : [];
+        setHistoryMsgs(shared.length ? mergeMessageHistory(merged, shared) : merged);
       } catch {
         setHistoryMsgs([]);
       } finally {
         setHistoryLoading(false);
       }
     },
-    [eventLog],
+    [eventLog, incidentJoined, sharedActiveEvents],
   );
   const scheduleHistoryHover = useCallback(
     (call) => {
@@ -1079,7 +1151,12 @@ export default function EmcommLayout(props) {
   }, [config.callsign, config.location, incidentJoined, incident.events]);
 
   const clearEventLog = useCallback(() => {
-    if (!window.confirm('Clear the entire EmComm event log? This cannot be undone.')) return;
+    if (
+      !window.confirm(
+        'Clear the entire EmComm event log? This cannot be undone. Station message numbers keep counting — reset them under ICS Forms → 309.',
+      )
+    )
+      return;
     clearEvents();
     // Two earlier behaviours were both wrong. Leaving the diff snapshots
     // alone meant nothing could log again until a brand-new station appeared
@@ -1760,7 +1837,12 @@ export default function EmcommLayout(props) {
           </PanelSection>
 
           {/* NBEMS — fldigi status / RX / send and ICS-213 via the rig-bridge fldigi plugin */}
-          <PanelSection title="NBEMS" color="#38bdf8" panels={panels}>
+          <PanelSection
+            title={t('emcomm.panel.nbems', { defaultValue: 'NBEMS' })}
+            panelKey="NBEMS"
+            color="#38bdf8"
+            panels={panels}
+          >
             <NbemsPanel apiToken={config.rigControl?.apiToken || ''} />
           </PanelSection>
 
@@ -1810,10 +1892,39 @@ export default function EmcommLayout(props) {
                       >
                         {isNbemsReport(r) ? 'NBEMS' : 'WINLINK'}
                       </span>
+                      {isLocalNbems(r) && (
+                        <span
+                          title={t('emcomm.fieldReports.localTitle', {
+                            defaultValue: 'A draft or sent form from this station’s flmsg, not received traffic',
+                          })}
+                          style={{ marginLeft: '4px', fontSize: '8px', fontWeight: 700, color: '#888' }}
+                        >
+                          {t('emcomm.fieldReports.local', { defaultValue: 'LOCAL' })}
+                        </span>
+                      )}
+                      {r?.extra?.origin === 'unknown' && (
+                        <span
+                          title={t('emcomm.fieldReports.originUnknownTitle', {
+                            defaultValue:
+                              'Saved in flmsg after being sent by a station; with no callsign set, Rig Bridge cannot tell whether that was you',
+                          })}
+                          style={{ marginLeft: '4px', fontSize: '8px', fontWeight: 700, color: '#f59e0b' }}
+                        >
+                          {t('emcomm.fieldReports.originUnknown', { defaultValue: 'ORIGIN?' })}
+                        </span>
+                      )}
                     </div>
                     <span style={{ color: '#888', fontSize: '10px', flexShrink: 0 }}>
                       {r.age < 1 ? 'now' : r.age < 60 ? `${r.age}m ago` : `${Math.floor(r.age / 60)}h ago`}
                     </span>
+                    {incident.isAdmin && incidentState.reports?.[r.fromIncident ? r.id : `field-${r.id}`] && (
+                      <IncidentAdminButtons
+                        onEdit={() =>
+                          editSharedRecord('report', r.fromIncident ? r.id : `field-${r.id}`, 'text', r.text)
+                        }
+                        onDelete={() => deleteSharedRecord('report', r.fromIncident ? r.id : `field-${r.id}`)}
+                      />
+                    )}
                   </div>
                   {r.text && (
                     <div style={{ color: '#aaa', fontSize: '10px', marginTop: '2px' }}>
@@ -1836,7 +1947,12 @@ export default function EmcommLayout(props) {
             panels={panels}
             bodyMaxHeight="none"
           >
-            <NetControlPanel callsign={config.callsign} timeZone={config.timezone} embedded />
+            <NetControlPanel
+              callsign={config.callsign}
+              timeZone={config.timezone}
+              location={config.location}
+              embedded
+            />
           </PanelSection>
 
           {/* Net Operations Panel */}
@@ -1850,6 +1966,8 @@ export default function EmcommLayout(props) {
                 return (
                   <div
                     key={op.call}
+                    data-testid="roster-row"
+                    data-call={op.call}
                     onClick={hasPos ? () => panToTarget(op) : undefined}
                     onMouseEnter={() => scheduleHistoryHover(op.call)}
                     onMouseLeave={cancelHistoryHover}
@@ -2004,6 +2122,7 @@ export default function EmcommLayout(props) {
                 .map((ev) => (
                   <div
                     key={ev.id}
+                    data-testid="event-row"
                     style={{
                       padding: '3px 8px',
                       fontSize: '10px',
@@ -2031,7 +2150,16 @@ export default function EmcommLayout(props) {
                       {ev.callsign ? <span style={{ color: '#ddd' }}>{ev.callsign} — </span> : null}
                       {ev.summary}
                       {incidentJoined && ev.site ? <span style={{ color: '#38bdf8' }}> @{ev.site}</span> : null}
+                      {incidentJoined && sharedMsgLabel(ev) ? (
+                        <span style={{ color: '#666', fontFamily: 'var(--font-mono)' }}> #{sharedMsgLabel(ev)}</span>
+                      ) : null}
                     </span>
+                    {incident.isAdmin && incidentState.events?.[ev.id] && (
+                      <IncidentAdminButtons
+                        onEdit={() => editSharedRecord('event', ev.id, 'summary', ev.summary)}
+                        onDelete={() => deleteSharedRecord('event', ev.id)}
+                      />
+                    )}
                   </div>
                 ))
             )}
@@ -2219,7 +2347,14 @@ export default function EmcommLayout(props) {
           )}
         </div>
       </div>
-      {icsForm && <IcsFormsOverlay config={config} initialForm={icsForm} onClose={() => setIcsForm(null)} />}
+      {icsForm && (
+        <IcsFormsOverlay
+          config={config}
+          initialForm={icsForm}
+          onClose={() => setIcsForm(null)}
+          sharedEvents={incidentJoined ? incidentEvents : undefined}
+        />
+      )}
     </div>
   );
 }
@@ -2386,12 +2521,20 @@ function ResourceSummary({ stations, panels }) {
 }
 
 /** Collapsible panel section wrapper */
-function PanelSection({ title, count, color, extra, panels, bodyMaxHeight = '250px', children }) {
+/**
+ * Collapsible sidebar section. The collapsed state is remembered under
+ * `panelKey` — a fixed, untranslated name — falling back to `title`, so a
+ * translated title does not lose the setting when the language changes.
+ */
+function PanelSection({ title, panelKey, count, color, extra, panels, bodyMaxHeight = '250px', children }) {
+  const key = panelKey || title;
   const [localCollapsed, setLocalCollapsed] = useState(false);
-  const collapsed = panels ? panels.collapsedFor(title) : localCollapsed;
-  const setCollapsed = panels ? () => panels.toggle(title) : setLocalCollapsed;
+  const collapsed = panels ? panels.collapsedFor(key) : localCollapsed;
+  const setCollapsed = panels ? () => panels.toggle(key) : setLocalCollapsed;
   return (
-    <div style={{ background: '#0d0d0d', borderRadius: '6px', overflow: 'hidden' }}>
+    // flexShrink 0: the rail is a scrolling flex column; without it, once the
+    // panels outgrow the rail every section is squashed and its content clipped.
+    <div style={{ background: '#0d0d0d', borderRadius: '6px', overflow: 'hidden', flexShrink: 0 }}>
       <div
         style={{
           display: 'flex',

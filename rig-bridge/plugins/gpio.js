@@ -13,10 +13,12 @@
  *   countdownGreenOut / countdownRedOut   countdown running / expired
  *   satOut            1 Hz the minute before AOS, steady during the pass,
  *                     2 Hz for the last minute (browser posts /api/indicators)
- *   lightningOut      lightning antenna-protection relay — engaged while the
- *                     browser's lightning guard asks for it (`lightningRelay`
- *                     in /api/indicators). Off unless a pin is assigned. Held
- *                     when the browser goes quiet (lightningHoldWhenStale);
+ *   lightningOut      lightning antenna-protection relay — engaged while ANY
+ *                     display's lightning guard (or the optional headless guard
+ *                     in this bridge, `lightningHeadless`) asks for it; see
+ *                     LightningRelayArbiter in lib/gpio-logic.js. A display
+ *                     that goes quiet keeps its claim for its all-clear time
+ *                     (lightningHoldWhenStale). Off unless a pin is assigned.
  *                     `lightningFailSafe` inverts the line so the relay is
  *                     energised to keep the antenna CONNECTED.
  *
@@ -32,12 +34,15 @@
  * API:
  *   GET  /api/gpio/status
  *   POST /api/gpio/mock/input  { name: 'pttIn' | pin: 16, level: 0|1 }  (mock backend only)
+ *   POST /api/gpio/lightning/test  { distanceKm, bearingDeg } | { lat, lon }
+ *        synthetic strike for the headless lightning guard (token-protected)
  */
 
 const fs = require('fs');
 const path = require('path');
 const { spawn, execFile } = require('child_process');
 const logic = require('../lib/gpio-logic');
+const { HeadlessLightningGuard } = require('../lib/lightning-headless');
 
 let _currentInstance = null;
 
@@ -319,7 +324,7 @@ const descriptor = {
 
   registerRoutes(app) {
     app.get('/api/gpio/status', (req, res) => {
-      if (!_currentInstance) return res.json({ enabled: false, running: false });
+      if (!_currentInstance) return res.json({ enabled: false, running: false, features: logic.GPIO_FEATURES });
       res.json(_currentInstance.getStatus());
     });
     app.post('/api/gpio/mock/input', (req, res) => {
@@ -330,8 +335,25 @@ const descriptor = {
     });
   },
 
+  registerAuthRoutes(app, requireAuth) {
+    // Synthetic strike for the headless lightning guard: { distanceKm, bearingDeg } or { lat, lon }
+    app.post('/api/gpio/lightning/test', requireAuth, (req, res) => {
+      if (!_currentInstance) return res.status(503).json({ error: 'GPIO plugin not running' });
+      const b = req.body || {};
+      const num = (v) => (v === undefined || v === null || v === '' ? undefined : Number(v));
+      const r = _currentInstance.injectLightning({
+        distanceKm: num(b.distanceKm),
+        bearingDeg: num(b.bearingDeg),
+        lat: num(b.lat),
+        lon: num(b.lon),
+      });
+      if (r.error) return res.status(400).json(r);
+      res.json(r);
+    });
+  },
+
   create(config, services = {}) {
-    const { updateState, state, pluginBus, onStateChange, removeStateChangeListener } = services;
+    const { updateState, state, pluginBus, onStateChange, removeStateChangeListener, saveConfig } = services;
     const cfg = () => config.gpio || {};
     const log = (...a) => console.log('[GPIO]', ...a);
     const vlog = (...a) => cfg().verbose && console.log('[GPIO]', ...a);
@@ -350,7 +372,12 @@ const descriptor = {
     const outputLevels = {}; // output name → bool (logical)
     let indicators = logic.sanitizeIndicators(null);
     let indicatorsAt = 0;
-    let lightningAt = 0; // last report that carried lightningRelay
+    let arbiter = new logic.LightningRelayArbiter({
+      staleMs: INDICATORS_STALE_MS,
+      holdWhenStale: cfg().lightningHoldWhenStale !== false,
+    });
+    let lastDecision = { engaged: false, reason: 'clear', holdUntil: null, reporters: [] };
+    let headless = null;
     let alarmSilenced = false;
     let rigPtt = !!(state && state.ptt);
 
@@ -403,8 +430,7 @@ const descriptor = {
           pttIn: !!inputActive.pttIn,
           indicators,
           indicatorsStale: now - indicatorsAt > INDICATORS_STALE_MS,
-          lightningStale: now - lightningAt > INDICATORS_STALE_MS,
-          lightningHoldWhenStale: cfg().lightningHoldWhenStale !== false,
+          lightningEngaged: (lastDecision = arbiter.decide(now)).engaged,
           alarmSilenced,
         },
         now,
@@ -452,14 +478,70 @@ const descriptor = {
       if (prop === 'ptt') rigPtt = !!value;
     };
     const onIndicators = (body) => {
-      const { indicators: next, lightningReported } = logic.mergeIndicators(indicators, body);
+      const next = logic.sanitizeIndicators(body);
       if (!next.alarm) alarmSilenced = false;
+      const now = Date.now();
+      if (next.lightningRelay !== null && next.lightningGuard) applyReportedGuardSettings(next.lightningGuard);
+      if (next.lightningRelay !== null) {
+        arbiter.report(
+          next.displayId ? `display:${next.displayId}` : 'display',
+          {
+            relay: next.lightningRelay,
+            level: next.lightning,
+            allClearMin: next.lightningAllClearMin,
+            override: next.lightningOverride,
+          },
+          now,
+        );
+      }
       indicators = next;
-      indicatorsAt = Date.now();
-      if (lightningReported) lightningAt = indicatorsAt;
+      indicatorsAt = now;
     };
 
+    /**
+     * A display that drives the relay sends its guard settings and location;
+     * the headless guard follows them (the most recent report wins) and they
+     * are saved, so a restart without any browser keeps them. `enabled` stays
+     * a bridge-side choice.
+     */
+    function applyReportedGuardSettings(reported) {
+      const g = config.gpio || (config.gpio = {});
+      const next = logic.applyGuardSettings(g.lightningHeadless, reported);
+      if (!next) return;
+      g.lightningHeadless = next;
+      vlog(`Lightning guard settings from a display: ${JSON.stringify(reported)}`);
+      if (headless) headless.setSettings(next);
+      if (typeof saveConfig === 'function') {
+        try {
+          saveConfig();
+        } catch (e) {}
+      }
+    }
+
+    // ── Headless lightning guard (optional; no browser needed) ─────────
+    function startHeadless() {
+      if (!(cfg().lightningHeadless || {}).enabled) return;
+      headless = new HeadlessLightningGuard({
+        settings: cfg().lightningHeadless,
+        log,
+        WebSocketImpl: services.lightningWebSocket, // tests inject a fake; default: the ws package
+        onStatus: (st) => {
+          arbiter.report(
+            'bridge',
+            { relay: st.relay, level: st.level, allClearMin: st.settings.allClearMin },
+            Date.now(),
+          );
+          emitGpioEvent();
+        },
+      });
+      headless.start();
+    }
+
     async function start() {
+      arbiter = new logic.LightningRelayArbiter({
+        staleMs: INDICATORS_STALE_MS,
+        holdWhenStale: cfg().lightningHoldWhenStale !== false,
+      });
       pinMap = logic.resolvePinMap(cfg().pins);
       if (pinMap.conflicts.length) log(`Pin conflicts ignored: ${pinMap.conflicts.join(', ')}`);
       const activeLow = cfg().activeLow !== false;
@@ -494,6 +576,7 @@ const descriptor = {
           if (name === 'pttIn' && updateState) updateState('onAir', inputActive[name]);
         }
       }
+      startHeadless();
       tickTimer = setInterval(() => tick().catch(() => {}), TICK_MS);
       emitGpioEvent();
     }
@@ -511,6 +594,8 @@ const descriptor = {
       tickTimer = null;
       if (removeStateChangeListener) removeStateChangeListener(onRigState);
       if (pluginBus) pluginBus.off('indicators', onIndicators);
+      if (headless) headless.stop();
+      headless = null;
       if (updateState) updateState('onAir', false);
       if (backend) {
         const b = backend;
@@ -528,6 +613,7 @@ const descriptor = {
 
     function getStatus() {
       return {
+        features: logic.GPIO_FEATURES,
         enabled: !!cfg().enabled,
         running,
         backend: backend ? backend.name : null,
@@ -543,11 +629,13 @@ const descriptor = {
         lightning: {
           pin: pinMap.outputs.lightningOut ?? null,
           relay: !!outputLevels.lightningOut,
-          requested: indicators.lightningRelay,
-          level: indicators.lightning,
-          reportAgeMs: lightningAt ? Date.now() - lightningAt : null,
+          engaged: lastDecision.engaged,
+          reason: lastDecision.reason,
+          holdUntil: lastDecision.holdUntil,
+          reporters: lastDecision.reporters,
           failSafe: !!cfg().lightningFailSafe,
           holdWhenStale: cfg().lightningHoldWhenStale !== false,
+          headless: headless ? headless.getStatus() : null,
         },
         // Mock backend only: raw line levels by BCM number (after inversion)
         ...(backend && backend.name === 'mock' && backend.getOutputs ? { mockLevels: backend.getOutputs() } : {}),
@@ -585,7 +673,23 @@ const descriptor = {
         : [];
     }
 
-    const instance = { connect, disconnect, getStatus, setMockInput, getSseSnapshot, _tick: tick };
+    /** Synthetic strike for the headless guard (POST /api/gpio/lightning/test). */
+    function injectLightning({ distanceKm, bearingDeg, lat, lon } = {}) {
+      if (!headless) return { error: 'Headless lightning guard is not enabled' };
+      const s = headless.injectStrike({ distanceKm, bearingDeg, lat, lon });
+      return s ? { success: true, strike: s, status: headless.getStatus() } : { error: 'No location configured' };
+    }
+
+    const instance = {
+      connect,
+      disconnect,
+      getStatus,
+      setMockInput,
+      injectLightning,
+      getSseSnapshot,
+      _tick: tick,
+      _arbiter: () => arbiter,
+    };
     _currentInstance = instance;
     return instance;
   },

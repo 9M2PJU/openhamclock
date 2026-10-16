@@ -1043,6 +1043,8 @@ function buildSetupHtml(version, firstRunToken = null) {
         { id: 'session', label: 'Session ID', type: 'text', default: '' },
         { id: 'pushInterval', label: 'Push Interval (ms)', type: 'number', default: 2000 },
         { id: 'pollInterval', label: 'Poll Interval (ms)', type: 'number', default: 1000 },
+        { id: 'commandKey', label: 'Command Key (from Connect Cloud Relay)', type: 'text', default: '' },
+        { id: 'allowUnsigned', label: 'Accept unsigned commands (unsafe)', type: 'checkbox', default: false },
         { id: 'relayAudio', label: 'Relay KiwiSDR audio to the Decoder panel (~12 kB/s while listening)', type: 'checkbox', default: false },
       ]},
       { key: 'meshcom', name: 'MeshCom UDP', maturity: 'beta', desc: 'Receive MeshCom LoRa mesh node positions, messages and telemetry via UDP JSON (port 1799)', fields: [
@@ -1106,17 +1108,24 @@ function buildSetupHtml(version, firstRunToken = null) {
       { key: 'gpio', name: 'Raspberry Pi GPIO', maturity: 'alpha', desc: 'ON-AIR / alarm / countdown / satellite / lightning-relay lines and PTT, countdown-restart and alarm-silence buttons — classic shack-display header pinout, no native modules (gpiod CLI or sysfs)', fields: [
         { id: 'backend', label: 'Backend', type: 'select', options: ['auto', 'gpiod', 'sysfs', 'mock'], default: 'auto' },
         { id: 'chip', label: 'gpiochip', type: 'text', default: 'gpiochip0' },
-        { id: 'pins.pttIn', label: 'PTT / ON-AIR input (BCM)', type: 'number', default: 16 },
-        { id: 'pins.countdownResetIn', label: 'Countdown button (BCM)', type: 'number', default: 26 },
-        { id: 'pins.alarmSilenceIn', label: 'Alarm silence button (BCM)', type: 'number', default: 5 },
-        { id: 'pins.onAirOut', label: 'ON-AIR LED (BCM)', type: 'number', default: 21 },
-        { id: 'pins.alarmOut', label: 'Alarm output (BCM)', type: 'number', default: 6 },
-        { id: 'pins.countdownGreenOut', label: 'Countdown green (BCM)', type: 'number', default: 13 },
-        { id: 'pins.countdownRedOut', label: 'Countdown red (BCM)', type: 'number', default: 19 },
-        { id: 'pins.satOut', label: 'Satellite output (BCM)', type: 'number', default: 20 },
-        { id: 'pins.lightningOut', label: 'Lightning relay output (BCM, -1 = off; suggested 25)', type: 'number', default: -1 },
+        { id: 'pins.pttIn', label: 'PTT / ON-AIR input (BCM or Pnn header pin)', type: 'text', default: '16' },
+        { id: 'pins.countdownResetIn', label: 'Countdown button (BCM or Pnn header pin)', type: 'text', default: '26' },
+        { id: 'pins.alarmSilenceIn', label: 'Alarm silence button (BCM or Pnn header pin)', type: 'text', default: '5' },
+        { id: 'pins.onAirOut', label: 'ON-AIR LED (BCM or Pnn header pin)', type: 'text', default: '21' },
+        { id: 'pins.alarmOut', label: 'Alarm output (BCM or Pnn header pin)', type: 'text', default: '6' },
+        { id: 'pins.countdownGreenOut', label: 'Countdown green (BCM or Pnn header pin)', type: 'text', default: '13' },
+        { id: 'pins.countdownRedOut', label: 'Countdown red (BCM or Pnn header pin)', type: 'text', default: '19' },
+        { id: 'pins.satOut', label: 'Satellite output (BCM or Pnn header pin)', type: 'text', default: '20' },
+        { id: 'pins.lightningOut', label: 'Lightning relay output (BCM or Pnn header pin, -1 = off; suggested 25 / P22)', type: 'text', default: '-1' },
         { id: 'lightningFailSafe', label: 'Lightning relay fail-safe (energise = antenna connected)', type: 'checkbox', default: false },
-        { id: 'lightningHoldWhenStale', label: 'Hold lightning relay when the browser goes quiet', type: 'checkbox', default: true },
+        { id: 'lightningHoldWhenStale', label: 'Hold lightning relay for the all-clear time when a display goes quiet', type: 'checkbox', default: true },
+        { id: 'lightningHeadless.enabled', label: 'Headless lightning guard (works with no browser open)', type: 'checkbox', default: false },
+        { id: 'lightningHeadless.lat', label: 'Headless guard latitude', type: 'text', default: '' },
+        { id: 'lightningHeadless.lon', label: 'Headless guard longitude', type: 'text', default: '' },
+        { id: 'lightningHeadless.warnKm', label: 'Headless guard warning radius (km)', type: 'number', default: 50 },
+        { id: 'lightningHeadless.alarmKm', label: 'Headless guard alarm radius (km)', type: 'number', default: 25 },
+        { id: 'lightningHeadless.allClearMin', label: 'Headless guard all-clear (min)', type: 'number', default: 30 },
+        { id: 'lightningHeadless.relayOn', label: 'Headless guard engages relay at', type: 'select', options: ['alarm', 'warn'], default: 'alarm' },
         { id: 'activeLow', label: 'Inputs active low (switch to ground)', type: 'checkbox', default: true },
         { id: 'outputActiveLow', label: 'Outputs active low', type: 'checkbox', default: false },
         { id: 'debounceMs', label: 'Debounce (ms)', type: 'number', default: 50 },
@@ -1152,6 +1161,8 @@ function buildSetupHtml(version, firstRunToken = null) {
         { id: 'flmsgEnabled', label: 'Watch flmsg folders', type: 'checkbox', default: true },
         { id: 'flmsgDirs', label: 'flmsg folders (blank = NBEMS.files defaults; separate with ;)', type: 'text', default: '' },
         { id: 'flmsgMaxAgeHours', label: 'Ignore forms older than (hours, at start-up)', type: 'number', default: 72 },
+        { id: 'flmsgIncludeLocal', label: 'Also forward my own drafts and sent forms', type: 'checkbox', default: false },
+        { id: 'flmsgDateFormat', label: 'Read ambiguous form dates as', type: 'select', options: ['auto', 'mdy', 'dmy', 'ymd', 'ydm'], default: 'auto' },
         { id: 'serverForward', label: 'Forward forms to OpenHamClock server', type: 'checkbox', default: true },
         { id: 'ohcUrl', label: 'OpenHamClock server URL', type: 'text', default: 'http://localhost:3000' },
         { id: 'verbose', label: 'Verbose logging', type: 'checkbox', default: false },
@@ -1230,6 +1241,22 @@ function buildSetupHtml(version, firstRunToken = null) {
           });
 
           card.appendChild(fields);
+        }
+
+        // fldigi: without a station callsign (here or in flmsg) forms saved in
+        // ICS/messages cannot be told apart from your own — say so.
+        if (plugin.key === 'fldigi' && enabled) {
+          const note = document.createElement('div');
+          note.style.cssText = 'display:none; margin-top:8px; padding:8px; border:1px solid #f59e0b; border-radius:4px; color:#f59e0b; font-size:11px; line-height:1.4;';
+          card.appendChild(note);
+          fetch('/api/fldigi/status').then(r => r.json()).then(st => {
+            if (st && st.running && !st.stationCall) {
+              note.textContent = 'No station callsign: set Your Callsign here (or your callsign in flmsg). ' +
+                'Until then, forms in ICS/messages that were sent by a station cannot be told apart from your own ' +
+                'and are forwarded to Field Reports tagged "origin unknown".';
+              note.style.display = 'block';
+            }
+          }).catch(() => {});
         }
 
         container.appendChild(card);
@@ -2430,6 +2457,17 @@ function createServer(registry, version) {
         return res.status(400).json({ success: false, error: 'Invalid port value for gps.gpsdPort' });
       }
     }
+    if (newConfig.gpio && newConfig.gpio.pins && typeof newConfig.gpio.pins === 'object') {
+      const { parsePin } = require('../lib/gpio-logic');
+      for (const [name, v] of Object.entries(newConfig.gpio.pins)) {
+        const off = v === -1 || v === '-1' || v === '' || v === null;
+        if (!off && parsePin(v) == null) {
+          return res
+            .status(400)
+            .json({ success: false, error: `gpio.pins.${name}: use a BCM number, Pnn (header pin) or -1` });
+        }
+      }
+    }
     if (newConfig.gpio && config.gpio.chip && !/^gpiochip\d{1,2}$/.test(String(config.gpio.chip))) {
       return res.status(400).json({ success: false, error: 'gpio.chip must look like gpiochip0' });
     }
@@ -2720,6 +2758,23 @@ function createServer(registry, version) {
   // plugins such as GPIO can drive LEDs and relays. Any
   // plugin may subscribe with pluginBus.on('indicators', fn).
   let lastIndicators = null;
+  const GUARD_KEYS = [
+    'lat',
+    'lon',
+    'warnKm',
+    'alarmKm',
+    'allClearMin',
+    'minStrikes',
+    'hysteresisPct',
+    'repeatCloser',
+    'relayOn',
+  ];
+  const pickGuardSettings = (g) =>
+    Object.fromEntries(
+      GUARD_KEYS.filter((k) => typeof g[k] === 'number' || typeof g[k] === 'boolean' || typeof g[k] === 'string').map(
+        (k) => [k, typeof g[k] === 'string' ? g[k].slice(0, 16) : g[k]],
+      ),
+    );
   app.post('/api/indicators', requireAuth, indicatorLimiter, (req, res) => {
     const body = req.body && typeof req.body === 'object' ? req.body : {};
     const clean = {
@@ -2731,6 +2786,18 @@ function createServer(registry, version) {
       // Lightning guard (optional — absent when the browser does not drive the relay)
       ...(typeof body.lightningRelay === 'boolean' ? { lightningRelay: body.lightningRelay } : {}),
       ...(['clear', 'warn', 'alarm'].includes(body.lightning) ? { lightning: body.lightning } : {}),
+      ...(Number.isFinite(body.lightningAllClearMin)
+        ? { lightningAllClearMin: Math.min(240, Math.max(1, Math.round(body.lightningAllClearMin))) }
+        : {}),
+      ...(['auto', 'on', 'off'].includes(body.lightningOverride) ? { lightningOverride: body.lightningOverride } : {}),
+      // Guard settings + location for the headless guard (sanitized again by the GPIO plugin)
+      ...(body.lightningGuard && typeof body.lightningGuard === 'object' && !Array.isArray(body.lightningGuard)
+        ? { lightningGuard: pickGuardSettings(body.lightningGuard) }
+        : {}),
+      // Stable per-display id so several displays can each hold a claim on the relay
+      ...(typeof body.displayId === 'string' && /^[A-Za-z0-9_-]{1,40}$/.test(body.displayId)
+        ? { displayId: body.displayId }
+        : {}),
       receivedAt: Date.now(),
     };
     lastIndicators = clean;

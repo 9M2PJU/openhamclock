@@ -58,6 +58,10 @@ import {
   readRunningNetRecord,
   commitRunningNet,
   pickNewer,
+  rebaseCheck,
+  bandPlanRegion,
+  parseNetFrequency,
+  formatOffset,
   livePeerCount,
   PEER_TTL_MS,
   NET_CONTROL_KEY,
@@ -84,6 +88,15 @@ import {
 import { loadNetSchedule, sortByNextOccurrence } from '../utils/netSchedule.js';
 import { formatMemoryFreq } from '../utils/freqMemories.js';
 import { recordEvent } from '../utils/emcommEventLog.js';
+import {
+  NET_REMOTE_CONFLICT_EVENT,
+  NET_CONFLICTS_CHANGED_EVENT,
+  CONFLICTS_KEY,
+  loadNetConflicts,
+  dismissNetConflict,
+} from '../utils/incidentNetBridge.js';
+import { applyMineStation, applyMineField } from '../utils/incidentNetMerge.js';
+import { StationConflictChip, NetConflictBar } from './NetConflictChip.jsx';
 import { apiFetch } from '../utils/apiFetch.js';
 import { callbookAuthHeaders } from '../utils/callbookAuth.js';
 import { spellPhonetic } from '../utils/phonetics.js';
@@ -208,9 +221,11 @@ function FlagPill({ def, active, onClick, title }) {
   );
 }
 
-export default function NetControlPanel({ callsign = '', embedded = false, timeZone = '' }) {
+export default function NetControlPanel({ callsign = '', embedded = false, timeZone = '', location = null }) {
   const { t } = useTranslation();
   const tz = timeZone || undefined;
+  // Band-plan region for standard repeater offsets, from the station location
+  const region = bandPlanRegion(location);
 
   // ── State ─────────────────────────────────────────────────────────────
   const [net, setNet] = useState(loadRunningNet);
@@ -236,6 +251,7 @@ export default function NetControlPanel({ callsign = '', embedded = false, timeZ
     ncs: callsign || '',
     freqMhz: null,
     mode: '',
+    offset: '',
   }));
   const [schedule, setSchedule] = useState(loadNetSchedule);
   const [peers, setPeers] = useState({}); // other Net Control panels: { instanceId: lastSeenMs }
@@ -263,30 +279,107 @@ export default function NetControlPanel({ callsign = '', embedded = false, timeZ
   }, []);
 
   /**
-   * The single write path for the running net. Refused (and replaced by the
-   * newer stored net) when another tab or panel wrote since this one last
-   * read — returns { ok, net }.
+   * The single write path for the running net. `change` is the next net
+   * (or null to close), or an operation `(net) => next` — preferred, because
+   * an operation can be re-applied: when another tab or panel wrote first and
+   * the two changes touched different stations (rebaseCheck), the operation
+   * runs again on the newer net and is saved without bothering the operator.
+   * Only when both changed the same station (or the net was closed or
+   * replaced) is the change refused, naming the station. Returns
+   * { ok, net, rebased?, calls? }.
    */
   const commit = useCallback(
-    (next) => {
-      const base = netRef.current;
+    (change, { rebase = true } = {}) => {
+      const isOp = typeof change === 'function';
+      let base = netRef.current;
+      let next = isOp ? change(base) : change;
       if (next === base) return { ok: true, net: base };
-      const res = commitRunningNet(base, next);
-      netRef.current = res.net;
-      setNet(res.net);
-      if (res.conflict) {
-        showFlash(
-          t('netControl.conflict', { defaultValue: 'Changed in another tab — updated, please try again' }),
-          '#f59e0b',
-        );
-        return { ok: false, net: res.net };
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const res = commitRunningNet(base, next);
+        netRef.current = res.net;
+        setNet(res.net);
+        if (!res.conflict) {
+          if (res.net) saveRosterSnapshot(res.net, { active: true });
+          broadcast('net');
+          return { ok: true, net: res.net, rebased: attempt > 0 };
+        }
+        const check = isOp && rebase ? rebaseCheck(base, next, res.net) : { ok: false, calls: [] };
+        if (!check.ok) {
+          showFlash(
+            check.calls.length
+              ? t('netControl.conflictCalls', {
+                  defaultValue: '{{calls}} was changed in another tab too — check it and try again',
+                  calls: check.calls.join(', '),
+                })
+              : t('netControl.conflict', { defaultValue: 'Changed in another tab — updated, please try again' }),
+            '#f59e0b',
+          );
+          return { ok: false, net: res.net, calls: check.calls };
+        }
+        base = res.net;
+        next = change(base);
+        if (next === base) return { ok: true, net: base, rebased: true };
       }
-      if (res.net) saveRosterSnapshot(res.net, { active: true });
-      broadcast('net');
-      return { ok: true, net: res.net };
+      showFlash(
+        t('netControl.conflict', { defaultValue: 'Changed in another tab — updated, please try again' }),
+        '#f59e0b',
+      );
+      return { ok: false, net: netRef.current };
     },
     [broadcast, showFlash, t],
   );
+
+  // Shared incident: our version of lines another site changed at the same
+  // moment ("your change" chips), for one-click "Apply mine".
+  const [conflicts, setConflicts] = useState(() => loadNetConflicts());
+  useEffect(() => {
+    const refresh = () => setConflicts(loadNetConflicts());
+    const onStorage = (e) => {
+      if (e.key === CONFLICTS_KEY || e.key === null) refresh();
+    };
+    window.addEventListener(NET_CONFLICTS_CHANGED_EVENT, refresh);
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.removeEventListener(NET_CONFLICTS_CHANGED_EVENT, refresh);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, []);
+
+  // Shared incident: the same station was changed at another site at the
+  // same moment. Their version was kept; say so, naming the site.
+  useEffect(() => {
+    const onConflict = (e) => {
+      const { calls = [], site = '' } = e.detail || {};
+      const where = site || t('netControl.anotherSite', { defaultValue: 'another site' });
+      showFlash(
+        calls.length
+          ? t('netControl.conflictSite', {
+              defaultValue: '{{calls}} was changed at {{site}} too — check it and try again',
+              calls: calls.join(', '),
+              site: where,
+            })
+          : t('netControl.conflictSiteNet', {
+              defaultValue: 'The net was changed at {{site}} too — updated, please check',
+              site: where,
+            }),
+        '#f59e0b',
+      );
+    };
+    window.addEventListener(NET_REMOTE_CONFLICT_EVENT, onConflict);
+    return () => window.removeEventListener(NET_REMOTE_CONFLICT_EVENT, onConflict);
+  }, [showFlash, t]);
+
+  // "Your change" entries for the running net, and putting one back through
+  // the normal commit path (so it rebases and syncs like any other edit).
+  const pendingConflicts = conflicts && net && conflicts.netId === net.id ? conflicts : null;
+  const applyMine = (kind, key) => {
+    const entry = pendingConflicts?.[kind === 'field' ? 'fields' : 'calls']?.[key];
+    if (!entry) return;
+    const res = commit((n) =>
+      kind === 'field' ? applyMineField(n, key, entry.mine) : applyMineStation(n, key, entry.mine),
+    );
+    if (res.ok) dismissNetConflict(kind, key);
+  };
 
   /** Pick up a newer running net written elsewhere. */
   const syncFromStorage = useCallback(() => {
@@ -421,6 +514,15 @@ export default function NetControlPanel({ callsign = '', embedded = false, timeZ
     return fillTemplate(raw, scriptContext(net || { name: startForm.name, ncs: startForm.ncs }, now, tz));
   }, [template, scriptPart, net, startForm.name, startForm.ncs, now, tz]);
   const reportOpts = { times: reportTimes, timeZone: tz };
+  // How the typed frequency reads: TX frequency and where its offset came from
+  const freqPreview = useMemo(
+    () => parseNetFrequency(startForm.frequency, { region, offset: startForm.offset }),
+    [startForm.frequency, startForm.offset, region],
+  );
+  const runningFreq = useMemo(
+    () => (net ? parseNetFrequency(net.frequency, { region: net.region, offset: net.offset }) : null),
+    [net],
+  );
 
   // ── Helpers ───────────────────────────────────────────────────────────
   const getStationCache = () => {
@@ -458,11 +560,10 @@ export default function NetControlPanel({ callsign = '', embedded = false, timeZ
       if (!res || !res.ok) return;
       const info = stationFromLookup(await res.json());
       if (!info) return;
-      const cur = netRef.current;
-      const s = cur?.stations.find((x) => x.call === call);
-      if (s) {
-        commit(updateStation(cur, call, { name: s.name || info.name, location: s.location || info.location }));
-      }
+      commit((n) => {
+        const s = n?.stations.find((x) => x.call === call);
+        return s ? updateStation(n, call, { name: s.name || info.name, location: s.location || info.location }) : n;
+      });
       if (info.name) remember(call, info);
     } catch {
       /* offline / timeout — the row just stays without a name */
@@ -472,9 +573,9 @@ export default function NetControlPanel({ callsign = '', embedded = false, timeZ
   };
 
   /** Log an event for the action just committed and tie it to that action (for Undo) and the station. */
-  const logFor = (committed, type, data) => {
+  const logFor = (type, data) => {
     const ev = recordEvent(type, data);
-    if (ev && committed) commit(attachEvent(committed, ev.id, data.callsign || null));
+    if (ev) commit((n) => (n ? attachEvent(n, ev.id, data.callsign || null) : n));
   };
 
   // ── Templates ─────────────────────────────────────────────────────────
@@ -485,7 +586,7 @@ export default function NetControlPanel({ callsign = '', embedded = false, timeZ
   };
 
   const chooseTemplate = (id) => {
-    if (netRef.current) commit({ ...netRef.current, scriptId: id });
+    commit((n) => (n ? { ...n, scriptId: id } : n));
     persistScripts({ ...scripts, lastId: id });
   };
 
@@ -506,14 +607,14 @@ export default function NetControlPanel({ callsign = '', embedded = false, timeZ
       closing: '',
     });
     persistScripts({ templates: res.templates, lastId: res.id });
-    if (netRef.current) commit({ ...netRef.current, scriptId: res.id });
+    commit((n) => (n ? { ...n, scriptId: res.id } : n));
     beginEditScript(getTemplate(res.templates, res.id));
   };
 
   const copyTemplate = () => {
     const res = duplicateTemplate(scripts.templates, template.id);
     persistScripts({ templates: res.templates, lastId: res.id });
-    if (netRef.current) commit({ ...netRef.current, scriptId: res.id });
+    commit((n) => (n ? { ...n, scriptId: res.id } : n));
     beginEditScript(getTemplate(res.templates, res.id));
   };
 
@@ -527,7 +628,7 @@ export default function NetControlPanel({ callsign = '', embedded = false, timeZ
       return;
     const list = deleteTemplate(scripts.templates, template.id);
     persistScripts({ templates: list, lastId: list[0].id });
-    if (netRef.current?.scriptId === template.id) commit({ ...netRef.current, scriptId: list[0].id });
+    commit((n) => (n?.scriptId === template.id ? { ...n, scriptId: list[0].id } : n));
   };
 
   const resetScriptPart = () => {
@@ -564,6 +665,8 @@ export default function NetControlPanel({ callsign = '', embedded = false, timeZ
       // Only trust the schedule's numbers while the typed text is what it filled in
       freqMhz: startForm.scheduleId ? startForm.freqMhz : null,
       mode: startForm.scheduleId ? startForm.mode : '',
+      region,
+      offset: startForm.offset,
     });
     if (!created) {
       showFlash(t('netControl.needName', { defaultValue: 'Give the net a name first' }), '#ef4444');
@@ -592,25 +695,30 @@ export default function NetControlPanel({ callsign = '', embedded = false, timeZ
     }
     const fill = localFill(parsed.call) || {};
     const flags = [...new Set([...parsed.flags, ...pendingFlags])];
-    const res = checkIn(cur, {
+    const args = {
       call: parsed.call,
       flags,
       note: parsed.note,
       name: fill.name || '',
       location: fill.location || '',
-    });
-    const st = res.station;
+    };
+    let res = checkIn(cur, args);
     if (res.result === 'duplicate') {
       setInput('');
       setPendingFlags([]);
       showFlash(
-        t('netControl.flashDuplicate', { defaultValue: '{{call}} is already checked in', call: st.call }),
+        t('netControl.flashDuplicate', { defaultValue: '{{call}} is already checked in', call: res.station.call }),
         '#f59e0b',
       );
       return;
     }
-    const committed = commit(res.net);
+    // Re-run against a newer net if another tab wrote first (res then describes that run)
+    const committed = commit((n) => {
+      if (n !== cur) res = checkIn(n, args);
+      return res.net;
+    });
     if (!committed.ok) return; // input kept so the operator can press Enter again
+    const st = res.station;
     setInput('');
     setPendingFlags([]);
     if (res.result === 'new') {
@@ -626,7 +734,7 @@ export default function NetControlPanel({ callsign = '', embedded = false, timeZ
     } else {
       showFlash(t('netControl.flashReturn', { defaultValue: '↩ {{call}} back in the net', call: st.call }));
     }
-    logFor(committed.net, 'net_checkin', {
+    logFor('net_checkin', {
       callsign: st.call,
       summary: `${res.result === 'new' ? 'Checked into' : 'Re-checked into'} ${cur.name} (voice)`,
       details: [flagsToText(st.flags), st.name].filter(Boolean).join(' · '),
@@ -692,15 +800,14 @@ export default function NetControlPanel({ callsign = '', embedded = false, timeZ
 
   const doCheckOut = (call) => {
     const cur = netRef.current;
-    const next = checkOut(cur, call);
-    if (next === cur) return;
-    const res = commit(next);
+    if (checkOut(cur, call) === cur) return;
+    const res = commit((n) => (n ? checkOut(n, call) : n));
     if (!res.ok) return;
-    logFor(res.net, 'net_checkout', { callsign: call, summary: `Checked out of ${cur.name} (voice)` });
+    logFor('net_checkout', { callsign: call, summary: `Checked out of ${cur.name} (voice)` });
   };
 
   const doToggleFlag = (call, key) => {
-    if (netRef.current) commit(toggleFlag(netRef.current, call, key));
+    commit((n) => (n ? toggleFlag(n, call, key) : n));
   };
 
   /** Remove a mistyped call — its logged entries are withdrawn (and reinstated by Undo). */
@@ -708,9 +815,9 @@ export default function NetControlPanel({ callsign = '', embedded = false, timeZ
     const cur = netRef.current;
     const st = cur?.stations.find((s) => s.call === call);
     if (!st) return;
-    const res = commit(removeStation(cur, call));
+    const res = commit((n) => (n ? removeStation(n, call) : n));
     if (!res.ok) return;
-    let tagged = res.net;
+    const withdrawals = [];
     for (const id of st.logIds || []) {
       const ev = recordEvent('net_withdrawn', {
         callsign: call,
@@ -718,28 +825,27 @@ export default function NetControlPanel({ callsign = '', embedded = false, timeZ
         details: 'Net Control',
         ref: id,
       });
-      if (ev) tagged = attachEvent(tagged, ev.id);
+      if (ev) withdrawals.push(ev.id);
     }
-    commit(tagged);
+    if (withdrawals.length) commit((n) => withdrawals.reduce((acc, id) => attachEvent(acc, id, call), n));
     showFlash(t('netControl.flashRemoved', { defaultValue: '{{call}} removed — Undo to restore', call }), '#f59e0b');
   };
 
   const callNext = () => {
     const cur = netRef.current;
     if (!cur) return;
-    const next = nextTraffic(cur);
-    commit(next);
-    if (!next.calling) showFlash(t('netControl.queueEmpty', { defaultValue: 'No traffic waiting' }), '#f59e0b');
+    const res = commit((n) => (n ? nextTraffic(n) : n));
+    if (res.ok && !res.net?.calling)
+      showFlash(t('netControl.queueEmpty', { defaultValue: 'No traffic waiting' }), '#f59e0b');
   };
 
   const doPassTraffic = (call) => {
     const cur = netRef.current;
-    const next = passTraffic(cur, call);
-    if (next === cur) return;
-    const res = commit(next);
+    if (passTraffic(cur, call) === cur) return;
+    const res = commit((n) => (n ? passTraffic(n, call) : n));
     if (!res.ok) return;
     const s = res.net.stations.find((x) => x.call === call);
-    logFor(res.net, 'net_traffic', {
+    logFor('net_traffic', {
       callsign: call,
       summary: `Traffic passed on ${cur.name}`,
       details: [s?.name, s?.note].filter(Boolean).join(' · '),
@@ -939,6 +1045,45 @@ export default function NetControlPanel({ callsign = '', embedded = false, timeZ
           defaultValue: 'Frequency / repeater (e.g. 146.940 − PL 100.0)',
         })}
       />
+      {freqPreview && freqPreview.offsetSource !== 'simplex' && (
+        <div style={{ display: 'flex', gap: '4px', alignItems: 'center', flexWrap: 'wrap' }}>
+          <span
+            style={{
+              color:
+                freqPreview.offsetSource === 'unknown' || freqPreview.offsetCheck ? '#f59e0b' : 'var(--text-muted)',
+            }}
+          >
+            {freqPreview.offsetSource === 'unknown'
+              ? t('netControl.offsetUnknown', { defaultValue: 'TX offset? — type it here' })
+              : t('netControl.offsetPreview', {
+                  defaultValue: 'TX {{tx}} ({{offset}} {{source}})',
+                  tx: freqPreview.txMhz.toFixed(3),
+                  offset: formatOffset(freqPreview.offsetMhz),
+                  source:
+                    freqPreview.offsetSource === 'standard'
+                      ? freqPreview.offsetCheck
+                        ? t('netControl.offsetCheck', { defaultValue: 'usual here — check locally' })
+                        : t('netControl.offsetStandard', { defaultValue: 'standard' })
+                      : freqPreview.offsetSource === 'override'
+                        ? t('netControl.offsetOverride', { defaultValue: 'as entered' })
+                        : t('netControl.offsetFromText', { defaultValue: 'from the frequency' }),
+                })}
+          </span>
+          <input
+            style={{
+              ...inputStyle,
+              width: '80px',
+              ...(freqPreview.offsetSource === 'unknown' ? { borderColor: '#f59e0b' } : {}),
+            }}
+            value={startForm.offset}
+            maxLength={12}
+            onChange={(e) => setStartForm((f) => ({ ...f, offset: e.target.value }))}
+            placeholder={t('netControl.offsetPlaceholder', { defaultValue: 'offset?' })}
+            aria-label={t('netControl.offsetLabel', { defaultValue: 'TX offset (e.g. −0.6, +5, −500k)' })}
+            title={t('netControl.offsetLabel', { defaultValue: 'TX offset (e.g. −0.6, +5, −500k)' })}
+          />
+        </div>
+      )}
       <input
         style={{ ...inputStyle, textTransform: 'uppercase' }}
         value={startForm.ncs}
@@ -1007,6 +1152,16 @@ export default function NetControlPanel({ callsign = '', embedded = false, timeZ
         >
           <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {[net.frequency, net.ncs ? `NCS ${net.ncs}` : ''].filter(Boolean).join(' · ')}
+            {runningFreq?.offsetSource === 'unknown' && (
+              <span
+                style={{ color: '#f59e0b', marginLeft: '4px' }}
+                title={t('netControl.offsetUnknownTitle', {
+                  defaultValue: 'The repeater offset is not known — the ICS 205 asks for the TX frequency',
+                })}
+              >
+                · {t('netControl.offsetPlaceholder', { defaultValue: 'offset?' })}
+              </span>
+            )}
           </span>
           <span
             style={{ whiteSpace: 'nowrap' }}
@@ -1138,6 +1293,14 @@ export default function NetControlPanel({ callsign = '', embedded = false, timeZ
         </div>
       )}
 
+      {/* Shared incident: net fields / unlisted stations another site overrode */}
+      <NetConflictBar
+        pending={pendingConflicts}
+        presentCalls={new Set(net.stations.map((s) => s.call))}
+        onApply={applyMine}
+        onDismiss={dismissNetConflict}
+      />
+
       {/* Roster */}
       <div style={{ overflowY: 'auto', ...grow, maxHeight: embedded ? '360px' : undefined }}>
         {net.stations.length === 0 ? (
@@ -1217,6 +1380,14 @@ export default function NetControlPanel({ callsign = '', embedded = false, timeZ
                     >
                       {[s.name, s.location, s.note].filter(Boolean).join(' · ')}
                     </div>
+                  )}
+                  {pendingConflicts?.calls?.[s.call] && (
+                    <StationConflictChip
+                      call={s.call}
+                      entry={pendingConflicts.calls[s.call]}
+                      onApply={() => applyMine('call', s.call)}
+                      onDismiss={() => dismissNetConflict('call', s.call)}
+                    />
                   )}
                 </div>
                 <div style={{ display: 'flex', gap: '3px' }}>

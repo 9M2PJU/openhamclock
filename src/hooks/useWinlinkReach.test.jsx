@@ -24,6 +24,7 @@ import {
   getReachState,
   requestReach,
   releaseReach,
+  setReachPactor4,
   setReachThresholds,
 } from '../services/winlinkReachStore.js';
 import { resetDisplayTime, setDisplayOffsetMs, HOUR_MS } from '../utils/displayTime.js';
@@ -211,6 +212,74 @@ describe('useWinlinkReach / shared store', () => {
     });
     // Server mode chosen from the −5 dB floor.
     expect(restCalls()[0][0]).toMatch(/mode=OLIVIA/);
+  });
+
+  it('sends the display-time month to the server fallback', async () => {
+    mocks.predict = vi.fn(async () => {
+      throw new Error('no wasm');
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    setDisplayOffsetMs(-20 * 24 * HOUR_MS); // 15 Oct → 25 Sep
+    mount();
+    await settle();
+    warn.mockRestore();
+    expect(restCalls().length).toBeGreaterThan(0);
+    for (const [url] of restCalls()) expect(url).toMatch(/[?&]month=9(&|$)/);
+  });
+
+  it("runs a shifted month with that month's smoothed SSN from the solar-cycle feed", async () => {
+    const base = mocks.fetch;
+    mocks.fetch = vi.fn(async (url) =>
+      url === '/api/solar-cycle'
+        ? {
+            ok: true,
+            status: 200,
+            json: async () => ({ observed: [], predicted: [{ t: '2026-09', min: 60, max: 80 }] }),
+          }
+        : base(url),
+    );
+    // Current month: today's SSN, and the cycle feed is not even fetched.
+    mount();
+    await settle();
+    expect(mocks.predict.mock.calls.at(-1)[0].ssn).toBe(120);
+    expect(latest.ssnSource).toBe('current');
+    expect(mocks.fetch.mock.calls.some(([u]) => u === '/api/solar-cycle')).toBe(false);
+    // Shift into September: SSN 70 (predicted midpoint) → bucket 70.
+    act(() => {
+      setDisplayOffsetMs(-20 * 24 * HOUR_MS);
+    });
+    await settle();
+    expect(latest.ssnSource).toBe('solar-cycle');
+    expect(latest.ssnUsed).toBe(70);
+    expect(mocks.predict.mock.calls.at(-1)[0]).toMatchObject({ ssn: 70, month: 9 });
+  });
+
+  it('keeps the current SSN when the solar-cycle feed is unavailable', async () => {
+    setDisplayOffsetMs(-20 * 24 * HOUR_MS);
+    mount();
+    await settle();
+    expect(mocks.fetch.mock.calls.some(([u]) => u === '/api/solar-cycle')).toBe(true);
+    expect(latest.ssnSource).toBe('current');
+    expect(mocks.predict.mock.calls.at(-1)[0]).toMatchObject({ ssn: 120, month: 9 });
+  });
+
+  it('re-scores PACTOR-4 gateways when the operator says their modem supports P4', async () => {
+    const p4Only = [{ callsign: 'K0P4', gridsquare: 'DM79', frequency: 7102000, mode: 17, hours: '00-23' }];
+    const base = mocks.fetch;
+    mocks.fetch = vi.fn(async (url) =>
+      url === '/api/winlink/gateways' ? { ok: true, status: 200, json: async () => ({ gateways: p4Only }) } : base(url),
+    );
+    mount();
+    await settle();
+    expect(mocks.predict.mock.calls.at(-1)[0].requiredSNR).toBe(-5);
+    act(() => setReachPactor4(true));
+    await settle();
+    expect(latest.pactor4).toBe(true);
+    expect(mocks.predict.mock.calls.at(-1)[0].requiredSNR).toBe(-19);
+    const n = mocks.predict.mock.calls.length;
+    act(() => setReachPactor4(false));
+    await settle();
+    expect(mocks.predict.mock.calls.length).toBe(n); // P3 result still cached
   });
 
   it('stays idle when inactive or without a station location', async () => {

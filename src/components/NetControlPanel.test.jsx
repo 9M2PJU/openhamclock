@@ -41,7 +41,9 @@ const setValue = (el, value) => {
   Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, value);
   el.dispatchEvent(new Event('input', { bubbles: true }));
 };
-const byLabel = (label) => container.querySelector(`[aria-label="${label}"]`);
+// Compare attribute values directly: jsdom's selector engine trips over some quoted labels (e.g. ones with "+")
+const byLabel = (label) =>
+  [...container.querySelectorAll('[aria-label]')].find((e) => e.getAttribute('aria-label') === label) || null;
 const buttonWithText = (text) => [...container.querySelectorAll('button')].find((b) => b.textContent.includes(text));
 const pressEnter = (el) => el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
 
@@ -225,6 +227,159 @@ describe('NetControlPanel', () => {
     expect(container.textContent).toContain('Opened – closed (local)');
     expect(container.textContent).toMatch(/C[DS]T/);
     expect(localStorage.getItem('openhamclock_netControlReportTimes')).toBe('both');
+    unmount();
+  });
+
+  describe('two panels changing the net at the same moment', () => {
+    const mount = (props = {}) => {
+      const el = document.createElement('div');
+      document.body.appendChild(el);
+      const r = createRoot(el);
+      act(() => r.render(<NetControlPanel callsign="K0CJH" {...props} />));
+      return { el, r };
+    };
+    const q = (el, label) => el.querySelector(`[aria-label="${label}"]`);
+    const btn = (el, text) => [...el.querySelectorAll('button')].find((x) => x.textContent.includes(text));
+    const flush = () => act(async () => new Promise((res) => setTimeout(res, 30)));
+    const checkInOn = (el, text) => {
+      const box = q(el, 'Check in a station');
+      act(() => setValue(box, text));
+      act(() => pressEnter(box)); // synchronous: the other panel has not heard yet
+    };
+    let a;
+    let b;
+    beforeEach(async () => {
+      a = mount();
+      b = mount();
+      await flush();
+      act(() => setValue(q(a.el, 'Net name (e.g. County ARES Weekly Net)'), 'Race Net'));
+      act(() => btn(a.el, 'Start net').click());
+      await flush();
+    });
+    afterEach(() => {
+      for (const m of [a, b]) {
+        act(() => m.r.unmount());
+        m.el.remove();
+      }
+    });
+
+    it('different calls: the later change is re-applied automatically', async () => {
+      checkInOn(a.el, 'w1aw');
+      checkInOn(b.el, 'k0cjh'); // B still holds the net without W1AW
+      await flush();
+      const stored = JSON.parse(localStorage.getItem(NET_CONTROL_KEY));
+      expect(stored.stations.map((s) => s.call).sort()).toEqual(['K0CJH', 'W1AW']);
+      expect(b.el.textContent).not.toContain('changed in another tab');
+      expect(a.el.textContent).toContain('K0CJH');
+      // both check-ins are logged once each
+      expect(
+        getEvents()
+          .filter((e) => e.type === 'net_checkin')
+          .map((e) => e.callsign)
+          .sort(),
+      ).toEqual(['K0CJH', 'W1AW']);
+    });
+
+    it('the same station in both: the second is refused and the operator asked', async () => {
+      checkInOn(a.el, 'ke8plm t');
+      checkInOn(b.el, 'ke8plm');
+      expect(b.el.textContent).toContain('KE8PLM was changed in another tab too — check it and try again');
+      expect(q(b.el, 'Check in a station').value).toBe('ke8plm'); // kept to press Enter again
+      await flush();
+      const stored = JSON.parse(localStorage.getItem(NET_CONTROL_KEY));
+      expect(stored.stations.map((s) => [s.call, s.flags])).toEqual([['KE8PLM', ['traffic']]]);
+    });
+  });
+
+  it('TX offset: preview, "offset?" when unknown, and an override', () => {
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+    act(() => root.render(<NetControlPanel callsign="K0CJH" location={{ lat: 44.4, lon: -93.2 }} />));
+    const freq = byLabel('Frequency / repeater (e.g. 146.940 − PL 100.0)');
+    act(() => setValue(freq, '146.940 -'));
+    expect(container.textContent).toContain('TX 146.340 (−600 kHz standard)');
+    act(() => setValue(freq, '53.700 -'));
+    expect(container.textContent).toContain('TX 53.200 (−500 kHz usual here — check locally)');
+    act(() => setValue(freq, '53.150 -')); // outside the band plan's output segments
+    expect(container.textContent).toContain('TX offset? — type it here');
+    act(() => setValue(byLabel('TX offset (e.g. −0.6, +5, −500k)'), '1'));
+    expect(container.textContent).toContain('TX 52.150 (−1 MHz as entered)');
+    act(() => setValue(byLabel('TX offset (e.g. −0.6, +5, −500k)'), ''));
+    act(() => setValue(freq, '1293.000 -'));
+    expect(container.textContent).toContain('TX offset? — type it here');
+    act(() => setValue(byLabel('Net name (e.g. County ARES Weekly Net)'), '23 cm net'));
+    act(() => buttonWithText('Start net').click());
+    expect(container.textContent).toContain('offset?');
+    expect(getNetControlRoster()).toMatchObject({ region: 'R2', offset: '' });
+    unmount();
+  });
+
+  it('shared incident: "your change" chip after another site won; Apply mine puts it back', async () => {
+    // The running net as another site left it: W1AW flagged M there…
+    const net = {
+      id: 'net-1',
+      name: 'County ARES',
+      ncs: 'K0CJH',
+      frequency: '',
+      startTime: 1,
+      rev: 3,
+      stations: [
+        {
+          id: 's1',
+          call: 'W1AW',
+          flags: ['mobile'],
+          note: '',
+          name: '',
+          location: '',
+          checkinTime: 2,
+          checkoutTime: null,
+          recheckCount: 0,
+        },
+      ],
+    };
+    localStorage.setItem(NET_CONTROL_KEY, JSON.stringify(net));
+    // …while here we had flagged it T (kept by the incident bridge after the conflict).
+    localStorage.setItem(
+      'openhamclock_netControlConflicts',
+      JSON.stringify({
+        netId: 'net-1',
+        calls: { W1AW: { mine: { ...net.stations[0], flags: ['traffic'] }, site: 'EOC South', at: 5 } },
+        fields: {},
+      }),
+    );
+    render();
+    const chip = container.querySelector('[data-testid="net-conflict-W1AW"]');
+    expect(chip).not.toBeNull();
+    expect(chip.textContent).toContain('EOC South');
+    expect(chip.textContent).toContain('TFC');
+    await act(async () => [...chip.querySelectorAll('button')].find((b) => b.textContent === 'Apply mine').click());
+    const stored = JSON.parse(localStorage.getItem(NET_CONTROL_KEY));
+    expect(stored.stations.find((x) => x.call === 'W1AW').flags).toEqual(['traffic']);
+    expect(container.querySelector('[data-testid="net-conflict-W1AW"]')).toBeNull();
+    expect(localStorage.getItem('openhamclock_netControlConflicts')).toBeNull();
+    unmount();
+  });
+
+  it('shared incident: the chip can be dismissed, and belongs to its own net only', () => {
+    const net = { id: 'net-2', name: 'Other', ncs: 'K0CJH', startTime: 1, rev: 1, stations: [] };
+    localStorage.setItem(NET_CONTROL_KEY, JSON.stringify(net));
+    localStorage.setItem(
+      'openhamclock_netControlConflicts',
+      JSON.stringify({ netId: 'net-1', calls: { W1AW: { mine: null, site: 'X', at: 1 } }, fields: {} }),
+    );
+    render();
+    expect(container.querySelector('[data-testid="net-conflict-W1AW"]')).toBeNull(); // another net's entry
+    unmount();
+    localStorage.setItem(
+      'openhamclock_netControlConflicts',
+      JSON.stringify({ netId: 'net-2', calls: {}, fields: { frequency: { mine: '147.00', site: 'X', at: 1 } } }),
+    );
+    render();
+    const bar = container.querySelector('[data-testid="net-conflict-field-frequency"]');
+    expect(bar.textContent).toContain('147.00');
+    act(() => bar.querySelector('button[aria-label="Keep theirs"]').click());
+    expect(container.querySelector('[data-testid="net-conflict-field-frequency"]')).toBeNull();
     unmount();
   });
 });

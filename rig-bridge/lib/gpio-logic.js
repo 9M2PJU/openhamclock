@@ -129,15 +129,16 @@ const LIGHTNING_LEVELS = new Set(['clear', 'warn', 'alarm']);
  * Normalise the indicator payload the browser POSTs to /api/indicators.
  * Unknown keys are dropped; wrong types fall back to "off".
  *
- * Lightning fields are tri-state: `lightningRelay` true/false when the
- * browser's lightning guard drives the relay, null when this browser does
- * not report it at all (guard or relay off there). A null report leaves the
- * relay state another browser set untouched — see mergeIndicators().
+ * Lightning fields are tri-state: `lightningRelay` true/false when that
+ * display's lightning guard drives the relay, null when the display does not
+ * report it at all (guard or relay off there). Reports go to the
+ * LightningRelayArbiter keyed by `displayId`.
  */
 function sanitizeIndicators(body) {
   const b = body && typeof body === 'object' ? body : {};
   const n = (v) =>
     Number.isFinite(v) ? v : typeof v === 'string' && v.trim() !== '' && Number.isFinite(+v) ? +v : null;
+  const allClear = n(b.lightningAllClearMin);
   return {
     satVisible: b.satVisible === true,
     satAosInSec: n(b.satAosInSec),
@@ -146,25 +147,178 @@ function sanitizeIndicators(body) {
     countdown: COUNTDOWN_STATES.has(b.countdown) ? b.countdown : 'off',
     lightning: LIGHTNING_LEVELS.has(b.lightning) ? b.lightning : null,
     lightningRelay: b.lightningRelay === true ? true : b.lightningRelay === false ? false : null,
+    lightningAllClearMin: allClear == null ? null : Math.min(240, Math.max(1, Math.round(allClear))),
+    lightningOverride: LIGHTNING_OVERRIDES.has(b.lightningOverride) ? b.lightningOverride : 'auto',
+    displayId: typeof b.displayId === 'string' && DISPLAY_ID_RE.test(b.displayId) ? b.displayId : null,
+    lightningGuard: sanitizeGuardSettings(b.lightningGuard),
   };
 }
 
 /**
- * Fold a new indicator report into the previous one. Everything is replaced
- * except the lightning fields, which are only replaced when the report
- * carries them (lightningRelay !== null): a second display without the
- * lightning guard must not release a relay the first display engaged.
- *
- * @returns {{ indicators: object, lightningReported: boolean }}
+ * The lightning guard settings a display sends with its indicators, for the
+ * headless guard: { lat, lon, warnKm, alarmKm, allClearMin, minStrikes,
+ * hysteresisPct, repeatCloser, relayOn }. Numbers are clamped like the guard
+ * core does; null when absent or without a valid location.
  */
-function mergeIndicators(prev, body) {
-  const next = sanitizeIndicators(body);
-  if (next.lightningRelay !== null) return { indicators: next, lightningReported: true };
-  const p = prev || sanitizeIndicators(null);
-  return {
-    indicators: { ...next, lightning: p.lightning ?? null, lightningRelay: p.lightningRelay ?? null },
-    lightningReported: false,
+function sanitizeGuardSettings(g) {
+  if (!g || typeof g !== 'object' || Array.isArray(g)) return null;
+  const num = (v, lo, hi) => {
+    const x = typeof v === 'string' && v.trim() !== '' ? Number(v) : v;
+    return Number.isFinite(x) ? Math.min(hi, Math.max(lo, x)) : null;
   };
+  const lat = num(g.lat, -Infinity, Infinity);
+  const lon = num(g.lon, -Infinity, Infinity);
+  if (lat === null || lon === null || Math.abs(lat) > 90 || Math.abs(lon) > 180) return null;
+  const warnKm = num(g.warnKm, 2, 500) ?? 50;
+  return {
+    lat: Math.round(lat * 1000) / 1000,
+    lon: Math.round(lon * 1000) / 1000,
+    warnKm,
+    alarmKm: Math.min(warnKm, num(g.alarmKm, 1, 500) ?? 25),
+    allClearMin: Math.round(num(g.allClearMin, 1, 240) ?? 30),
+    minStrikes: Math.round(num(g.minStrikes, 1, 50) ?? 1),
+    hysteresisPct: Math.round(num(g.hysteresisPct, 0, 100) ?? 20),
+    repeatCloser: g.repeatCloser !== false,
+    relayOn: g.relayOn === 'warn' ? 'warn' : 'alarm',
+  };
+}
+
+/** Fields of config.gpio.lightningHeadless a display may set (not `enabled`). */
+const HEADLESS_SETTING_KEYS = [
+  'lat',
+  'lon',
+  'warnKm',
+  'alarmKm',
+  'allClearMin',
+  'minStrikes',
+  'hysteresisPct',
+  'repeatCloser',
+  'relayOn',
+];
+
+/** Copy of `current` with the reported settings applied, or null when nothing changed. */
+function applyGuardSettings(current, reported) {
+  if (!reported) return null;
+  const cur = current && typeof current === 'object' ? current : {};
+  let changed = false;
+  const next = { ...cur };
+  for (const k of HEADLESS_SETTING_KEYS) {
+    const a = cur[k];
+    const b = reported[k];
+    const same = a === b || (a !== '' && a != null && Number(a) === b);
+    if (!same) {
+      next[k] = b;
+      changed = true;
+    }
+  }
+  return changed ? next : null;
+}
+
+/** Capabilities reported by /api/gpio/status, for the app's update notice. */
+const GPIO_FEATURES = ['lightning-relay', 'lightning-arbiter', 'lightning-headless', 'lightning-guard-settings'];
+
+const LIGHTNING_OVERRIDES = new Set(['auto', 'on', 'off']);
+const DISPLAY_ID_RE = /^[A-Za-z0-9_-]{1,40}$/;
+const DEFAULT_ALL_CLEAR_MIN = 30;
+
+/**
+ * Decides the lightning relay from every display (and the bridge's own
+ * headless guard) that reports it.
+ *
+ *  • Engaged while ANY reporter wants protection: a live reporter (report
+ *    younger than `staleMs`) whose latest report asked for the relay, or a
+ *    reporter that asked for it and then went quiet — that one keeps its claim
+ *    until its own all-clear time (`allClearMin` from its report) has passed
+ *    since its last request. With `holdWhenStale` off a quiet reporter's claim
+ *    ends at `staleMs`.
+ *  • Released only when no reporter wants it.
+ *  • A manual override from a live display wins: the most recent live
+ *    'on' (force protect) or 'off' (hold connected) decides.
+ *
+ * Reporters whose claim has lapsed are forgotten; at most `maxReporters`
+ * are kept (oldest report evicted first).
+ */
+class LightningRelayArbiter {
+  constructor({ staleMs = 90000, holdWhenStale = true, maxReporters = 16 } = {}) {
+    this.staleMs = staleMs;
+    this.holdWhenStale = holdWhenStale;
+    this.maxReporters = maxReporters;
+    this.reporters = new Map(); // id → { relay, level, allClearMin, override, at }
+  }
+
+  /** Record a report. `relay` must be a boolean (null reports are not sent here). */
+  report(id, { relay, level = null, allClearMin = null, override = 'auto' }, now) {
+    if (typeof relay !== 'boolean') return;
+    const key = id || 'default';
+    this.reporters.delete(key); // re-insert so Map order = report age
+    this.reporters.set(key, {
+      relay,
+      level,
+      allClearMin: Number.isFinite(allClearMin) ? allClearMin : DEFAULT_ALL_CLEAR_MIN,
+      override: LIGHTNING_OVERRIDES.has(override) ? override : 'auto',
+      at: now,
+    });
+    while (this.reporters.size > this.maxReporters) {
+      this.reporters.delete(this.reporters.keys().next().value);
+    }
+  }
+
+  remove(id) {
+    this.reporters.delete(id);
+  }
+
+  /** @returns {{ engaged: boolean, reason: string, holdUntil: number|null, reporters: object[] }} */
+  decide(now) {
+    const list = [];
+    let overrideBy = null;
+    let wants = false;
+    let holdUntil = null;
+    for (const [id, r] of this.reporters) {
+      const live = now - r.at <= this.staleMs;
+      let claim = false;
+      let until = null;
+      if (r.relay) {
+        if (live) claim = true;
+        else if (this.holdWhenStale) {
+          until = r.at + r.allClearMin * 60000;
+          claim = now < until;
+        }
+      }
+      if (!live && !claim) {
+        this.reporters.delete(id);
+        continue;
+      }
+      if (live && r.override !== 'auto' && (!overrideBy || r.at >= overrideBy.at)) overrideBy = { id, ...r };
+      if (claim) {
+        wants = true;
+        if (until != null) holdUntil = Math.max(holdUntil ?? 0, until);
+      }
+      list.push({
+        id,
+        relay: r.relay,
+        level: r.level,
+        live,
+        claim,
+        override: r.override,
+        ageMs: now - r.at,
+        holdUntil: until,
+      });
+    }
+    if (overrideBy) {
+      return {
+        engaged: overrideBy.override === 'on',
+        reason: `override-${overrideBy.override}`,
+        holdUntil: null,
+        reporters: list,
+      };
+    }
+    return {
+      engaged: wants,
+      reason: wants ? (holdUntil != null && !list.some((r) => r.live && r.claim) ? 'hold' : 'requested') : 'clear',
+      holdUntil: wants ? holdUntil : null,
+      reporters: list,
+    };
+  }
 }
 
 /**
@@ -176,11 +330,7 @@ function mergeIndicators(prev, body) {
  * @param {object}  s.indicators sanitized indicators from the browser
  * @param {boolean} s.indicatorsStale  browser hasn't refreshed in a while
  * @param {boolean} s.alarmSilenced    silence button pressed since alarm began
- * @param {boolean} [s.lightningStale]  no lightning report for a while
- *                                      (defaults to indicatorsStale)
- * @param {boolean} [s.lightningHoldWhenStale=true]  keep the lightning relay
- *        engaged when the browser goes quiet — a closed tab during a storm
- *        must not reconnect the antenna
+ * @param {boolean} [s.lightningEngaged]  the LightningRelayArbiter's decision
  * @param {number}  nowMs
  */
 function computeOutputs(s, nowMs) {
@@ -202,21 +352,13 @@ function computeOutputs(s, nowMs) {
     }
   }
 
-  // Lightning relay: engaged while the browser asks for it. When reports
-  // stop, hold the last request (default) — releasing on silence would
-  // reconnect the antenna exactly when the display that watches the storm
-  // has gone away.
-  const lightningStale = s.lightningStale != null ? !!s.lightningStale : !!s.indicatorsStale;
-  const hold = s.lightningHoldWhenStale !== false;
-  const lightning = ind.lightningRelay === true && (!lightningStale || hold);
-
   return {
     onAirOut: onAir,
     alarmOut: alarm,
     countdownGreenOut: countdownGreen,
     countdownRedOut: countdownRed,
     satOut: sat,
-    lightningOut: lightning,
+    lightningOut: !!s.lightningEngaged,
   };
 }
 
@@ -330,7 +472,10 @@ module.exports = {
   resolvePinMap,
   pulse,
   sanitizeIndicators,
-  mergeIndicators,
+  LightningRelayArbiter,
+  sanitizeGuardSettings,
+  applyGuardSettings,
+  GPIO_FEATURES,
   computeOutputs,
   physicalLevel,
   InputDebouncer,

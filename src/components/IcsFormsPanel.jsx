@@ -12,7 +12,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import '../styles/icsForms.css';
-import { getEvents, subscribeEvents, recordEvent, EVENT_TYPE_META } from '../utils/emcommEventLog.js';
+import {
+  getEvents,
+  subscribeEvents,
+  recordEvent,
+  EVENT_TYPE_META,
+  peekNextMsgNo,
+  resetMessageNumbers,
+} from '../utils/emcommEventLog.js';
+import { loadDoc, saveDoc, subscribeDocs } from '../utils/incidentDocs.js';
 import { loadNetSchedule } from '../utils/netSchedule.js';
 import { getNetControlRoster } from '../utils/netControl.js';
 import { apiFetch } from '../utils/apiFetch.js';
@@ -22,8 +30,6 @@ import {
   ICS_FORM_IDS,
   ICS_FORM_TITLES,
   ICS309_DEFAULT_TYPES,
-  loadDrafts,
-  saveDrafts,
   defaultDrafts,
   headerRange,
   ics309Rows,
@@ -146,7 +152,8 @@ function readTab() {
 
 /** Fill blank call-sign fields from the station callsign on first load. */
 function initialDrafts(callsign) {
-  const d = loadDrafts();
+  // The shared incident's drafts while joined, this browser's own otherwise.
+  const d = loadDoc('ics-drafts');
   const call = String(callsign || '').toUpperCase();
   if (call && call !== 'N0CALL') {
     if (!d.header.preparedCall) d.header = { ...d.header, preparedCall: call };
@@ -155,11 +162,16 @@ function initialDrafts(callsign) {
   return d;
 }
 
-export default function IcsFormsPanel({ config, initialForm, onClose }) {
+/**
+ * @param {Array} [sharedEvents]  the shared incident's event log while joined —
+ *   used in place of this browser's own log for the 309 and 214 imports.
+ */
+export default function IcsFormsPanel({ config, initialForm, onClose, sharedEvents }) {
   const { t, i18n } = useTranslation();
   const [form, setForm] = useState(() => (ICS_FORM_IDS.includes(initialForm) ? initialForm : readTab()));
   const [drafts, setDrafts] = useState(() => initialDrafts(config?.callsign));
-  const [events, setEvents] = useState(() => getEvents());
+  const [localEvents, setEvents] = useState(() => getEvents());
+  const events = sharedEvents || localEvents;
   const [showPreview, setShowPreview] = useState(true);
 
   // Follow the rail's form buttons when the overlay is re-opened on another form
@@ -175,17 +187,27 @@ export default function IcsFormsPanel({ config, initialForm, onClose }) {
 
   useEffect(() => subscribeEvents(setEvents), []);
 
+  // Joined / left a shared incident, or another station saved the drafts.
+  const callsignForDrafts = config?.callsign;
+  useEffect(
+    () =>
+      subscribeDocs((id) => {
+        if (id === 'ics-drafts') setDrafts(initialDrafts(callsignForDrafts));
+      }),
+    [callsignForDrafts],
+  );
+
   // Persist drafts (debounced — typing in the message box shouldn't hammer storage)
   const saveTimer = useRef(null);
   useEffect(() => {
     clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => saveDrafts(drafts), 300);
+    saveTimer.current = setTimeout(() => saveDoc('ics-drafts', drafts), 300);
     return () => clearTimeout(saveTimer.current);
   }, [drafts]);
   // Flush on unmount so closing the overlay never loses the last keystrokes
   const latestDrafts = useRef(drafts);
   latestDrafts.current = drafts;
-  useEffect(() => () => saveDrafts(latestDrafts.current), []);
+  useEffect(() => () => saveDoc('ics-drafts', latestDrafts.current), []);
 
   const patch = useCallback((section, changes) => {
     setDrafts((d) => ({ ...d, [section]: { ...d[section], ...changes } }));
@@ -208,11 +230,11 @@ export default function IcsFormsPanel({ config, initialForm, onClose }) {
   }, [form, drafts.header.incidentName]);
 
   const handlePrint = useCallback(() => {
-    printIcsHtml(buildIcsHtml(form, drafts, { events: getEvents(), now: Date.now(), tr }), {
+    printIcsHtml(buildIcsHtml(form, drafts, { events: sharedEvents || getEvents(), now: Date.now(), tr }), {
       title: fileStem,
       landscape: form === '205',
     });
-  }, [form, drafts, fileStem, tr]);
+  }, [form, drafts, fileStem, tr, sharedEvents]);
 
   const handleCsv = useCallback(() => {
     downloadCsv(ics309Csv(drafts, rows309, { tr }), `${fileStem}.csv`);
@@ -393,7 +415,7 @@ export default function IcsFormsPanel({ config, initialForm, onClose }) {
  * to edit a form in, so its ICS Forms buttons open this over the map.
  * Escape or a click on the backdrop closes it; drafts are saved on close.
  */
-export function IcsFormsOverlay({ config, initialForm, onClose }) {
+export function IcsFormsOverlay({ config, initialForm, onClose, sharedEvents }) {
   const { t } = useTranslation();
   useEffect(() => {
     const onKey = (e) => {
@@ -433,7 +455,7 @@ export function IcsFormsOverlay({ config, initialForm, onClose }) {
           color: 'var(--text-primary, #ddd)',
         }}
       >
-        <IcsFormsPanel config={config} initialForm={initialForm} onClose={onClose} />
+        <IcsFormsPanel config={config} initialForm={initialForm} onClose={onClose} sharedEvents={sharedEvents} />
       </div>
     </div>
   );
@@ -467,6 +489,18 @@ function Ics309Editor({ t, drafts, patch, setDrafts, rows }) {
       },
     }));
   const colLabel = (key) => t(`icsForms.309.col.${key}`, { defaultValue: COLS_309[key] });
+  // Re-read on every render: the panel re-renders on each event-log change,
+  // and resetMessageNumbers() notifies the same subscribers.
+  const nextNo = peekNextMsgNo();
+  const resetNumbers = () => {
+    const ok = window.confirm(
+      t('icsForms.309.resetNumbersConfirm', {
+        defaultValue:
+          'Restart station message numbers at 1? Messages already logged keep their numbers; the next message will be number 1.',
+      }),
+    );
+    if (ok) resetMessageNumbers();
+  };
   const cellInput = (row, key, width, upper = false) => (
     <input
       style={{ ...inputStyle, width }}
@@ -509,6 +543,21 @@ function Ics309Editor({ t, drafts, patch, setDrafts, rows }) {
             onChange={(e) => patch('ics309', { startNumber: e.target.value.replace(/[^0-9]/g, '') })}
           />
         </Field>
+      </div>
+      <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', marginTop: '6px' }}>
+        <span style={{ fontSize: '10px', color: 'var(--text-secondary, #aaa)' }}>
+          {t('icsForms.309.nextNumber', {
+            defaultValue: 'Next station message #: {{n}} — numbers keep running when the Event Log is cleared',
+            n: nextNo,
+          })}
+        </span>
+        <button
+          style={{ ...btnStyle, color: '#ef4444', borderColor: '#ef444455' }}
+          onClick={resetNumbers}
+          disabled={nextNo === 1}
+        >
+          {t('icsForms.309.resetNumbers', { defaultValue: 'Reset message numbers' })}
+        </button>
       </div>
       <div style={{ fontSize: '9px', color: 'var(--text-muted, #888)', margin: '8px 0 3px' }}>
         {t('icsForms.309.include', { defaultValue: 'Include from the event log:' })}
@@ -1337,11 +1386,33 @@ function Ics205Editor({ t, drafts, patch, config }) {
                         </select>
                       ) : (
                         <input
-                          style={{ ...inputStyle, width: `${width}px` }}
+                          style={{
+                            ...inputStyle,
+                            width: `${width}px`,
+                            ...(key === 'txFreq' && r.txUnknown && !r.txFreq ? { borderColor: '#f59e0b' } : {}),
+                          }}
                           value={r[key] || ''}
                           list={kind === 'zone' ? zoneListId : undefined}
                           aria-label={t(`icsForms.205.col.${key}`, { defaultValue: label })}
-                          onChange={(e) => updateRow(r.id, { [key]: e.target.value })}
+                          // A voice-net row whose repeater offset is unknown asks for the TX frequency
+                          placeholder={
+                            key === 'txFreq' && r.txUnknown
+                              ? t('icsForms.205.offsetUnknown', { defaultValue: 'offset?' })
+                              : undefined
+                          }
+                          title={
+                            key === 'txFreq' && r.txUnknown && !r.txFreq
+                              ? t('icsForms.205.offsetUnknownTitle', {
+                                  defaultValue: 'The repeater offset is not known — type the TX (input) frequency',
+                                })
+                              : undefined
+                          }
+                          onChange={(e) =>
+                            updateRow(r.id, {
+                              [key]: e.target.value,
+                              ...(key === 'txFreq' && e.target.value.trim() ? { txUnknown: false } : {}),
+                            })
+                          }
                         />
                       )}
                     </td>

@@ -20,6 +20,7 @@
 import workletUrl from '../worklets/cwDecoderWorklet.js?worker&url';
 import { createAudioDecoder, PlayheadScheduler } from './pcmStream.js';
 import { kiwiStreamRequest } from './kiwiAudioClient.js';
+import { relayReadHeaders, sendRelayCommand } from './relaySign.js';
 
 /** Audio input devices (labels are blank until the user has granted permission once). */
 export async function listAudioInputs() {
@@ -152,8 +153,21 @@ export class DecoderAudioEngine {
     const abort = new AbortController();
     this.abort = abort;
     this.onStatus('connecting');
+    let headers = request.headers;
+    if (request.via === 'relay') {
+      // Rig Bridge only starts a receiver for a signed command from a paired
+      // browser; the audio itself needs the session's read token.
+      const sent = await sendRelayCommand(relaySession, request.startCommand.type, request.startCommand.payload);
+      if (!sent.ok) throw new Error(sent.error || 'Cloud Relay refused the KiwiSDR start command');
+      if (!sent.signed) {
+        throw new Error(
+          'This browser is not paired with Rig Bridge — re-run Connect Cloud Relay in Settings → Rig Bridge',
+        );
+      }
+      headers = { ...headers, ...(await relayReadHeaders(relaySession)) };
+    }
     const res = await fetch(request.url, {
-      headers: request.headers,
+      headers,
       signal: abort.signal,
       cache: 'no-store',
     });

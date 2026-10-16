@@ -27,6 +27,7 @@ const spies = vi.hoisted(() => ({
   speakText: vi.fn(),
   showAlertNotification: vi.fn(),
   sendLightningPush: vi.fn(),
+  setLightningPushPrefs: vi.fn(() => Promise.resolve({ ok: true })),
   recordEvent: vi.fn(),
 }));
 vi.mock('../utils/audioAlerts.js', async (orig) => ({ ...(await orig()), playTone: spies.playTone }));
@@ -36,7 +37,10 @@ vi.mock('../utils/notifications.js', async (orig) => ({
   getNotificationPermission: () => 'granted',
   showAlertNotification: spies.showAlertNotification,
 }));
-vi.mock('../utils/push.js', () => ({ sendLightningPush: spies.sendLightningPush }));
+vi.mock('../utils/push.js', () => ({
+  sendLightningPush: spies.sendLightningPush,
+  setLightningPushPrefs: spies.setLightningPushPrefs,
+}));
 vi.mock('../utils/emcommEventLog.js', () => ({ recordEvent: spies.recordEvent }));
 
 import useLightningGuard, {
@@ -89,7 +93,7 @@ describe('useLightningGuard', () => {
   it('stays off (no feed subscription, no relay report) until enabled', () => {
     mount();
     expect(feed.subscribers.size).toBe(0);
-    expect(latest).toEqual({ level: 'off', relay: null });
+    expect(latest).toMatchObject({ level: 'off', relay: null, allClearMin: 30, override: 'auto' });
     configure({ enabled: true });
     expect(feed.subscribers.size).toBe(1);
     expect(latest.level).toBe('clear');
@@ -207,5 +211,95 @@ describe('useLightningGuard', () => {
     expect(latest.level).toBe('warn');
     configure({ enabled: true, alarmKm: 45 });
     expect(latest.level).toBe('alarm');
+  });
+
+  it('alerts again in an alarm when lightning comes markedly closer (throttled, switchable)', () => {
+    configure({ enabled: true, channels: { push: true } });
+    mount({ layout: 'emcomm' });
+    strike(20, 0);
+    expect(latest.level).toBe('alarm');
+    const spoken = () => spies.speakText.mock.calls.map((c) => c[0]);
+    act(() => vi.advanceTimersByTime(60 * 1000));
+    strike(8, 0); // halved, but only a minute later
+    expect(spoken().filter((t) => t.startsWith('Lightning closer'))).toHaveLength(0);
+    act(() => vi.advanceTimersByTime(61 * 1000));
+    strike(8, 0);
+    expect(spoken().at(-1)).toBe('Lightning closer. Strike 8 kilometres north.');
+    expect(spies.sendLightningPush.mock.calls.at(-1)[0]).toMatchObject({ level: 'alarm', closer: true });
+    expect(spies.recordEvent).toHaveBeenCalledWith(
+      'lightning',
+      expect.objectContaining({ summary: 'Lightning closer' }),
+    );
+
+    configure({ enabled: true, repeatCloser: false });
+    act(() => vi.advanceTimersByTime(3 * MIN));
+    const before = spoken().length;
+    strike(2, 0);
+    expect(spoken()).toHaveLength(before);
+  });
+
+  it('announces warnings and alarms for screen readers', () => {
+    const seen = [];
+    const onProx = (e) => seen.push(e.detail);
+    document.addEventListener('lightning:proximity', onProx);
+    try {
+      configure({ enabled: true });
+      mount();
+      strike(40, 180);
+      expect(seen).toEqual([{ distanceKm: 40, distanceMiles: 24.9, direction: 'south' }]);
+    } finally {
+      document.removeEventListener('lightning:proximity', onProx);
+    }
+  });
+
+  it('keeps the server push opt-in in step with location and radii (debounced), and opts out', async () => {
+    configure({ enabled: true, channels: { push: true } });
+    mount();
+    await act(async () => {
+      vi.advanceTimersByTime(2500);
+    });
+    expect(spies.setLightningPushPrefs).toHaveBeenLastCalledWith({
+      lat: 51.5,
+      lon: -0.12,
+      warnKm: 50,
+      alarmKm: 25,
+      imperial: false,
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(5000); // unchanged → no second call
+    });
+    expect(spies.setLightningPushPrefs).toHaveBeenCalledTimes(1);
+    configure({ enabled: true, channels: { push: false } });
+    await act(async () => {
+      vi.advanceTimersByTime(2500);
+    });
+    expect(spies.setLightningPushPrefs).toHaveBeenLastCalledWith(null);
+  });
+
+  it("exposes the guard settings and location for the bridge's headless guard", () => {
+    configure({
+      enabled: true,
+      alarmKm: 15,
+      hysteresisPct: 5,
+      repeatCloser: false,
+      relay: { enabled: true, on: 'warn' },
+    });
+    mount();
+    expect(latest.guard).toEqual({
+      lat: 51.5,
+      lon: -0.12,
+      warnKm: 50,
+      alarmKm: 15,
+      allClearMin: 30,
+      minStrikes: 1,
+      hysteresisPct: 5,
+      repeatCloser: false,
+      relayOn: 'warn',
+    });
+    const first = latest.guard;
+    act(() => vi.advanceTimersByTime(20000));
+    expect(latest.guard).toBe(first); // stable between renders (no needless re-posts)
+    configure({ enabled: false });
+    expect(latest.guard).toBeNull();
   });
 });

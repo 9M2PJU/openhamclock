@@ -2,18 +2,24 @@
 /**
  * relayAudio.js — KiwiSDR audio over the Rig Bridge Cloud Relay (opt-in).
  *
- *   browser  GET  /api/rig-bridge/relay/audio?session=&freq=&mode=
- *            → we queue a "kiwiAudioStart" relay command and hold the response
+ *   browser  POST /api/rig-bridge/relay/command  kiwiAudioStart { freqKHz, mode }
+ *            — signed end-to-end like every relay command (src/utils/relaySign.js);
+ *              Rig Bridge refuses it unsigned (it starts a receiver), no grace period
+ *   browser  GET  /api/rig-bridge/relay/audio?session=…&ticket=…
+ *            — needs the session's read token: X-Relay-Read header, or a one-time
+ *              ticket bought with it (POST /relay/stream-ticket) for clients that
+ *              cannot send headers; no secret ever goes in the URL
  *   bridge   POST /api/rig-bridge/relay/audio/upload?session=   (relay auth)
  *            → one long chunked request; we copy its body to every listener
- *            → we answer it (ending the upload) when the last listener leaves
+ *            → we answer it (ending the upload, and the bridge's Kiwi session)
+ *              when the last listener leaves
  *
- * The bridge only answers kiwiAudioStart when its Cloud Relay has
- * relayAudio: true. Audio arrives as 8-bit µ-law (X-Audio-Format: ulaw,
- * ~12 kB/s); headers X-Sample-Rate / X-Audio-Format / X-CW-Pitch are passed
- * through to the browser. Limits: RELAY_AUDIO_MAX_STREAMS concurrent sessions
- * server-wide (default 10), 3 listeners per session; a listener that cannot
- * keep up drops audio instead of buffering it.
+ * This server never queues audio commands itself: it cannot sign them.
+ * Audio arrives as 8-bit µ-law (X-Audio-Format: ulaw, ~12 kB/s); headers
+ * X-Sample-Rate / X-Audio-Format / X-CW-Pitch are passed through. Limits:
+ * RELAY_AUDIO_MAX_STREAMS concurrent sessions server-wide (default 10),
+ * 3 listeners per session; a listener that cannot keep up drops audio
+ * instead of buffering it.
  */
 
 const MODES = new Set(['cw', 'usb', 'lsb', 'am']);
@@ -22,12 +28,14 @@ const START_TIMEOUT_MS = 20000;
 
 /**
  * @param {import('express').Express} app
- * @param {{ requireRelayAuth: Function, queueCommand: (sessionId: string, cmd: object) => boolean,
+ * @param {{ requireRelayAuth: Function,
+ *           canRead: (req: object, sessionId: string) => 'ok'|'denied'|'unpaired-expired',
+ *           hasSession: (sessionId: string) => boolean,
  *           logInfo?: Function, logWarn?: Function, maxStreams?: number, startTimeoutMs?: number,
  *           graceMs?: number }} ctx
  */
 function registerRelayAudio(app, ctx) {
-  const { requireRelayAuth, queueCommand } = ctx;
+  const { requireRelayAuth, canRead, hasSession } = ctx;
   const logInfo = ctx.logInfo || (() => {});
   const maxStreams = ctx.maxStreams || Number(process.env.RELAY_AUDIO_MAX_STREAMS) || 10;
   const startTimeoutMs = ctx.startTimeoutMs || START_TIMEOUT_MS;
@@ -80,6 +88,15 @@ function registerRelayAudio(app, ctx) {
     if (!Number.isFinite(freqKHz) || freqKHz < 10 || freqKHz > 32000)
       return res.status(400).json({ error: 'freq must be 10–32000 kHz' });
     if (!MODES.has(mode)) return res.status(400).json({ error: 'mode must be cw, usb, lsb or am' });
+    const read = canRead(req, sessionId);
+    if (read !== 'ok') {
+      return res.status(401).json({
+        error:
+          read === 'unpaired-expired'
+            ? 'This relay session has no command key — re-run Connect Cloud Relay in Settings → Rig Bridge'
+            : 'Relay read token missing or wrong — re-run Connect Cloud Relay in Settings → Rig Bridge on this browser',
+      });
+    }
 
     let hub = hubs.get(sessionId);
     if (!hub) {
@@ -95,7 +112,9 @@ function registerRelayAudio(app, ctx) {
       res.writeHead(200, headersFor(hub.meta));
       res.flushHeaders?.();
     } else if (!hub.timer) {
-      if (!queueCommand(sessionId, { type: 'kiwiAudioStart', payload: { freqKHz, mode } })) {
+      // The browser has sent its signed kiwiAudioStart through /relay/command;
+      // we wait for the bridge's upload.
+      if (!hasSession(sessionId)) {
         hub.listeners.delete(res);
         if (hub.listeners.size === 0) hubs.delete(sessionId);
         return res.status(503).json({ error: 'Rig Bridge Cloud Relay is not connected for this session' });
@@ -106,7 +125,7 @@ function registerRelayAudio(app, ctx) {
           dropHub(
             sessionId,
             hub,
-            'Rig Bridge did not start KiwiSDR audio — enable "Relay KiwiSDR audio" in its Cloud Relay plugin and the KiwiSDR Audio plugin',
+            'Rig Bridge did not start KiwiSDR audio — enable "Relay KiwiSDR audio" in its Cloud Relay plugin and the KiwiSDR Audio plugin, and make sure this browser is paired (Connect Cloud Relay) so the start command is signed',
           );
         }
       }, startTimeoutMs);
@@ -114,10 +133,8 @@ function registerRelayAudio(app, ctx) {
 
     req.on('close', () => {
       hub.listeners.delete(res);
-      if (hub.listeners.size === 0 && hubs.get(sessionId) === hub) {
-        queueCommand(sessionId, { type: 'kiwiAudioStop' });
-        dropHub(sessionId, hub, 'no listeners');
-      }
+      // Ending the upload ends the bridge's Kiwi session (no command needed)
+      if (hub.listeners.size === 0 && hubs.get(sessionId) === hub) dropHub(sessionId, hub, 'no listeners');
     });
   });
 

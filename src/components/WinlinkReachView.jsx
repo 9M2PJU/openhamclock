@@ -221,14 +221,17 @@ export default function WinlinkReachView({
 
   const floorTitle = (c) => {
     if (!c) return '';
-    const info = modeSnrInfo(c.mode);
+    const info = modeSnrInfo(c.mode, { pactor4: !!reach.pactor4 });
+    const basis = {
+      measured: t('winlinkReach.basis.measured', { defaultValue: 'measured' }),
+      vendor: t('winlinkReach.basis.vendor', { defaultValue: 'manufacturer figure' }),
+      estimate: t('winlinkReach.estimated', { defaultValue: 'estimate' }),
+    }[info.basis];
     return t('winlinkReach.floorTitle', {
       defaultValue: '{{mode}} holds a link down to {{floor}} dB SNR (3 kHz) — {{source}}',
       mode: c.modeLabel,
       floor: info.floorDb,
-      source: info.estimated
-        ? `${t('winlinkReach.estimated', { defaultValue: 'estimate' })}: ${info.source}`
-        : info.source,
+      source: `${basis}: ${info.source}`,
     });
   };
 
@@ -251,6 +254,34 @@ export default function WinlinkReachView({
       data-status={status}
     >
       {statusLabel(status)}
+    </span>
+  );
+
+  const renderHoursBadge = (note) => (
+    <span
+      data-testid="hours-unknown"
+      title={
+        note?.hoursPerDay
+          ? t('winlinkReach.hoursUnknownPerDay', {
+              defaultValue:
+                'Published hours "{{text}}": about {{n}} h a day, but not which hours — it may be off the air now.',
+              text: note.text,
+              n: note.hoursPerDay,
+            })
+          : t('winlinkReach.hoursUnknownTitle', {
+              defaultValue: 'Published hours "{{text}}" do not say when it is on the air — it may be off the air now.',
+              text: note?.text ?? '',
+            })
+      }
+      style={{
+        fontSize: '9px',
+        padding: '0 4px',
+        borderRadius: '3px',
+        border: '1px dashed var(--text-muted)',
+        color: 'var(--text-muted)',
+      }}
+    >
+      {t('winlinkReach.hoursUnknown', { defaultValue: 'hours ?' })}
     </span>
   );
 
@@ -358,8 +389,20 @@ export default function WinlinkReachView({
             defaultValue: '{{power}} W · {{antenna}} · SSN {{ssn}}',
             power: parseFloat(propConfig?.power) || 100,
             antenna: antennaName,
-            ssn: Math.round(ssn ?? 100),
+            ssn: Math.round(reach.ssnUsed ?? ssn ?? 100),
           })}
+          {reach.ssnSource === 'solar-cycle' && (
+            <span
+              data-testid="ssn-month"
+              title={t('winlinkReach.ssnMonthTitle', {
+                defaultValue:
+                  'Display time is in another month: predictions use that month’s smoothed sunspot number from the NOAA SWPC solar-cycle data.',
+              })}
+            >
+              {' '}
+              {t('winlinkReach.ssnMonth', { defaultValue: '(month)' })}
+            </span>
+          )}
         </span>
       </div>
 
@@ -412,6 +455,16 @@ export default function WinlinkReachView({
               style={numberStyle}
             />
             dB
+          </label>
+          <label
+            style={{ display: 'inline-flex', alignItems: 'center', gap: '3px' }}
+            title={t('winlinkReach.pactor4Title', {
+              defaultValue:
+                'PACTOR-4 gateways are scored at the SCS −19 dB floor when your modem supports PACTOR 4; otherwise as PACTOR 3.',
+            })}
+          >
+            <input type="checkbox" checked={!!reach.pactor4} onChange={(e) => reach.setPactor4(e.target.checked)} />
+            {t('winlinkReach.pactor4', { defaultValue: 'My modem supports PACTOR 4' })}
           </label>
           <button type="button" style={smallBtn} onClick={() => reach.setThresholds({ ...DEFAULT_THRESHOLDS })}>
             {t('winlinkReach.thReset', { defaultValue: 'Defaults' })}
@@ -523,6 +576,7 @@ export default function WinlinkReachView({
                       <span style={{ fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--text-primary)' }}>
                         {row.callsign}
                       </span>
+                      {row.hoursUnknown && renderHoursBadge(row.hoursNote)}
                       {best && (
                         <span style={{ fontSize: '10px', fontFamily: 'var(--font-mono)' }} title={floorTitle(best)}>
                           {bandText(best)} {(best.frequency / 1e6).toFixed(3)}{' '}
@@ -543,6 +597,20 @@ export default function WinlinkReachView({
                           {' · '}
                           {t('winlinkReach.rel', { defaultValue: '{{rel}}% rel', rel: row.reliability })}
                           {row.approx ? ' ≈' : ''}
+                          {best?.aboveMuf && (
+                            <span
+                              data-testid="above-muf"
+                              style={{ color: 'var(--accent-amber)' }}
+                              title={t('winlinkReach.aboveMufTitle', {
+                                defaultValue:
+                                  'Above the predicted MUF ({{muf}} MHz, a monthly median): the band supports this frequency on half the days or fewer, so it is never rated Good.',
+                                muf: best.muf,
+                              })}
+                            >
+                              {' · '}
+                              {t('winlinkReach.aboveMuf', { defaultValue: 'above MUF {{muf}}', muf: best.muf })}
+                            </span>
+                          )}
                         </>
                       )}
                       {row.snrMargin != null && (
@@ -608,6 +676,7 @@ export default function WinlinkReachView({
                         </span>
                         <span style={{ width: '34px', textAlign: 'right' }}>
                           {c.status === 'offair' ? c.hours || '' : c.reliability != null ? `${c.reliability}%` : '—'}
+                          {c.aboveMuf ? '↑' : ''}
                         </span>
                         <span style={{ width: '44px', textAlign: 'right' }}>
                           {c.snrMargin != null ? `${c.snrMargin >= 0 ? '+' : ''}${c.snrMargin}` : ''}

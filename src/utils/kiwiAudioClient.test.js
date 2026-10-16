@@ -7,6 +7,7 @@ describe('kiwiAudioClient', () => {
       url: 'http://pi.local:5555/api/kiwi-audio/stream?freq=7030&mode=cw',
       headers: { 'X-RigBridge-Token': 't' },
       via: 'direct',
+      startCommand: null,
     });
     const tune = kiwiTuneRequest({ bridgeUrl: 'http://pi.local:5555', freqKhz: 14074, mode: 'usb' });
     expect(tune.url).toBe('http://pi.local:5555/api/kiwi-audio/tune');
@@ -19,10 +20,12 @@ describe('kiwiAudioClient', () => {
       url: '/api/rig-bridge/relay/audio?session=ab%20cd&freq=14074&mode=usb',
       headers: {},
       via: 'relay',
+      // sent signed through /relay/command before the audio is opened
+      startCommand: { type: 'kiwiAudioStart', payload: { freqKHz: 14074, mode: 'usb' } },
     });
-    const t = kiwiTuneRequest({ relaySession: 'abcd', freqKhz: 7030, mode: 'cw' });
-    expect(t.url).toBe('/api/rig-bridge/relay/command?session=abcd');
-    expect(JSON.parse(t.init.body)).toEqual({ type: 'kiwiAudioTune', payload: { freqKHz: 7030, mode: 'cw' } });
+    expect(kiwiTuneRequest({ relaySession: 'abcd', freqKhz: 7030, mode: 'cw' })).toEqual({
+      relayCommand: { type: 'kiwiAudioTune', payload: { freqKHz: 7030, mode: 'cw' } },
+    });
   });
 
   it('returns null when there is no way to reach a Kiwi', () => {

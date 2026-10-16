@@ -6,7 +6,9 @@
  *   rig-bridge (cloud-relay long-poll) → kiwi-audio session (µ-law) →
  *   POST /api/rig-bridge/relay/audio/upload (one long chunked request) → server → browser
  *
- * Commands handled (from the relay command queue):
+ * Commands handled (from the relay command queue — cloud-relay.js has already
+ * verified their end-to-end signature; kiwiAudioStart is never accepted
+ * unsigned, it starts a receiver):
  *   kiwiAudioStart { freqKHz, mode }   open a Kiwi session and start uploading
  *   kiwiAudioTune  { freqKHz, mode }   retune it
  *   kiwiAudioStop                      end it
@@ -29,7 +31,9 @@ const SEGMENT_MS = 240 * 1000;
 /**
  * @param {{ serverUrl: string, apiKey: string, session: string,
  *           getKiwiAudio: () => ({ openSession: Function } | null),
- *           parseTune: (freq, mode) => object, log?: (msg: string) => void }} opts
+ *           parseTune: (freq, mode) => object, log?: (msg: string) => void,
+ *           extraHeaders?: () => object }} opts   extraHeaders: e.g. X-Relay-Read-Hash, as the
+ *           cloud relay's other requests send
  */
 function createRelayAudio({
   serverUrl,
@@ -39,6 +43,7 @@ function createRelayAudio({
   parseTune,
   log = () => {},
   segmentMs = SEGMENT_MS,
+  extraHeaders = () => ({}),
 }) {
   let active = null; // { handle, req, startedAt, bytes }
   let lastError = null;
@@ -93,6 +98,7 @@ function createRelayAudio({
           'Content-Type': 'application/octet-stream',
           Authorization: `Bearer ${apiKey}`,
           'X-Relay-Session': session,
+          ...extraHeaders(),
           'X-Sample-Rate': String(meta.sampleRate),
           'X-Audio-Format': meta.codec,
           ...(meta.cwPitchHz ? { 'X-CW-Pitch': String(meta.cwPitchHz) } : {}),

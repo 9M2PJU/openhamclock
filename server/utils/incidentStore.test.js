@@ -3,7 +3,7 @@
  */
 import { beforeEach, describe, expect, it } from 'vitest';
 
-const { createIncidentStore, IncidentError, LIMITS } = require('./incidentStore.js');
+const { createIncidentStore, IncidentError, LIMITS, idleLimitFor } = require('./incidentStore.js');
 
 describe('incidentStore', () => {
   let clock;
@@ -59,6 +59,8 @@ describe('incidentStore', () => {
       const { incident: b } = small.create({});
       small.touchParticipant(a.id, 'client-a');
       expect(() => small.create({})).toThrow(/limit/); // both fresh
+      clock += 5 * 60 * 1000;
+      expect(() => small.create({})).toThrow(/limit/); // b only 5 min idle — still kept
       clock += 2 * 60 * 60 * 1000;
       small.touchParticipant(a.id, 'client-a'); // a is attended
       const { incident: c } = small.create({});
@@ -186,6 +188,32 @@ describe('incidentStore', () => {
       expect(store.snapshot(incident.id).events.find((e) => e.id === 'c1').ref).toBeUndefined();
     });
 
+    it('keeps each station’s own message number, and drops junk numbers', () => {
+      const { incident } = make();
+      store.apply(
+        incident.id,
+        {
+          events: [
+            { id: 'm1', type: 'aprs_msg_sent', callsign: 'K0CJH', summary: 'Message to W1AW', msgNo: 7 },
+            { id: 'm2', type: 'aprs_msg_rx', callsign: 'W1AW', summary: 'Message to K0CJH', msgNo: '8' },
+            { id: 'm3', type: 'aprs_msg_rx', callsign: 'W1AW', summary: 'x', msgNo: -1 },
+            { id: 'm4', type: 'aprs_msg_rx', callsign: 'W1AW', summary: 'y', msgNo: 'abc' },
+          ],
+        },
+        { site: 'EOC' },
+      );
+      const evs = store.snapshot(incident.id).events;
+      expect(evs.map((e) => [e.id, e.msgNo, e.site])).toEqual([
+        ['m1', 7, 'EOC'],
+        ['m2', 8, 'EOC'],
+        ['m3', undefined, 'EOC'],
+        ['m4', undefined, 'EOC'],
+      ]);
+      const restored = createIncidentStore({ now });
+      restored.hydrate(JSON.parse(JSON.stringify(store.serialise())));
+      expect(restored.snapshot(incident.id).events.find((e) => e.id === 'm1').msgNo).toBe(7);
+    });
+
     it('returns events oldest first in snapshots and caps the log by timestamp', () => {
       const small = createIncidentStore({ now, limits: { maxEvents: 3 } });
       const { incident } = small.create({});
@@ -233,17 +261,28 @@ describe('incidentStore', () => {
       expect(r.changes.reports[1].tokens).toEqual([{ key: 'Beds', type: 'capacity', current: 30, max: 100 }]);
     });
 
-    it('updates the board only when the incoming copy is newer, and ignores no-op rewrites', () => {
+    it('updates the board only from an admin, only when newer, and ignores no-op rewrites', () => {
       const { incident } = make();
-      const old = store.apply(incident.id, { board: { name: 'Older', updatedAt: clock - 10 } });
+      const admin = { role: 'admin' };
+      const old = store.apply(incident.id, { board: { name: 'Older', updatedAt: clock - 10 } }, admin);
       expect(old.changed).toBe(false);
-      const same = store.apply(incident.id, {
-        board: { name: 'Flood 2026', ic: 'K0CJH', netFreq: '146.520', notes: '', updatedAt: clock + 10 },
-      });
+      const same = store.apply(
+        incident.id,
+        { board: { name: 'Flood 2026', ic: 'K0CJH', netFreq: '146.520', notes: '', updatedAt: clock + 10 } },
+        admin,
+      );
       expect(same.changed).toBe(false);
-      const newer = store.apply(incident.id, {
-        board: { name: 'Flood 2026', ic: 'K0CJH', netFreq: '146.520', notes: 'Shelter at HS', updatedAt: clock + 20 },
-      });
+      const board = {
+        name: 'Flood 2026',
+        ic: 'K0CJH',
+        netFreq: '146.520',
+        notes: 'Shelter at HS',
+        updatedAt: clock + 20,
+      };
+      const byOperator = store.apply(incident.id, { board }, { role: 'operator' });
+      expect(byOperator.changed).toBe(false);
+      expect(byOperator.denied).toEqual(['board']);
+      const newer = store.apply(incident.id, { board }, admin);
       expect(newer.changed).toBe(true);
       expect(newer.changes.board.notes).toBe('Shelter at HS');
       expect(store.snapshot(incident.id).board.notes).toBe('Shelter at HS');
@@ -348,6 +387,284 @@ describe('incidentStore', () => {
       expect(small.hydrate([null, { id: 'x' }, ...two])).toBe(1);
       expect(small.hydrate('nope')).toBe(0);
       expect(good).toHaveLength(0);
+    });
+  });
+
+  describe('roles', () => {
+    it('hands out a separate admin key and tells the two roles apart', () => {
+      const { incident, joinKey, adminKey } = make();
+      expect(adminKey).toHaveLength(16);
+      expect(adminKey).not.toBe(joinKey);
+      expect(store.verify(incident.id, joinKey).role).toBe('operator');
+      expect(store.verify(incident.id, adminKey).role).toBe('admin');
+      expect(store.verify(incident.id, 'WRONGWRONGWRONG2')).toBeNull();
+      expect(JSON.stringify(store.serialise())).not.toContain(adminKey);
+    });
+
+    it('rotating the join key locks out the old key, keeps the admin key, and bumps keyGen', () => {
+      const { incident, joinKey, adminKey } = make();
+      const { joinKey: fresh, keyGen } = store.rotateJoinKey(incident.id);
+      expect(keyGen).toBe(2);
+      expect(store.verify(incident.id, joinKey)).toBeNull();
+      expect(store.verify(incident.id, fresh).role).toBe('operator');
+      expect(store.verify(incident.id, adminKey).role).toBe('admin');
+      expect(store.keyGenOf(incident.id)).toBe(2);
+    });
+  });
+
+  describe('admin edit / delete', () => {
+    const seed = () => {
+      const { incident } = make();
+      store.apply(incident.id, {
+        events: [
+          { id: 'e1', type: 'incident_note', summary: 'typo', dedupeKey: 'k1' },
+          { id: 'e2', type: 'incident_note', summary: 'keep' },
+        ],
+        reports: [{ id: 'f1', kind: 'field', callsign: 'W1AW', text: 'Bridge out' }],
+      });
+      return incident.id;
+    };
+
+    it('edits an event in place with a higher rev, keeping id, type and site', () => {
+      const id = seed();
+      const before = store.snapshot(id).seq;
+      const r = store.adminChange(id, { edit: { events: [{ id: 'e1', summary: 'fixed', type: 'nws_alert' }] } });
+      expect(r.changes.events[0]).toMatchObject({ id: 'e1', summary: 'fixed', type: 'nws_alert', rev: 1 });
+      expect(store.snapshot(id, before).events.map((e) => e.id)).toEqual(['e1']);
+      const again = store.adminChange(id, { edit: { events: [{ id: 'e1', summary: 'again' }] } });
+      expect(again.changes.events[0].rev).toBe(2);
+      expect(store.adminChange(id, { edit: { events: [{ id: 'nope', summary: 'x' }] } }).changed).toBe(false);
+    });
+
+    it('deletes events and reports with tombstones that deltas carry and full snapshots omit', () => {
+      const id = seed();
+      const before = store.snapshot(id).seq;
+      const r = store.adminChange(id, { delete: { events: ['e1'], reports: ['f1', 'missing'] } });
+      expect(r.changes.deleted.map((d) => `${d.kind}:${d.id}`)).toEqual(['event:e1', 'report:f1']);
+      const delta = store.snapshot(id, before);
+      expect(delta.full).toBe(false);
+      expect(delta.deleted.map((d) => d.id)).toEqual(['e1', 'f1']);
+      const full = store.snapshot(id, 0);
+      expect(full.full).toBe(true);
+      expect(full.events.map((e) => e.id)).toEqual(['e2']);
+      expect(full.reports).toEqual([]);
+      expect(full.deleted).toEqual([]);
+    });
+
+    it('a deleted record is not resurrected by a replay, and its dedupe key is released', () => {
+      const id = seed();
+      store.adminChange(id, { delete: { events: ['e1'], reports: ['f1'] } });
+      const replay = store.apply(id, {
+        events: [{ id: 'e1', type: 'incident_note', summary: 'typo', dedupeKey: 'k1' }],
+        reports: [{ id: 'f1', kind: 'field', callsign: 'W1AW', text: 'Bridge out' }],
+      });
+      expect(replay.changed).toBe(false);
+      const fresh = store.apply(id, { events: [{ id: 'e9', type: 'incident_note', summary: 'n', dedupeKey: 'k1' }] });
+      expect(fresh.changes.events.map((e) => e.id)).toEqual(['e9']);
+    });
+
+    it('clears the board', () => {
+      const id = seed();
+      const r = store.adminChange(id, { delete: { board: true } });
+      expect(r.changes.board).toMatchObject({ name: '', ic: '', netFreq: '', notes: '' });
+    });
+
+    it('a cursor older than pruned tombstones gets a full snapshot', () => {
+      const id = seed();
+      const old = store.snapshot(id).seq;
+      const evs = Array.from({ length: 1005 }, (_, i) => ({ id: `x${i}`, type: 'incident_note', summary: `${i}` }));
+      for (let i = 0; i < evs.length; i += 200) store.apply(id, { events: evs.slice(i, i + 200) });
+      store.adminChange(id, { delete: { events: evs.slice(0, 200).map((e) => e.id) } });
+      for (let i = 200; i < evs.length; i += 200)
+        store.adminChange(id, { delete: { events: evs.slice(i, i + 200).map((e) => e.id) } });
+      expect(store.snapshot(id, old).full).toBe(true);
+    });
+  });
+
+  describe('shared documents', () => {
+    it('stores known docs, ignores unknown ids and no-op rewrites', () => {
+      const { incident } = make();
+      const a = store.apply(incident.id, {
+        docs: [
+          { id: 'net-running', data: { name: 'ARES', stations: [] }, updatedAt: clock, by: 'w1aw' },
+          { id: 'bogus', data: {} },
+        ],
+      });
+      expect(a.changes.docs).toEqual([
+        expect.objectContaining({ id: 'net-running', by: 'W1AW', docRev: 1, receivedAt: clock }),
+      ]);
+      expect(
+        store.apply(incident.id, { docs: [{ id: 'net-running', data: { name: 'ARES', stations: [] } }] }).changed,
+      ).toBe(false);
+      const closed = store.apply(incident.id, { docs: [{ id: 'net-running', data: null, updatedAt: clock + 1 }] });
+      expect(closed.changes.docs[0]).toMatchObject({ data: null, docRev: 2 });
+      expect(store.snapshot(incident.id).docs).toHaveLength(1);
+    });
+
+    it('orders documents by when the server receives them, whatever the client clocks say', () => {
+      const { incident } = make();
+      // Site A's clock runs an hour fast, site B's ten minutes slow.
+      store.apply(incident.id, { docs: [{ id: 'ics-drafts', data: { v: 'A' }, updatedAt: clock + 3600e3 }] });
+      clock += 1000;
+      const b = store.apply(incident.id, { docs: [{ id: 'ics-drafts', data: { v: 'B' }, updatedAt: clock - 600e3 }] });
+      expect(b.changed).toBe(true); // the later arrival wins although its clock says it is older
+      const doc = store.snapshot(incident.id).docs[0];
+      expect(doc).toMatchObject({ data: { v: 'B' }, docRev: 2, receivedAt: clock, updatedAt: clock - 600e3 });
+      const restored = createIncidentStore({ now });
+      restored.hydrate(JSON.parse(JSON.stringify(store.serialise())));
+      expect(restored.snapshot(incident.id).docs[0]).toMatchObject({ docRev: 2, receivedAt: clock });
+    });
+
+    it('refuses an oversized document with 413', () => {
+      const small = createIncidentStore({ now, limits: { maxDocBytes: 100 } });
+      const { incident } = small.create({});
+      expect(() => small.apply(incident.id, { docs: [{ id: 'ics-drafts', data: { x: 'y'.repeat(200) } }] })).toThrow(
+        expect.objectContaining({ status: 413 }),
+      );
+    });
+  });
+
+  describe('hosted creation guards', () => {
+    const hosted = (limits = {}) => createIncidentStore({ hosted: true, now, limits });
+
+    it('requires a real-looking callsign', () => {
+      const s = hosted();
+      expect(() => s.create({}, {})).toThrow(expect.objectContaining({ status: 400 }));
+      expect(() => s.create({}, { call: 'N0CALL' })).toThrow(expect.objectContaining({ status: 400 }));
+      expect(() => s.create({}, { call: 'HELLO' })).toThrow(expect.objectContaining({ status: 400 }));
+      expect(s.create({}, { call: 'w1aw/p' }).incident.id).toBeTruthy();
+    });
+
+    it('caps open incidents per callsign', () => {
+      const s = hosted();
+      s.create({}, { call: 'W1AW' });
+      s.create({}, { call: 'W1AW' });
+      expect(() => s.create({}, { call: 'w1aw' })).toThrow(expect.objectContaining({ status: 429 }));
+      expect(s.create({}, { call: 'K1ABC' }).incident).toBeTruthy();
+    });
+
+    it('rate-limits creation across the whole server, sliding over an hour', () => {
+      const s = hosted({ createsPerHour: 3, maxPerCallsign: 99 });
+      for (let i = 0; i < 3; i++) s.create({}, { call: 'W1AW' });
+      expect(() => s.create({}, { call: 'K1ABC' })).toThrow(/too fast/);
+      clock += 61 * 60 * 1000;
+      expect(s.create({}, { call: 'K1ABC' }).incident).toBeTruthy();
+    });
+
+    it('local installs need no callsign and have no global rate', () => {
+      for (let i = 0; i < 30; i++) store.create({});
+      expect(store.size).toBe(30);
+    });
+  });
+
+  describe('pool pressure', () => {
+    it('shortens the idle limit as the pool fills', () => {
+      const week = 7 * 24 * 3600 * 1000;
+      expect(idleLimitFor(0.2, week)).toBe(week);
+      expect(idleLimitFor(0.6, week)).toBe(24 * 3600 * 1000);
+      expect(idleLimitFor(0.85, week)).toBe(3600 * 1000);
+      expect(idleLimitFor(1, week)).toBe(10 * 60 * 1000);
+    });
+
+    it('evicts unattended incidents idle past the pressure limit, never attended ones', () => {
+      const s = createIncidentStore({ now, limits: { maxIncidents: 10 } });
+      const ids = Array.from({ length: 9 }, () => s.create({}).incident.id); // 90% full
+      s.touchParticipant(ids[0], 'present');
+      clock += 2 * 3600 * 1000; // past the 1 h limit at ≥80%
+      s.touchParticipant(ids[0], 'present');
+      const dropped = s.relievePressure();
+      // drops until the pool is below 50% (where the limit is back to 24 h > 2 h idle)
+      expect(dropped).not.toContain(ids[0]);
+      expect(s.has(ids[0])).toBe(true);
+      expect(s.size).toBeLessThan(5);
+    });
+
+    it('a quiet pool keeps idle incidents for the full period', () => {
+      const s = createIncidentStore({ now, limits: { maxIncidents: 10 } });
+      s.create({});
+      clock += 3 * 24 * 3600 * 1000;
+      expect(s.expire()).toBe(0);
+    });
+  });
+
+  describe('join key for the admin', () => {
+    it('an admin verify returns the current join key, an operator verify does not', () => {
+      const { incident, joinKey, adminKey } = make();
+      expect(store.verify(incident.id, adminKey).joinKey).toBe(joinKey);
+      expect(store.verify(incident.id, joinKey).joinKey).toBeUndefined();
+      expect(JSON.stringify(store.serialise())).not.toContain(joinKey);
+    });
+
+    it('rotation with the admin key reseals the new key; survives a restart', () => {
+      const { incident, adminKey } = make();
+      const { joinKey: fresh } = store.rotateJoinKey(incident.id, adminKey);
+      expect(store.verify(incident.id, adminKey).joinKey).toBe(fresh);
+      const restored = createIncidentStore({ now });
+      restored.hydrate(JSON.parse(JSON.stringify(store.serialise())));
+      expect(restored.verify(incident.id, adminKey).joinKey).toBe(fresh);
+    });
+  });
+
+  describe('tombstones on disk', () => {
+    it('a restart does not let a deleted record come back', () => {
+      const { incident } = make();
+      store.apply(incident.id, {
+        events: [{ id: 'e1', type: 'incident_note', summary: 'gone' }],
+        reports: [{ id: 'f1', kind: 'field', callsign: 'W1AW', text: 'gone' }],
+      });
+      store.adminChange(incident.id, { delete: { events: ['e1'], reports: ['f1'] } });
+      const seqAfterDelete = store.snapshot(incident.id).seq;
+      const restored = createIncidentStore({ now });
+      restored.hydrate(JSON.parse(JSON.stringify(store.serialise())));
+      const replay = restored.apply(incident.id, {
+        events: [{ id: 'e1', type: 'incident_note', summary: 'gone' }],
+        reports: [{ id: 'f1', kind: 'field', callsign: 'W1AW', text: 'gone' }],
+      });
+      expect(replay.changed).toBe(false);
+      expect(restored.snapshot(incident.id).events).toEqual([]);
+      // a client that was up to date before the restart still gets a delta, tombstones intact
+      const delta = restored.snapshot(incident.id, seqAfterDelete - 2);
+      expect(delta.full).toBe(false);
+      expect(delta.deleted.map((d) => d.id).sort()).toEqual(['e1', 'f1']);
+    });
+
+    it('tombstones go when the incident expires, and stay bounded', () => {
+      const s = createIncidentStore({ now, idleMs: 1000 });
+      const { incident } = s.create({});
+      const evs = Array.from({ length: 1100 }, (_, i) => ({ id: `x${i}`, type: 'incident_note', summary: `${i}` }));
+      for (let i = 0; i < evs.length; i += 200) s.apply(incident.id, { events: evs.slice(i, i + 200) });
+      for (let i = 0; i < evs.length; i += 200) {
+        s.adminChange(incident.id, { delete: { events: evs.slice(i, i + 200).map((e) => e.id) } });
+      }
+      expect(s.serialise()[0].tombstones.length).toBeLessThanOrEqual(1000);
+      clock += 2000;
+      s.expire();
+      expect(s.serialise()).toEqual([]);
+    });
+  });
+
+  describe('persistence of roles, docs and edits', () => {
+    it('round-trips the admin key, docs, edit revs and creator', () => {
+      const { incident, adminKey } = store.create({ name: 'X' }, { call: 'W1AW' });
+      store.apply(incident.id, {
+        events: [{ id: 'e1', type: 'incident_note', summary: 'a' }],
+        docs: [{ id: 'ics-drafts', data: { header: { incidentName: 'X' } }, updatedAt: clock }],
+      });
+      store.adminChange(incident.id, { edit: { events: [{ id: 'e1', summary: 'b' }] } });
+      const restored = createIncidentStore({ now });
+      restored.hydrate(JSON.parse(JSON.stringify(store.serialise())));
+      expect(restored.verify(incident.id, adminKey).role).toBe('admin');
+      const snap = restored.snapshot(incident.id);
+      expect(snap.events[0]).toMatchObject({ summary: 'b', rev: 1 });
+      expect(snap.docs[0]).toMatchObject({ id: 'ics-drafts', data: { header: { incidentName: 'X' } } });
+      expect(restored.get(incident.id).creatorCall).toBe('W1AW');
+      // tombstones are persisted, so a cursor from before the restart still gets a delta
+      expect(restored.snapshot(incident.id, 2).full).toBe(false);
+      // a file from before tombstones were persisted forces one full resync
+      const legacy = JSON.parse(JSON.stringify(store.serialise())).map(({ tombstones: _t, tombFloor: _f, ...r }) => r);
+      const old = createIncidentStore({ now });
+      old.hydrate(legacy);
+      expect(old.snapshot(incident.id, 2).full).toBe(true);
     });
   });
 });

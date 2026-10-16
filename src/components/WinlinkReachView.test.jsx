@@ -181,6 +181,46 @@ describe('WinlinkReachView', () => {
     expect(container.querySelector('[data-testid="reach-packet-K0VHF"]')).toBeTruthy(); // line of sight passes
   });
 
+  it('shows an "hours ?" badge when the published hours do not say when the gateway is on', async () => {
+    const base = mocks.fetch;
+    mocks.fetch = vi.fn(async (url) =>
+      url === '/api/winlink/gateways'
+        ? {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              gateways: [{ callsign: 'K0PART', gridsquare: 'DM79', frequency: 7101200, mode: 43, hours: '12/7' }],
+            }),
+          }
+        : base(url),
+    );
+    render();
+    await settle();
+    expect(chip('K0PART')).toBe('good'); // unknown hours never force Off the air
+    const badge = row('K0PART').querySelector('[data-testid="hours-unknown"]');
+    expect(badge.textContent).toBe('hours ?');
+    expect(badge.getAttribute('title')).toMatch(/about 12 h a day/);
+  });
+
+  it('has a PACTOR-4 modem setting under Cut-offs', async () => {
+    render();
+    await settle();
+    act(() => {
+      buttons(container, 'Cut-offs')[0].click();
+    });
+    const label = [...container.querySelectorAll('label')].find((l) =>
+      l.textContent.includes('My modem supports PACTOR 4'),
+    );
+    const box = label.querySelector('input[type="checkbox"]');
+    expect(box.checked).toBe(false);
+    act(() => {
+      box.click();
+    });
+    await settle();
+    expect(box.checked).toBe(true);
+    expect(localStorage.getItem('ohc_winlinkReachPactor4')).toBe('1');
+  });
+
   it('applies edited cut-offs without re-running predictions', async () => {
     render();
     await settle();

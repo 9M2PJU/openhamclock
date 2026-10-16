@@ -11,6 +11,12 @@ import {
   shouldSuggestMobileLayout,
   readSuggestionDone,
   hasSavedLayout,
+  MOBILE_CARD_PREFS_KEY,
+  readCardPrefs,
+  writeCardPrefs,
+  toggleCardPref,
+  isCardEnabled,
+  summarizeEmcomm,
   markSuggestionDone,
   isStandaloneDisplay,
   isLandscape,
@@ -50,8 +56,11 @@ describe('buildMobileCards', () => {
     expect(ids).toContain('solar');
   });
 
-  it('returns id + icon only', () => {
-    for (const c of buildMobileCards()) expect(Object.keys(c).sort()).toEqual(['icon', 'id']);
+  it('returns id, icon and whether the panel draws its own header', () => {
+    for (const c of buildMobileCards()) expect(Object.keys(c).sort()).toEqual(['icon', 'id', 'ownHeader']);
+    const byId = Object.fromEntries(buildMobileCards().map((c) => [c.id, c.ownHeader]));
+    expect(byId['dx-cluster']).toBe(true);
+    expect(byId.weather).toBe(false); // plain weather block — the card supplies the title
   });
 });
 
@@ -170,6 +179,84 @@ describe('shouldSuggestMobileLayout', () => {
     expect(s.getItem(MOBILE_SUGGEST_KEY)).toBe('1');
     expect(readSuggestionDone(s)).toBe(true);
     expect(readSuggestionDone(null)).toBe(false);
+  });
+});
+
+describe('card picker prefs', () => {
+  it('EmComm is opt-in: off by default, on when arriving from the EmComm layout', () => {
+    expect(buildMobileCards().map((c) => c.id)).not.toContain('emcomm');
+    const fresh = readCardPrefs(memStorage(), 'modern');
+    expect(isCardEnabled(fresh, 'emcomm')).toBe(false);
+    const fromEmcomm = readCardPrefs(memStorage(), 'emcomm');
+    expect(isCardEnabled(fromEmcomm, 'emcomm')).toBe(true);
+    expect(buildMobileCards({ prefs: fromEmcomm }).map((c) => c.id)[0]).toBe('emcomm');
+  });
+
+  it('round-trips saved choices, which then win over the previous layout', () => {
+    const s = memStorage();
+    let p = readCardPrefs(s, 'modern');
+    p = toggleCardPref(p, 'emcomm');
+    p = toggleCardPref(p, 'solar');
+    writeCardPrefs(s, p);
+    expect(JSON.parse(s.getItem(MOBILE_CARD_PREFS_KEY)).enabled).toEqual({ emcomm: true, solar: false });
+    const back = readCardPrefs(s, 'classic');
+    expect(isCardEnabled(back, 'emcomm')).toBe(true);
+    expect(isCardEnabled(back, 'solar')).toBe(false);
+    const ids = buildMobileCards({ prefs: back }).map((c) => c.id);
+    expect(ids).toContain('emcomm');
+    expect(ids).not.toContain('solar');
+  });
+
+  it('never lets the last card be switched off', () => {
+    let p = { enabled: {} };
+    for (const c of buildMobileCards()) p = toggleCardPref(p, c.id);
+    expect(buildMobileCards({ prefs: p })).toHaveLength(1);
+  });
+
+  it('ignores corrupt stored prefs', () => {
+    const s = memStorage();
+    s.setItem(MOBILE_CARD_PREFS_KEY, '{nope');
+    expect(readCardPrefs(s, null).isDefault).toBe(true);
+  });
+});
+
+describe('summarizeEmcomm', () => {
+  it('orders alerts by severity, shelters by distance from DE, roster by recency', () => {
+    const sum = summarizeEmcomm({
+      alerts: [
+        { id: 1, severity: 'Minor' },
+        { id: 2, severity: 'Extreme' },
+        { id: 3, severity: 'Moderate' },
+      ],
+      shelters: [
+        { id: 'far', lat: 45, lon: -93, status: 'OPEN' },
+        { id: 'near', lat: 44.4, lon: -93.05, status: 'FULL' },
+        { id: 'nopos', status: 'OPEN' },
+      ],
+      roster: [
+        { call: 'A', age: 30 },
+        { call: 'B', age: 2, stale: false },
+        { call: 'C', age: 90, stale: true },
+      ],
+      de: { lat: 44.37, lon: -93.04 },
+    });
+    expect(sum.alerts.map((a) => a.id)).toEqual([2, 3, 1]);
+    expect(sum.worstSeverity).toBe('Extreme');
+    expect(sum.shelters.map((s) => s.id)).toEqual(['near', 'far', 'nopos']);
+    expect(sum.shelters[0].distanceKm).toBeGreaterThan(0);
+    expect(sum.shelters[0].distanceKm).toBeLessThan(5);
+    expect(sum.shelters[2].distanceKm).toBeNull();
+    expect(sum.openShelters).toBe(2);
+    expect(sum.roster.map((o) => o.call)).toEqual(['B', 'A', 'C']);
+    expect(sum.activeOps).toBe(2);
+  });
+
+  it('handles empty input and an unknown DE', () => {
+    const sum = summarizeEmcomm({ shelters: [{ id: 'x', lat: 1, lon: 1 }] });
+    expect(sum.alerts).toEqual([]);
+    expect(sum.worstSeverity).toBeNull();
+    expect(sum.shelters[0].distanceKm).toBeNull();
+    expect(summarizeEmcomm().shelterCount).toBe(0);
   });
 });
 

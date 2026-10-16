@@ -85,18 +85,20 @@ async function startStack({ kiwiPort, bridgeAnswers = true, relaySessions = ['ab
   });
   registerRelayAudio(app, {
     requireRelayAuth,
-    queueCommand: (sid, cmd) => {
-      if (!relaySessions.includes(sid)) return false;
-      commands.push(cmd);
-      // the bridge's long-poll picks it up a moment later
-      if (bridgeAnswers) setTimeout(() => relay.handleCommand(cmd), 5);
-      return true;
-    },
+    canRead: (req, sid) => (req.headers['x-relay-read'] === 'good-token' ? 'ok' : 'denied'),
+    hasSession: (sid) => relaySessions.includes(sid),
     startTimeoutMs: 400,
   });
+  // The browser's signed kiwiAudioStart arrives at the bridge through the
+  // command queue (signature checking: rig-bridge/plugins/cloud-relay-audio.test.js)
+  const sendCommand = (cmd) => {
+    commands.push(cmd.type);
+    if (bridgeAnswers) setTimeout(() => relay.handleCommand(cmd), 5);
+  };
   return {
     base,
     commands,
+    sendCommand,
     uploads,
     relay,
     plugin,
@@ -109,9 +111,9 @@ async function startStack({ kiwiPort, bridgeAnswers = true, relaySessions = ['ab
   };
 }
 
-function listen(base, path) {
+function listen(base, path, headers = { 'x-relay-read': 'good-token' }) {
   return new Promise((resolve, reject) => {
-    const req = http.get(`${base}${path}`, (res) => {
+    const req = http.get(`${base}${path}`, { headers }, (res) => {
       const out = { res, req, chunks: [], bytes: 0, ended: false };
       res.on('data', (c) => {
         out.chunks.push(c);
@@ -141,24 +143,26 @@ describe('relay audio (server ⇄ bridge ⇄ Kiwi)', () => {
   it('streams µ-law Kiwi audio to the browser and frees the Kiwi slot when it leaves', async () => {
     mock = await startMockKiwi();
     stack = await startStack({ kiwiPort: mock.port });
+    stack.sendCommand({ type: 'kiwiAudioStart', payload: { freqKHz: 7030, mode: 'cw' } });
     const l = await listen(stack.base, '/api/rig-bridge/relay/audio?session=abcd1234&freq=7030&mode=cw');
     expect(l.res.statusCode).toBe(200);
     expect(l.res.headers['x-audio-format']).toBe('ulaw');
     expect(l.res.headers['x-sample-rate']).toBe('12000');
     expect(l.res.headers['x-cw-pitch']).toBe('600');
-    expect(stack.commands[0]).toMatchObject({ type: 'kiwiAudioStart', payload: { freqKHz: 7030, mode: 'cw' } });
     expect(mock.commands).toContain('SET mod=cw low_cut=200 high_cut=1000 freq=7029.400');
     await until(() => l.bytes >= 8);
     expect([...Buffer.concat(l.chunks).subarray(0, 4)]).toEqual([100, -100, 2000, -32768].map(encodeSample));
     l.req.destroy();
-    await until(() => stack.commands.some((c) => c.type === 'kiwiAudioStop'));
+    // the server ends the upload → the bridge ends the Kiwi session; no command needed
     await until(() => mock.sockets.size === 0);
+    expect(stack.commands).toEqual(['kiwiAudioStart']);
     expect(stack.relay.status().active).toBe(false);
   });
 
   it('keeps the stream flowing across upload segment roll-overs', async () => {
     mock = await startMockKiwi();
     stack = await startStack({ kiwiPort: mock.port, segmentMs: 250 });
+    stack.sendCommand({ type: 'kiwiAudioStart', payload: { freqKHz: 14074, mode: 'usb' } });
     const l = await listen(stack.base, '/api/rig-bridge/relay/audio?session=abcd1234&freq=14074&mode=usb');
     expect(l.res.statusCode).toBe(200);
     await wait(1100);
@@ -180,6 +184,18 @@ describe('relay audio (server ⇄ bridge ⇄ Kiwi)', () => {
     expect(silent.res.statusCode).toBe(504);
     await until(() => silent.ended);
     expect(Buffer.concat(silent.chunks).toString()).toContain('Relay KiwiSDR audio');
+  });
+
+  it('needs the read token', async () => {
+    mock = await startMockKiwi();
+    stack = await startStack({ kiwiPort: mock.port });
+    const none = await listen(stack.base, '/api/rig-bridge/relay/audio?session=abcd1234&freq=7030', {});
+    expect(none.res.statusCode).toBe(401);
+    const wrong = await listen(stack.base, '/api/rig-bridge/relay/audio?session=abcd1234&freq=7030', {
+      'x-relay-read': 'nope',
+    });
+    expect(wrong.res.statusCode).toBe(401);
+    expect(stack.commands).toEqual([]);
   });
 
   it('validates the request and refuses unauthenticated uploads', async () => {

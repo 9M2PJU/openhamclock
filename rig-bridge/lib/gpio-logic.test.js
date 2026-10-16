@@ -6,7 +6,10 @@ import {
   resolvePinMap,
   pulse,
   sanitizeIndicators,
-  mergeIndicators,
+  LightningRelayArbiter,
+  sanitizeGuardSettings,
+  applyGuardSettings,
+  GPIO_FEATURES,
   computeOutputs,
   physicalLevel,
   OUTPUT_NAMES,
@@ -57,6 +60,10 @@ describe('indicators + outputs', () => {
       countdown: 'off',
       lightning: null,
       lightningRelay: null,
+      lightningAllClearMin: null,
+      lightningOverride: 'auto',
+      displayId: null,
+      lightningGuard: null,
     });
     expect(sanitizeIndicators(null).countdown).toBe('off');
   });
@@ -196,33 +203,15 @@ describe('lightningOut (lightning antenna-protection relay)', () => {
     expect(sanitizeIndicators({ lightningRelay: false }).lightningRelay).toBe(false);
   });
 
-  it('a report without lightning fields keeps the relay another display requested', () => {
-    let { indicators, lightningReported } = mergeIndicators(null, { lightning: 'alarm', lightningRelay: true });
-    expect(lightningReported).toBe(true);
-    ({ indicators, lightningReported } = mergeIndicators(indicators, { countdown: 'running' }));
-    expect(lightningReported).toBe(false);
-    expect(indicators.countdown).toBe('running');
-    expect(indicators.lightningRelay).toBe(true);
-    expect(indicators.lightning).toBe('alarm');
-    ({ indicators, lightningReported } = mergeIndicators(indicators, { lightning: 'clear', lightningRelay: false }));
-    expect(lightningReported).toBe(true);
-    expect(indicators.lightningRelay).toBe(false);
-  });
-
-  it('follows the request and holds it when reports stop (unless told not to)', () => {
+  it('computeOutputs drives the line from the arbiter decision only', () => {
     const on = sanitizeIndicators({ lightning: 'alarm', lightningRelay: true });
-    expect(computeOutputs({ indicators: on }, 0).lightningOut).toBe(true);
-    expect(computeOutputs({ indicators: sanitizeIndicators({ lightningRelay: false }) }, 0).lightningOut).toBe(false);
-    expect(computeOutputs({ indicators: sanitizeIndicators({}) }, 0).lightningOut).toBe(false);
-    // Browser gone quiet: hold by default …
-    expect(computeOutputs({ indicators: on, indicatorsStale: true }, 0).lightningOut).toBe(true);
-    expect(computeOutputs({ indicators: on, lightningStale: true }, 0).lightningOut).toBe(true);
-    // … release only when holding is switched off
-    expect(
-      computeOutputs({ indicators: on, lightningStale: true, lightningHoldWhenStale: false }, 0).lightningOut,
-    ).toBe(false);
-    // Other outputs still go dark when stale; the relay does not depend on them
-    const stale = computeOutputs({ indicators: { ...on, alarm: true }, indicatorsStale: true }, 0);
+    expect(computeOutputs({ indicators: on, lightningEngaged: true }, 0).lightningOut).toBe(true);
+    expect(computeOutputs({ indicators: on, lightningEngaged: false }, 0).lightningOut).toBe(false);
+    // Stale indicators darken the ordinary lines, not the relay
+    const stale = computeOutputs(
+      { indicators: { ...on, alarm: true }, indicatorsStale: true, lightningEngaged: true },
+      0,
+    );
     expect(stale.alarmOut).toBe(false);
     expect(stale.lightningOut).toBe(true);
   });
@@ -235,5 +224,123 @@ describe('lightningOut (lightning antenna-protection relay)', () => {
     expect(physicalLevel('satOut', true, { lightningFailSafe: true })).toBe(1);
     expect(physicalLevel('satOut', true, { outputActiveLow: true })).toBe(0);
     expect(physicalLevel('lightningOut', true, { outputActiveLow: true, lightningFailSafe: true })).toBe(1);
+  });
+});
+
+describe('LightningRelayArbiter', () => {
+  const MIN = 60000;
+  const T = 1_000_000;
+  const mk = (opts) => new LightningRelayArbiter({ staleMs: 90000, ...opts });
+
+  it('engages when ANY live display wants protection, releases when none do', () => {
+    const a = mk();
+    expect(a.decide(T).engaged).toBe(false);
+    a.report('A', { relay: true, level: 'alarm' }, T);
+    a.report('B', { relay: false, level: 'clear' }, T);
+    expect(a.decide(T)).toMatchObject({ engaged: true, reason: 'requested' });
+    a.report('B', { relay: true, level: 'alarm' }, T + 1000);
+    a.report('A', { relay: false, level: 'clear' }, T + 2000);
+    expect(a.decide(T + 2000).engaged).toBe(true); // B still wants it
+    a.report('B', { relay: false, level: 'clear' }, T + 3000);
+    expect(a.decide(T + 3000)).toMatchObject({ engaged: false, reason: 'clear' });
+  });
+
+  it('a display that goes quiet keeps its claim for its own all-clear time', () => {
+    const a = mk();
+    a.report('A', { relay: true, level: 'alarm', allClearMin: 10 }, T);
+    expect(a.decide(T + 5 * MIN)).toMatchObject({ engaged: true, reason: 'hold', holdUntil: T + 10 * MIN });
+    // Another live display reporting "clear" does not release A's claim
+    a.report('B', { relay: false, level: 'clear' }, T + 6 * MIN);
+    expect(a.decide(T + 6 * MIN).engaged).toBe(true);
+    expect(a.decide(T + 10 * MIN - 1).engaged).toBe(true);
+    expect(a.decide(T + 10 * MIN).engaged).toBe(false);
+    // A's lapsed claim is forgotten, and so is B once it is quiet too
+    expect(a.decide(T + 10 * MIN).reporters).toEqual([]);
+  });
+
+  it('a renewed engage report restarts the all-clear hold', () => {
+    const a = mk();
+    a.report('A', { relay: true, allClearMin: 5 }, T);
+    a.report('A', { relay: true, allClearMin: 5 }, T + 4 * MIN);
+    expect(a.decide(T + 8 * MIN).engaged).toBe(true);
+    expect(a.decide(T + 9 * MIN).engaged).toBe(false);
+  });
+
+  it('defaults to 30 min when a report carries no all-clear time; holdWhenStale off releases at the stale window', () => {
+    const a = mk();
+    a.report('old', { relay: true }, T);
+    expect(a.decide(T + 29 * MIN).engaged).toBe(true);
+    expect(a.decide(T + 30 * MIN).engaged).toBe(false);
+    const b = mk({ holdWhenStale: false });
+    b.report('A', { relay: true, allClearMin: 30 }, T);
+    expect(b.decide(T + 90000).engaged).toBe(true);
+    expect(b.decide(T + 90001).engaged).toBe(false);
+  });
+
+  it('a live manual override wins; the most recent override decides', () => {
+    const a = mk();
+    a.report('A', { relay: true, level: 'alarm' }, T);
+    a.report('B', { relay: false, level: 'alarm', override: 'off' }, T + 1000);
+    expect(a.decide(T + 1000)).toMatchObject({ engaged: false, reason: 'override-off' });
+    a.report('C', { relay: true, level: 'clear', override: 'on' }, T + 2000);
+    expect(a.decide(T + 2000)).toMatchObject({ engaged: true, reason: 'override-on' });
+    // Overrides from quiet displays no longer count
+    expect(a.decide(T + 2000 + 91000).reason).not.toMatch(/override/);
+  });
+
+  it('ignores non-boolean reports and bounds the reporter list', () => {
+    const a = mk({ maxReporters: 3 });
+    a.report('x', { relay: null }, T);
+    expect(a.reporters.size).toBe(0);
+    for (let i = 0; i < 5; i++) a.report(`d${i}`, { relay: false }, T + i);
+    expect([...a.reporters.keys()]).toEqual(['d2', 'd3', 'd4']);
+  });
+});
+
+describe('guard settings sent by a display (headless guard)', () => {
+  it('sanitizes and clamps; needs a location', () => {
+    expect(
+      sanitizeGuardSettings({
+        lat: '45.12345',
+        lon: 7.5,
+        warnKm: 900,
+        alarmKm: 600,
+        allClearMin: 0,
+        minStrikes: 2.4,
+        hysteresisPct: 33.3,
+        repeatCloser: false,
+        relayOn: 'warn',
+        extra: 'x',
+      }),
+    ).toEqual({
+      lat: 45.123,
+      lon: 7.5,
+      warnKm: 500,
+      alarmKm: 500,
+      allClearMin: 1,
+      minStrikes: 2,
+      hysteresisPct: 33,
+      repeatCloser: false,
+      relayOn: 'warn',
+    });
+    expect(sanitizeGuardSettings({ warnKm: 10 })).toBeNull();
+    expect(sanitizeGuardSettings({ lat: 95, lon: 0 })).toBeNull();
+    expect(sanitizeGuardSettings(null)).toBeNull();
+  });
+
+  it('applyGuardSettings reports only real changes and never touches enabled', () => {
+    const reported = sanitizeGuardSettings({ lat: 45, lon: 7 });
+    const cur = { enabled: true, ...reported };
+    expect(applyGuardSettings(cur, reported)).toBeNull();
+    // Config files store lat/lon as strings: "45" equals 45
+    expect(applyGuardSettings({ ...cur, lat: '45', lon: '7' }, reported)).toBeNull();
+    const next = applyGuardSettings(cur, { ...reported, alarmKm: 15 });
+    expect(next).toEqual({ ...cur, alarmKm: 15 });
+    expect(next.enabled).toBe(true);
+    expect(applyGuardSettings(cur, null)).toBeNull();
+  });
+
+  it('advertises the multi-display arbiter and guard settings for the app', () => {
+    expect(GPIO_FEATURES).toEqual(expect.arrayContaining(['lightning-arbiter', 'lightning-guard-settings']));
   });
 });

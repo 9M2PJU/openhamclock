@@ -5,6 +5,10 @@
  *   relay:   /api/rig-bridge/relay/audio       (hosted site via the Rig Bridge Cloud Relay,
  *                                               opt-in on the bridge: cloudRelay.relayAudio)
  *
+ * Over the relay the browser first sends a signed kiwiAudioStart command
+ * (sendRelayCommand — Rig Bridge refuses it unsigned) and reads the audio
+ * with the session's read token (X-Relay-Read, from relayReadHeaders).
+ *
  * Pure request builders, so the routing is unit-tested without a network.
  */
 
@@ -23,8 +27,9 @@ export function kiwiStreamRequest({ bridgeUrl, token, relaySession, freqKhz, mod
   if (relaySession) {
     return {
       url: `/api/rig-bridge/relay/audio?session=${encodeURIComponent(relaySession)}&${q}`,
-      headers: {},
+      headers: {}, // + relayReadHeaders(session), added by the caller (async)
       via: 'relay',
+      startCommand: { type: 'kiwiAudioStart', payload: { freqKHz: freqKhz, mode } },
     };
   }
   if (bridgeUrl) {
@@ -32,25 +37,20 @@ export function kiwiStreamRequest({ bridgeUrl, token, relaySession, freqKhz, mod
       url: `${bridgeUrl.replace(/\/$/, '')}/api/kiwi-audio/stream?${q}`,
       headers: token ? { 'X-RigBridge-Token': token } : {},
       via: 'direct',
+      startCommand: null,
     };
   }
   return null;
 }
 
 /**
- * Retune a live stream.
- * @returns {{ url: string, init: RequestInit } | null}
+ * Retune a live stream: a fetch for the bridge, or a relay command for the
+ * caller to send signed (sendRelayCommand).
+ * @returns {{ url: string, init: RequestInit } | { relayCommand: { type: string, payload: object } } | null}
  */
 export function kiwiTuneRequest({ bridgeUrl, token, relaySession, freqKhz, mode = 'cw' }) {
   if (relaySession) {
-    return {
-      url: `/api/rig-bridge/relay/command?session=${encodeURIComponent(relaySession)}`,
-      init: {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: 'kiwiAudioTune', payload: { freqKHz: freqKhz, mode } }),
-      },
-    };
+    return { relayCommand: { type: 'kiwiAudioTune', payload: { freqKHz: freqKhz, mode } } };
   }
   if (bridgeUrl) {
     return {

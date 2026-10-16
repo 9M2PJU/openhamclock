@@ -64,10 +64,94 @@ import { use630mBandEnabled } from '../hooks/use630mBandEnabled.js';
 import { esc } from '../utils/escapeHtml.js';
 import { spotLabelText, spotLabelSuppressed } from '../utils/spotLabel.js';
 import { extractIota, iotaName } from '../utils/iota.js';
-import { LiEye, LiEyeOff, LiLock, LiUnlock, LiPlus, LiMinus, LiRotate } from './Icons.jsx';
+import { LiEye, LiEyeOff, LiLock, LiUnlock, LiPlus, LiMinus, LiRotate, LiLayers, LiMoon } from './Icons.jsx';
+import useCompactMapControls, { useElementSize, shouldOverflowCompactDock } from '../hooks/useCompactMapControls.js';
+import useCompactOverlayDismiss from '../hooks/useCompactOverlayDismiss.js';
 
 // Lightweight error boundary for the non-Leaflet projections (azimuthal canvas,
 // 3D globe) — falls back to Mercator instead of crashing the entire dashboard.
+// Compact map controls (phones): the projection toggle and basemap select
+// move into a popover behind one menu button. When not compact this renders
+// its children untouched — no wrapper element — so wide layouts are unchanged.
+function CompactMenuWrap({ compact, open, children }) {
+  if (!compact) return children;
+  if (!open) return null;
+  return (
+    <div
+      data-compact-pop="menu"
+      style={{
+        position: 'absolute',
+        top: '44px',
+        right: 0,
+        zIndex: 1200,
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'stretch',
+        gap: '8px',
+        padding: '8px',
+        borderRadius: '6px',
+        border: '1px solid #444',
+        background: 'rgba(0, 0, 0, 0.92)',
+        boxShadow: '0 4px 14px rgba(0,0,0,0.45)',
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+// Compact control column on a map too short for it: the controls below the
+// lock fold into a "⋯" button that opens them as a row beside it. Otherwise
+// renders its children untouched (no wrapper element).
+function DockOverflowWrap({ overflow, open, onToggle, label, children }) {
+  if (!overflow) return children;
+  return (
+    <div data-compact-pop="more" style={{ position: 'relative' }}>
+      <button
+        type="button"
+        onClick={onToggle}
+        title={label}
+        aria-label={label}
+        aria-expanded={open}
+        style={{
+          width: '36px',
+          minHeight: '36px',
+          padding: 0,
+          background: open ? 'rgba(0, 255, 204, 0.18)' : 'rgba(0, 0, 0, 0.65)',
+          border: `1px solid ${open ? '#00ffcc' : '#444'}`,
+          borderRadius: '4px',
+          color: '#ccc',
+          fontSize: '18px',
+          lineHeight: 1,
+          cursor: 'pointer',
+        }}
+      >
+        ⋯
+      </button>
+      {open && (
+        <div
+          style={{
+            position: 'absolute',
+            left: '44px',
+            top: 0,
+            zIndex: 1200,
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            padding: '6px 8px',
+            borderRadius: '6px',
+            border: '1px solid #444',
+            background: 'rgba(0, 0, 0, 0.92)',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
 class AzimuthalErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
@@ -192,6 +276,12 @@ export const WorldMap = ({
   relaySatName = null,
   relayTarget = null,
   emeActivityPaths = null,
+  // Compact map controls for phones: true forces on (Mobile layout), false
+  // forces off, undefined = automatic below 600 px viewport width.
+  compactControls,
+  // Height (px) the host layout's own buttons take up at the bottom of the
+  // map; the control column is kept clear of it (Classic's Settings/DX row).
+  controlsBottomInset = 0,
 }) => {
   const { t, i18n } = useTranslation();
   const mapLang = i18n.language?.split('-')[0] || 'en'; // e.g. 'de', 'ja', 'en'
@@ -916,6 +1006,54 @@ export const WorldMap = ({
       return next;
     });
   }, []);
+
+  // Compact controls (phones): one open popover at a time ('menu' | 'night'),
+  // and a band legend that starts collapsed to a chip. Kept apart from the
+  // persisted desktop legend setting so a phone never changes the desktop.
+  // The map's root element: its width drives compact mode (a small Dockable
+  // map panel goes compact even on a desktop screen).
+  const mapRootRef = useRef(null);
+  const mapSize = useElementSize(mapRootRef, compactControls !== false);
+  const compact = useCompactMapControls(compactControls, mapSize, controlsBottomInset);
+  const [compactPopover, setCompactPopover] = useState(null);
+  const [compactLegendOpen, setCompactLegendOpen] = useState(false);
+  const compactOverlayOpen = compact && (compactPopover !== null || compactLegendOpen);
+  // A map too short even for the compact column folds its lower controls
+  // into a "⋯" popover (lock, labels toggle when shown, zoom ±, night).
+  const dockItems = 4 + (onToggleDXLabels && showDXPaths && Array.isArray(dxPaths) && dxPaths.length > 0 ? 1 : 0);
+  const dockOverflow = compact && shouldOverflowCompactDock(mapSize.height, controlsBottomInset, dockItems);
+
+  // An open compact popover or legend closes on any tap outside it and on
+  // Escape. A tap on the map that closes one is consumed whole — it never
+  // sets DX, opens a popup or starts a pan (hooks/useCompactOverlayDismiss).
+  useCompactOverlayDismiss({
+    enabled: compact,
+    open: compactOverlayOpen,
+    rootRef: mapRootRef,
+    onClose: () => {
+      setCompactPopover(null);
+      setCompactLegendOpen(false);
+    },
+  });
+
+  // Leaving compact mode (map panel resized wider) drops any open popover
+  useEffect(() => {
+    if (!compact) {
+      setCompactPopover(null);
+      setCompactLegendOpen(false);
+    }
+  }, [compact]);
+  const toggleCompactPopover = useCallback((id) => {
+    setCompactLegendOpen(false);
+    setCompactPopover((cur) => (cur === id ? null : id));
+  }, []);
+  const legendOpen = compact ? compactLegendOpen : showLegend;
+  const onLegendToggle = compact
+    ? () => {
+        setCompactPopover(null);
+        setCompactLegendOpen((v) => !v);
+      }
+    : toggleLegend;
 
   const destinationPoint = (latDeg, lonDeg, bearingDeg, distanceDeg) => {
     const toRad = (d) => (d * Math.PI) / 180;
@@ -2708,7 +2846,7 @@ export const WorldMap = ({
   );
 
   return (
-    <div data-map-surface="" style={{ position: 'relative', height: '100%', minHeight: '200px' }}>
+    <div ref={mapRootRef} data-map-surface="" style={{ position: 'relative', height: '100%', minHeight: '200px' }}>
       {/* Azimuthal equidistant projection (canvas-based) */}
       {isAzimuthal && (
         <AzimuthalErrorBoundary
@@ -2969,8 +3107,8 @@ export const WorldMap = ({
                 onClick={() => setMapLocked((prev) => !prev)}
                 title={mapLocked ? t('app.mapControls.unlock') : t('app.mapControls.lock')}
                 style={{
-                  width: '30px',
-                  minHeight: '30px',
+                  width: compact ? '36px' : '30px',
+                  minHeight: compact ? '36px' : '30px',
                   background: mapLocked ? 'rgba(255, 80, 80, 0.25)' : 'rgba(0, 0, 0, 0.65)',
                   border: `1px solid ${mapLocked ? 'rgba(255, 80, 80, 0.7)' : '#444'}`,
                   borderRadius: '4px',
@@ -2990,103 +3128,194 @@ export const WorldMap = ({
                 )}
               </button>
 
-              {onToggleDXLabels && showDXPaths && Array.isArray(dxPaths) && dxPaths.length > 0 && (
+              <DockOverflowWrap
+                overflow={dockOverflow}
+                open={compactPopover === 'more'}
+                onToggle={() => toggleCompactPopover('more')}
+                label="More map controls"
+              >
+                {onToggleDXLabels && showDXPaths && Array.isArray(dxPaths) && dxPaths.length > 0 && (
+                  <button
+                    onClick={onToggleDXLabels}
+                    title={showDXLabels ? t('app.mapControls.calls.hide') : t('app.mapControls.calls.show')}
+                    style={{
+                      width: '30px',
+                      background: showDXLabels ? 'rgba(255, 170, 0, 0.2)' : 'rgba(0, 0, 0, 0.65)',
+                      border: `1px solid ${showDXLabels ? '#ffaa00' : '#444'}`,
+                      color: showDXLabels ? '#ffaa00' : '#888',
+                      padding: '6px 8px',
+                      borderRadius: '4px',
+                      fontFamily: 'var(--font-mono)',
+                      cursor: 'pointer',
+                      textAlign: 'center',
+                      minHeight: '30px',
+                    }}
+                  >
+                    ⊞
+                  </button>
+                )}
+
                 <button
-                  onClick={onToggleDXLabels}
-                  title={showDXLabels ? t('app.mapControls.calls.hide') : t('app.mapControls.calls.show')}
+                  onClick={() => adjustMapZoom(0.25)}
+                  disabled={mapLocked}
+                  title="Zoom in"
                   style={{
-                    width: '30px',
-                    background: showDXLabels ? 'rgba(255, 170, 0, 0.2)' : 'rgba(0, 0, 0, 0.65)',
-                    border: `1px solid ${showDXLabels ? '#ffaa00' : '#444'}`,
-                    color: showDXLabels ? '#ffaa00' : '#888',
-                    padding: '6px 8px',
+                    width: compact ? '36px' : '30px',
+                    minHeight: compact ? '36px' : '30px',
+                    background: 'rgba(0, 0, 0, 0.65)',
+                    border: '1px solid #444',
                     borderRadius: '4px',
+                    color: '#ccc',
                     fontFamily: 'var(--font-mono)',
-                    cursor: 'pointer',
-                    textAlign: 'center',
-                    minHeight: '30px',
+                    cursor: mapLocked ? 'not-allowed' : 'pointer',
+                    opacity: mapLocked ? 0.45 : 1,
+                    padding: 0,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
                   }}
                 >
-                  ⊞
+                  <LiPlus size={22} style={{ flexShrink: 0 }} />
                 </button>
-              )}
 
-              <button
-                onClick={() => adjustMapZoom(0.25)}
-                disabled={mapLocked}
-                title="Zoom in"
-                style={{
-                  width: '30px',
-                  minHeight: '30px',
-                  background: 'rgba(0, 0, 0, 0.65)',
-                  border: '1px solid #444',
-                  borderRadius: '4px',
-                  color: '#ccc',
-                  fontFamily: 'var(--font-mono)',
-                  cursor: mapLocked ? 'not-allowed' : 'pointer',
-                  opacity: mapLocked ? 0.45 : 1,
-                  padding: 0,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}
-              >
-                <LiPlus size={22} style={{ flexShrink: 0 }} />
-              </button>
-
-              <button
-                onClick={() => adjustMapZoom(-0.25)}
-                disabled={mapLocked}
-                title="Zoom out"
-                style={{
-                  width: '30px',
-                  minHeight: '30px',
-                  background: 'rgba(0, 0, 0, 0.65)',
-                  border: '1px solid #444',
-                  borderRadius: '4px',
-                  color: '#ccc',
-                  fontFamily: 'var(--font-mono)',
-                  cursor: mapLocked ? 'not-allowed' : 'pointer',
-                  opacity: mapLocked ? 0.45 : 1,
-                  padding: 0,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}
-              >
-                <LiMinus size={22} style={{ flexShrink: 0 }} />
-              </button>
-
-              <div
-                title="Adjust night overlay darkness"
-                style={{
-                  width: '30px',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  gap: '5px',
-                  color: '#999',
-                  fontSize: '12px',
-                  fontFamily: 'var(--font-mono)',
-                  textAlign: 'center',
-                }}
-              >
-                <span>{nightDarkness}%</span>
-                <input
-                  type="range"
-                  min="0"
-                  max="90"
-                  value={nightDarkness}
-                  onChange={(e) => setNightDarkness(parseInt(e.target.value, 10))}
+                <button
+                  onClick={() => adjustMapZoom(-0.25)}
+                  disabled={mapLocked}
+                  title="Zoom out"
                   style={{
-                    cursor: 'pointer',
-                    margin: 0,
-                    writingMode: 'vertical-lr',
-                    WebkitAppearance: 'slider-vertical',
-                    transform: 'rotate(180deg)',
+                    width: compact ? '36px' : '30px',
+                    minHeight: compact ? '36px' : '30px',
+                    background: 'rgba(0, 0, 0, 0.65)',
+                    border: '1px solid #444',
+                    borderRadius: '4px',
+                    color: '#ccc',
+                    fontFamily: 'var(--font-mono)',
+                    cursor: mapLocked ? 'not-allowed' : 'pointer',
+                    opacity: mapLocked ? 0.45 : 1,
+                    padding: 0,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
                   }}
-                />
-              </div>
+                >
+                  <LiMinus size={22} style={{ flexShrink: 0 }} />
+                </button>
+
+                {compact && dockOverflow ? (
+                  // Inside the "⋯" row: the night slider sits inline
+                  <label
+                    title="Adjust night overlay darkness"
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      color: '#ccc',
+                      fontSize: '12px',
+                      fontFamily: 'var(--font-mono)',
+                    }}
+                  >
+                    <LiMoon size={18} style={{ flexShrink: 0 }} />
+                    <input
+                      type="range"
+                      min="0"
+                      max="90"
+                      value={nightDarkness}
+                      aria-label="Night overlay darkness"
+                      onChange={(e) => setNightDarkness(parseInt(e.target.value, 10))}
+                      style={{ width: '90px', margin: 0, cursor: 'pointer' }}
+                    />
+                    <span style={{ minWidth: '3ch', textAlign: 'right' }}>{nightDarkness}%</span>
+                  </label>
+                ) : compact ? (
+                  <div data-compact-pop="night" style={{ position: 'relative' }}>
+                    <button
+                      type="button"
+                      onClick={() => toggleCompactPopover('night')}
+                      title="Adjust night overlay darkness"
+                      aria-label="Adjust night overlay darkness"
+                      aria-expanded={compactPopover === 'night'}
+                      style={{
+                        width: '36px',
+                        minHeight: '36px',
+                        background: compactPopover === 'night' ? 'rgba(0, 255, 204, 0.18)' : 'rgba(0, 0, 0, 0.65)',
+                        border: `1px solid ${compactPopover === 'night' ? '#00ffcc' : '#444'}`,
+                        borderRadius: '4px',
+                        color: '#ccc',
+                        padding: 0,
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                    >
+                      <LiMoon size={20} style={{ flexShrink: 0 }} />
+                    </button>
+                    {compactPopover === 'night' && (
+                      <div
+                        style={{
+                          position: 'absolute',
+                          left: '44px',
+                          top: 0,
+                          zIndex: 1200,
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '8px',
+                          padding: '8px 10px',
+                          borderRadius: '6px',
+                          border: '1px solid #444',
+                          background: 'rgba(0, 0, 0, 0.92)',
+                          color: '#ccc',
+                          fontSize: '12px',
+                          fontFamily: 'var(--font-mono)',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        <input
+                          type="range"
+                          min="0"
+                          max="90"
+                          value={nightDarkness}
+                          aria-label="Night overlay darkness"
+                          onChange={(e) => setNightDarkness(parseInt(e.target.value, 10))}
+                          style={{ width: '140px', margin: 0, cursor: 'pointer' }}
+                        />
+                        <span style={{ minWidth: '3ch', textAlign: 'right' }}>{nightDarkness}%</span>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div
+                    title="Adjust night overlay darkness"
+                    style={{
+                      width: '30px',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      gap: '5px',
+                      color: '#999',
+                      fontSize: '12px',
+                      fontFamily: 'var(--font-mono)',
+                      textAlign: 'center',
+                    }}
+                  >
+                    <span>{nightDarkness}%</span>
+                    <input
+                      type="range"
+                      min="0"
+                      max="90"
+                      value={nightDarkness}
+                      onChange={(e) => setNightDarkness(parseInt(e.target.value, 10))}
+                      style={{
+                        cursor: 'pointer',
+                        margin: 0,
+                        writingMode: 'vertical-lr',
+                        WebkitAppearance: 'slider-vertical',
+                        transform: 'rotate(180deg)',
+                      }}
+                    />
+                  </div>
+                )}
+              </DockOverflowWrap>
             </div>
           )}
         </div>
@@ -3142,94 +3371,121 @@ export const WorldMap = ({
             alignItems: 'center',
           }}
         >
-          {/* Projection toggle */}
-          <div
-            style={{
-              display: projectionOverride ? 'none' : 'flex',
-              background: 'rgba(0, 0, 0, 0.8)',
-              border: '1px solid #444',
-              borderRadius: '4px',
-              overflow: 'hidden',
-              position: 'relative',
-            }}
-          >
-            {[
-              { key: 'mercator', label: 'Flat' },
-              { key: 'azimuthal', label: 'Azimuthal' },
-              { key: 'globe3d', label: '3D' },
-            ].map(({ key, label }) => (
-              <button
-                key={key}
-                onClick={() => {
-                  const wasBlocked = projectionPersistBlockedRef.current;
-                  projectionPersistBlockedRef.current = false;
-                  setMapProjection(key);
-                  // Re-selecting the projection the session already fell back
-                  // to is a no-op state change, so the save effect never runs
-                  // and the cleared block would not persist. Write it here.
-                  if (wasBlocked && key === mapProjection) {
-                    try {
-                      const existing = getStoredMapSettings();
-                      localStorage.setItem(
-                        'openhamclock_mapSettings',
-                        JSON.stringify({ ...existing, mapProjection: key }),
-                      );
-                    } catch (e) {
-                      console.error('Failed to save map settings:', e);
+          {compact && (
+            <button
+              type="button"
+              data-compact-pop="menu"
+              onClick={() => toggleCompactPopover('menu')}
+              title="Map projection and style"
+              aria-label="Map projection and style"
+              aria-expanded={compactPopover === 'menu'}
+              style={{
+                width: '36px',
+                height: '36px',
+                padding: 0,
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                borderRadius: '4px',
+                border: `1px solid ${compactPopover === 'menu' ? '#00ffcc' : '#444'}`,
+                background: compactPopover === 'menu' ? 'rgba(0, 255, 204, 0.18)' : 'rgba(0, 0, 0, 0.8)',
+                color: '#00ffcc',
+                cursor: 'pointer',
+              }}
+            >
+              <LiLayers size={20} style={{ flexShrink: 0 }} />
+            </button>
+          )}
+          <CompactMenuWrap compact={compact} open={compactPopover === 'menu'}>
+            {/* Projection toggle */}
+            <div
+              style={{
+                display: projectionOverride ? 'none' : 'flex',
+                background: 'rgba(0, 0, 0, 0.8)',
+                border: '1px solid #444',
+                borderRadius: '4px',
+                overflow: 'hidden',
+                position: 'relative',
+              }}
+            >
+              {[
+                { key: 'mercator', label: 'Flat' },
+                { key: 'azimuthal', label: 'Azimuthal' },
+                { key: 'globe3d', label: '3D' },
+              ].map(({ key, label }) => (
+                <button
+                  key={key}
+                  onClick={() => {
+                    const wasBlocked = projectionPersistBlockedRef.current;
+                    projectionPersistBlockedRef.current = false;
+                    setMapProjection(key);
+                    // Re-selecting the projection the session already fell back
+                    // to is a no-op state change, so the save effect never runs
+                    // and the cleared block would not persist. Write it here.
+                    if (wasBlocked && key === mapProjection) {
+                      try {
+                        const existing = getStoredMapSettings();
+                        localStorage.setItem(
+                          'openhamclock_mapSettings',
+                          JSON.stringify({ ...existing, mapProjection: key }),
+                        );
+                      } catch (e) {
+                        console.error('Failed to save map settings:', e);
+                      }
                     }
-                  }
-                }}
-                style={{
-                  background: mapProjection === key ? '#00ffcc' : 'transparent',
-                  color: mapProjection === key ? '#000' : '#888',
-                  border: 'none',
-                  padding: '5px 8px',
-                  fontSize: '10px',
-                  fontFamily: 'var(--font-mono)',
-                  cursor: 'pointer',
-                  fontWeight: mapProjection === key ? 'bold' : 'normal',
-                }}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-
-          {/* Style dropdown */}
-          <select
-            // The globe cannot build MODIS (its GIBS URL is generated
-            // dynamically by the 2D projections). The option stays present but
-            // disabled in 3D: aliasing the controlled value to 'dark' instead
-            // made picking Dark a no-op, since the DOM value never changed.
-            value={mapStyle}
-            id="mapStyle"
-            onChange={(e) => {
-              setMapStyle(e.target.value);
-              if (mapRotationConfig.enabled) {
-                setMainMapRotation({ enabled: false });
-              }
-            }}
-            style={{
-              background: 'rgba(0, 0, 0, 0.8)',
-              border: '1px solid #444',
-              color: '#00ffcc',
-              padding: '6px 10px',
-              borderRadius: '4px',
-              fontSize: '11px',
-              fontFamily: 'var(--font-mono)',
-              cursor: 'pointer',
-              outline: 'none',
-            }}
-          >
-            {Object.entries(MAP_STYLES)
-              .filter(([, style]) => !style.legacy)
-              .map(([key, style]) => (
-                <option key={key} value={key} disabled={isGlobe3D && key === 'MODIS'}>
-                  {style.name}
-                  {isGlobe3D && key === 'MODIS' ? ' (2D only)' : ''}
-                </option>
+                  }}
+                  style={{
+                    background: mapProjection === key ? '#00ffcc' : 'transparent',
+                    color: mapProjection === key ? '#000' : '#888',
+                    border: 'none',
+                    padding: '5px 8px',
+                    fontSize: '10px',
+                    fontFamily: 'var(--font-mono)',
+                    cursor: 'pointer',
+                    fontWeight: mapProjection === key ? 'bold' : 'normal',
+                  }}
+                >
+                  {label}
+                </button>
               ))}
-          </select>
+            </div>
+
+            {/* Style dropdown */}
+            <select
+              // The globe cannot build MODIS (its GIBS URL is generated
+              // dynamically by the 2D projections). The option stays present but
+              // disabled in 3D: aliasing the controlled value to 'dark' instead
+              // made picking Dark a no-op, since the DOM value never changed.
+              value={mapStyle}
+              id="mapStyle"
+              onChange={(e) => {
+                setMapStyle(e.target.value);
+                if (mapRotationConfig.enabled) {
+                  setMainMapRotation({ enabled: false });
+                }
+              }}
+              style={{
+                background: 'rgba(0, 0, 0, 0.8)',
+                border: '1px solid #444',
+                color: '#00ffcc',
+                padding: '6px 10px',
+                borderRadius: '4px',
+                fontSize: '11px',
+                fontFamily: 'var(--font-mono)',
+                cursor: 'pointer',
+                outline: 'none',
+              }}
+            >
+              {Object.entries(MAP_STYLES)
+                .filter(([, style]) => !style.legacy)
+                .map(([key, style]) => (
+                  <option key={key} value={key} disabled={isGlobe3D && key === 'MODIS'}>
+                    {style.name}
+                    {isGlobe3D && key === 'MODIS' ? ' (2D only)' : ''}
+                  </option>
+                ))}
+            </select>
+          </CompactMenuWrap>
           <button
             type="button"
             onClick={() => {
@@ -3245,8 +3501,8 @@ export const WorldMap = ({
               display: 'inline-flex',
               alignItems: 'center',
               justifyContent: 'center',
-              width: '32px',
-              height: '26px',
+              width: compact ? '36px' : '32px',
+              height: compact ? '36px' : '26px',
               fontSize: '12px',
               fontWeight: 700,
               padding: '0',
@@ -3439,40 +3695,47 @@ export const WorldMap = ({
       )}
 
       {/* DX News Ticker - left side of bottom bar (independent of UI hide toggle) */}
-      {!hideOverlays && showDXNews && <DXNewsTicker />}
+      {!hideOverlays && showDXNews && !compact && <DXNewsTicker />}
 
       {/* Legend toggle button */}
       {!hideOverlays && !mapUiHidden && (
         <button
-          onClick={toggleLegend}
-          title={showLegend ? 'Hide legend' : 'Show legend'}
+          onClick={onLegendToggle}
+          data-compact-pop={compact ? 'legend' : undefined}
+          title={legendOpen ? 'Hide legend' : 'Show legend'}
+          aria-expanded={compact ? legendOpen : undefined}
           style={{
             position: 'absolute',
-            bottom: showLegend ? '80px' : '44px',
+            bottom: compact ? '8px' : showLegend ? '80px' : '44px',
             left: '50%',
             transform: 'translateX(-50%)',
             background: 'rgba(0, 0, 0, 0.85)',
-            border: '1px solid #444',
-            borderRadius: '4px',
-            padding: '2px 8px',
+            border: `1px solid ${compact && hasMapBandFilter ? '#00ffcc' : '#444'}`,
+            borderRadius: compact ? '999px' : '4px',
+            padding: compact ? '6px 12px' : '2px 8px',
             zIndex: 1001,
             cursor: 'pointer',
-            fontSize: '10px',
+            fontSize: compact ? '12px' : '10px',
             fontFamily: 'var(--font-mono)',
-            color: '#888',
+            color: compact && hasMapBandFilter ? '#00ffcc' : '#888',
             lineHeight: 1.2,
           }}
         >
-          {showLegend ? '▼ Legend' : '▲ Legend'}
+          {compact
+            ? `${legendOpen ? '▼' : '▲'} Bands${hasMapBandFilter ? ` · ${selectedMapBands.size}` : ''}`
+            : showLegend
+              ? '▼ Legend'
+              : '▲ Legend'}
         </button>
       )}
 
       {/* Legend - centered above news ticker */}
-      {!hideOverlays && !mapUiHidden && showLegend && (
+      {!hideOverlays && !mapUiHidden && legendOpen && (
         <div
+          data-compact-pop={compact ? 'legend' : undefined}
           style={{
             position: 'absolute',
-            bottom: '44px',
+            bottom: compact ? '46px' : '44px',
             left: '50%',
             transform: 'translateX(-50%)',
             background: 'rgba(0, 0, 0, 0.85)',
@@ -3486,10 +3749,18 @@ export const WorldMap = ({
             fontSize: '11px',
             fontFamily: 'var(--font-mono)',
             flexWrap: 'nowrap',
+            ...(compact ? { width: 'max-content', maxWidth: 'calc(100% - 20px)', boxSizing: 'border-box' } : {}),
           }}
         >
-          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-            <span style={{ color: '#888' }}>Bands:</span>
+          <div
+            style={{
+              display: 'flex',
+              gap: '8px',
+              alignItems: 'center',
+              ...(compact ? { flexWrap: 'wrap', justifyContent: 'center', gap: '6px' } : {}),
+            }}
+          >
+            {!compact && <span style={{ color: '#888' }}>Bands:</span>}
             <button
               type="button"
               onClick={() => clearMapBandFilter()}
@@ -3548,7 +3819,7 @@ export const WorldMap = ({
           </div>
         </div>
       )}
-      {!hideOverlays && !mapUiHidden && showLegend && editingBand && (
+      {!hideOverlays && !mapUiHidden && legendOpen && editingBand && (
         <div
           style={{
             position: 'absolute',

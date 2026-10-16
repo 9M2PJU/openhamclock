@@ -1,13 +1,14 @@
 /**
- * Tests for icsPrint — in-page printing mounts only for the duration of the
- * print and injects the page setup (landscape for the ICS 205).
+ * Tests for icsPrint — forms print from an isolated iframe document that
+ * holds only the form, the ICS stylesheet and the page setup.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { printIcsHtml, printPageCss } from './icsPrint.js';
+import { buildPrintDocument, printIcsHtml, printPageCss } from './icsPrint.js';
 
 afterEach(() => {
   vi.restoreAllMocks();
   vi.useRealTimers();
+  document.querySelectorAll('iframe[data-ics-print]').forEach((f) => f.remove());
 });
 
 describe('printPageCss', () => {
@@ -17,38 +18,57 @@ describe('printPageCss', () => {
   });
 });
 
+describe('buildPrintDocument', () => {
+  it('contains only the form, the stylesheet and the page setup', () => {
+    const doc = buildPrintDocument('<section class="ics-form">X</section>', {
+      title: 'ICS-205 <test>',
+      landscape: true,
+      css: '.ics-form{color:#000}',
+    });
+    expect(doc).toContain('<title>ICS-205 &lt;test&gt;</title>');
+    expect(doc).toContain('<style>.ics-form{color:#000}</style>');
+    expect(doc).toContain('@page { margin: 10mm; size: landscape; }');
+    expect(doc).toContain(
+      '<body class="ics-printing"><div class="ics-print-root"><section class="ics-form">X</section></div></body>',
+    );
+    expect(buildPrintDocument('', { css: '' })).not.toContain('size: landscape');
+  });
+});
+
 describe('printIcsHtml', () => {
-  it('mounts the form and page style during print and removes them on afterprint', () => {
-    let during = null;
-    vi.spyOn(window, 'print').mockImplementation(() => {
-      during = {
-        root: document.querySelector('.ics-print-root')?.innerHTML,
-        printing: document.body.classList.contains('ics-printing'),
-        style: document.querySelector('style[data-ics-print]')?.textContent,
-        title: document.title,
-      };
-    });
+  it('prints from a hidden iframe and removes it after printing', async () => {
     document.title = 'OpenHamClock';
-    printIcsHtml('<section class="ics-form">X</section>', { title: 'ICS-205-test', landscape: true });
-    expect(during).toEqual({
-      root: '<section class="ics-form">X</section>',
-      printing: true,
-      style: '@media print { @page { margin: 10mm; size: landscape; } }',
-      title: 'ICS-205-test',
+    let printedFrom = null;
+    const p = printIcsHtml('<section class="ics-form">X</section>', { title: 'ICS-309-test' });
+    const frame = document.querySelector('iframe[data-ics-print]');
+    expect(frame).not.toBeNull();
+    expect(frame.getAttribute('aria-hidden')).toBe('true');
+    expect(frame.srcdoc).toContain('<div class="ics-print-root"><section class="ics-form">X</section></div>');
+    expect(document.title).toBe('ICS-309-test');
+    // jsdom does not load srcdoc — drive the load as a browser would
+    vi.spyOn(frame.contentWindow, 'print').mockImplementation(() => {
+      printedFrom = frame.contentWindow;
+      frame.contentWindow.dispatchEvent(new Event('afterprint'));
     });
-    window.dispatchEvent(new Event('afterprint'));
-    expect(document.querySelector('.ics-print-root')).toBeNull();
-    expect(document.querySelector('style[data-ics-print]')).toBeNull();
-    expect(document.body.classList.contains('ics-printing')).toBe(false);
+    vi.spyOn(frame.contentWindow, 'focus').mockImplementation(() => {});
+    frame.onload();
+    await expect(p).resolves.toBe(true);
+    expect(printedFrom).toBe(frame.contentWindow);
+    await new Promise((r) => setTimeout(r, 5));
+    expect(document.querySelector('iframe[data-ics-print]')).toBeNull();
     expect(document.title).toBe('OpenHamClock');
   });
 
-  it('cleans up by timer when the engine never fires afterprint', () => {
+  it('cleans up by timer when the engine never fires afterprint', async () => {
     vi.useFakeTimers();
-    vi.spyOn(window, 'print').mockImplementation(() => {});
-    printIcsHtml('<p>Y</p>');
-    expect(document.querySelector('.ics-print-root')).not.toBeNull();
+    const p = printIcsHtml('<p>Y</p>');
+    const frame = document.querySelector('iframe[data-ics-print]');
+    vi.spyOn(frame.contentWindow, 'print').mockImplementation(() => {});
+    vi.spyOn(frame.contentWindow, 'focus').mockImplementation(() => {});
+    frame.onload();
+    await p;
+    expect(document.querySelector('iframe[data-ics-print]')).not.toBeNull();
     vi.advanceTimersByTime(60 * 1000);
-    expect(document.querySelector('.ics-print-root')).toBeNull();
+    expect(document.querySelector('iframe[data-ics-print]')).toBeNull();
   });
 });

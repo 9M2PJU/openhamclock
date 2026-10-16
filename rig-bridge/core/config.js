@@ -185,6 +185,11 @@ const DEFAULT_CONFIG = {
     pollInterval: 1000, // Command poll interval in ms
     relayAudio: false, // Opt-in: carry KiwiSDR audio (µ-law, ~12 kB/s) to the Decoder panel while it listens
     verbose: false,
+    // Key shared with the browser that pressed Connect Cloud Relay; commands
+    // must be signed with it (lib/relay-sign.js). Never sent to the server.
+    commandKey: '',
+    allowUnsigned: false, // true = accept unsigned commands of every kind (old, unsafe behaviour)
+    unsignedGraceUntil: '2027-01-31', // without a key: unsigned tuning accepted until this date, never PTT/TX
   },
   // Winlink gateway discovery + Pat client integration
   winlink: {
@@ -264,8 +269,21 @@ const DEFAULT_CONFIG = {
     // Lightning relay: invert lightningOut so the relay is energised to keep
     // the antenna connected (power loss / crash / bridge stop → disconnected)
     lightningFailSafe: false,
-    // Keep the lightning relay engaged when the browser stops reporting
+    // A display that asked for the relay and then went quiet keeps its claim
+    // for its all-clear time (sent with each report)
     lightningHoldWhenStale: true,
+    // The guard running inside the bridge — protects with no browser open
+    lightningHeadless: {
+      enabled: false,
+      lat: '',
+      lon: '',
+      warnKm: 50,
+      alarmKm: 25,
+      allClearMin: 30,
+      minStrikes: 1,
+      hysteresisPct: 20,
+      relayOn: 'alarm',
+    },
     verbose: false,
   },
   // Ambient light → display brightness (LTR-329 / HTTP lux / mock) + backlight control
@@ -305,9 +323,11 @@ const DEFAULT_CONFIG = {
     maxTxSeconds: 600, // transmit watchdog — abort and return to RX after this
     callsign: '', // station call written into the flmsg header of sent forms
     flmsgEnabled: true, // watch the flmsg folders for received forms
-    flmsgDirs: '', // '' = ~/NBEMS.files/ICS/messages and ~/NBEMS.files/WRAP/recv; ';'-separated list otherwise
+    flmsgDirs: '', // '' = ~/NBEMS.files/WRAP/recv and ~/NBEMS.files/ICS/messages; ';'-separated list otherwise
     flmsgPollInterval: 15, // seconds between folder scans (fs.watch also reacts immediately)
     flmsgMaxAgeHours: 72, // on start-up, forms older than this are not reported
+    flmsgIncludeLocal: false, // also forward this station's drafts and sent forms (ICS/messages)
+    flmsgDateFormat: 'auto', // ambiguous form dates: auto (flmsg's setting, else locale) | mdy | dmy | ymd | ydm
     serverForward: true, // POST forms to the OpenHamClock server
     ohcUrl: 'http://localhost:3000', // OpenHamClock server URL
     verbose: false,
@@ -371,6 +391,10 @@ function loadConfig() {
           ...DEFAULT_CONFIG.gpio,
           ...(raw.gpio || {}),
           pins: { ...DEFAULT_CONFIG.gpio.pins, ...((raw.gpio || {}).pins || {}) },
+          lightningHeadless: {
+            ...DEFAULT_CONFIG.gpio.lightningHeadless,
+            ...((raw.gpio || {}).lightningHeadless || {}),
+          },
         },
         brightness: {
           ...DEFAULT_CONFIG.brightness,

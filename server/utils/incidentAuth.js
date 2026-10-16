@@ -62,8 +62,64 @@ function verifyJoinKey(presented, salt, hash) {
   return crypto.timingSafeEqual(a, b);
 }
 
+/**
+ * A plausible amateur callsign (prefix with a digit, 1–4 letter suffix,
+ * optional portable designator). Placeholder calls are refused: the hosted
+ * site uses this to tie each new incident to a real-looking station.
+ */
+function isValidCallsign(call) {
+  const c = String(call || '')
+    .trim()
+    .toUpperCase();
+  if (!/^[A-Z0-9]{1,3}\d[A-Z]{1,4}(\/[A-Z0-9]{1,4})?$/.test(c)) return false;
+  return !/^N0CALL\b|^NOCALL\b|^MYCALL\b/.test(c);
+}
+
+/**
+ * The join key, sealed so only an admin can read it back: AES-256-GCM under a
+ * key derived (HKDF-SHA256, per-seal random salt) from the admin key. The
+ * server never stores the join key in plaintext and cannot open the seal
+ * without an admin presenting their key. Admin keys carry ~79 bits of
+ * entropy, so a fast KDF is enough.
+ */
+function sealJoinKey(joinKey, adminKey) {
+  const salt = crypto.randomBytes(16);
+  const iv = crypto.randomBytes(12);
+  const key = Buffer.from(crypto.hkdfSync('sha256', normaliseToken(adminKey), salt, 'ohc-incident-join-key', 32));
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  const ct = Buffer.concat([cipher.update(normaliseToken(joinKey), 'utf8'), cipher.final()]);
+  return {
+    salt: salt.toString('hex'),
+    iv: iv.toString('hex'),
+    ct: ct.toString('hex'),
+    tag: cipher.getAuthTag().toString('hex'),
+  };
+}
+
+/** → the join key, or null when the admin key is wrong or the seal is damaged. */
+function openJoinKey(sealed, adminKey) {
+  if (!sealed?.salt || !sealed?.iv || !sealed?.ct || !sealed?.tag || !adminKey) return null;
+  try {
+    const key = Buffer.from(
+      crypto.hkdfSync('sha256', normaliseToken(adminKey), Buffer.from(sealed.salt, 'hex'), 'ohc-incident-join-key', 32),
+    );
+    const decipher = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(sealed.iv, 'hex'));
+    decipher.setAuthTag(Buffer.from(sealed.tag, 'hex'));
+    return Buffer.concat([decipher.update(Buffer.from(sealed.ct, 'hex')), decipher.final()]).toString('utf8');
+  } catch {
+    return null;
+  }
+}
+
+/** Random opaque token for one-time stream tickets (url-safe, 32 chars). */
+const makeTicket = () => crypto.randomBytes(24).toString('base64url');
+
 module.exports = {
   ALPHABET,
+  isValidCallsign,
+  makeTicket,
+  sealJoinKey,
+  openJoinKey,
   ID_LENGTH,
   KEY_LENGTH,
   randomToken,
