@@ -6,8 +6,9 @@
  *     v: 1, id, name, styleId, styleName, urlTemplate, subdomains,
  *     bbox: { west, south, east, north }, minZoom, maxZoom,
  *     center: { lat, lon }, radiusKm (null for a map-view pack),
- *     tileCount, failedCount, bytes, createdAt (ms),
- *     data: { alerts|shelters|repeaters: { fetchedAt, count } }
+ *     dataCenter, retina, tileCount (tiles saved), failedCount, totalTiles,
+ *     bytes, createdAt (ms), complete (false = stopped early, resumable),
+ *     data: { alerts|shelters|repeaters|disasters: { fetchedAt, count, state? } }
  *   }
  * The list of manifests lives in the pack cache (see offlinePackStore.js);
  * everything here works on plain objects so it can be unit-tested.
@@ -26,7 +27,7 @@ export const QUOTA_WARN_RATIO = 0.8;
 export const QUOTA_BLOCK_RATIO = 0.95;
 
 /** EmComm data kinds snapshotted with each pack. */
-export const SNAPSHOT_KINDS = ['alerts', 'shelters', 'repeaters'];
+export const SNAPSHOT_KINDS = ['alerts', 'shelters', 'repeaters', 'disasters'];
 
 /** Repeater snapshot radius — covers every Repeaters panel radius ≤ 200 km. */
 export const SNAPSHOT_REPEATER_RADIUS_KM = 200;
@@ -38,6 +39,11 @@ export function newPackId(now = Date.now(), rand = Math.random) {
   return `p${Math.floor(now).toString(36)}${Math.floor(rand() * 36 ** 4)
     .toString(36)
     .padStart(4, '0')}`;
+}
+
+/** True when an area stopped before all its tiles were saved. */
+export function isIncomplete(m) {
+  return !!m && m.complete === false;
 }
 
 /** Default pack name: "50 km around FN31" / "Map view near 40.0, -105.3". */
@@ -67,10 +73,17 @@ export function createPackManifest(p) {
     maxZoom: p.maxZoom,
     center: p.center && isNum(p.center.lat) && isNum(p.center.lon) ? p.center : bboxCenter(bbox),
     radiusKm: isNum(p.radiusKm) ? p.radiusKm : null,
+    dataCenter: p.dataCenter && isNum(p.dataCenter.lat) && isNum(p.dataCenter.lon) ? p.dataCenter : null,
+    retina: !!p.retina,
     tileCount: p.tileCount || 0,
     failedCount: p.failedCount || 0,
+    totalTiles: isNum(p.totalTiles) ? p.totalTiles : p.tileCount || 0,
     bytes: p.bytes || 0,
     createdAt: isNum(p.createdAt) ? p.createdAt : Date.now(),
+    // false while downloading, after Cancel, or when it stopped early; such
+    // an area can be resumed. Manifests from before resumable downloads
+    // have no flag and are complete.
+    complete: p.complete !== false,
     data: p.data && typeof p.data === 'object' ? p.data : {},
   };
 }
@@ -240,4 +253,24 @@ export function formatAsOf(ts, now = Date.now()) {
   if (sameDay) return hhmm;
   const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   return `${months[d.getUTCMonth()]} ${d.getUTCDate()} ${hhmm}`;
+}
+
+/**
+ * Which storage caveats to show for this browser, as codes:
+ *   'webkit-7day'  - Safari / any iOS browser in a tab: WebKit deletes all
+ *                    script-written storage (offline areas included) for a
+ *                    site not visited in 7 days of browser use
+ *   'not-persistent' - the browser did not grant persistent storage, so it
+ *                    may clear areas under storage pressure
+ * `ua`/`vendor` are navigator.userAgent / navigator.vendor; `standalone`
+ * is true when running as an installed (Home Screen / Dock) web app,
+ * which WebKit exempts from the 7-day rule.
+ */
+export function storageNotes({ ua = '', vendor = '', standalone = false, persisted = null } = {}) {
+  const notes = [];
+  const iOS = /iPad|iPhone|iPod/.test(ua) || (/Macintosh/.test(ua) && /Mobile\//.test(ua));
+  const safari = /Apple/.test(vendor) && /Safari\//.test(ua) && !/Chrome|Chromium|CriOS|Edg\//.test(ua);
+  if ((iOS || safari) && !standalone) notes.push('webkit-7day');
+  if (persisted === false) notes.push('not-persistent');
+  return notes;
 }

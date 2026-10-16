@@ -19,9 +19,14 @@
  *                         behavior is unchanged, offline panels get their
  *                         last-known data (marked X-OHC-Stale: 1 so the UI
  *                         can say "as of"). SSE streams are never touched.
- *   - offline-pack tiles: cross-origin tiles from hosts whose terms allow
- *                         offline area packs — network when it works, the
- *                         operator's downloaded pack when it doesn't.
+ *   - offline-pack tiles: tiles from hosts whose terms allow offline area
+ *                         packs, and from the operator's own tile server —
+ *                         network when it works, the downloaded pack when it
+ *                         doesn't, a scaled-up saved ancestor past the
+ *                         pack's zoom (over-zoom).
+ *   - /vendor/*:          self-hosted Leaflet + fonts, or the CDN copy the
+ *                         server redirects to — cached so the map starts
+ *                         offline either way.
  *   - everything else:    bypassed (browser default), incl. cross-origin
  *
  * Escape hatch: loading the app with ?nosw unregisters this worker and
@@ -64,7 +69,16 @@ self.addEventListener('install', function (event) {
         var unique = Array.from(new Set(assetUrls));
         await Promise.all(
           unique.map(function (u) {
-            return cache.add(u).catch(function () {});
+            return cache.add(u).catch(function () {
+              // /vendor/* may 302 to a CDN without CORS headers: keep the
+              // opaque copy so Leaflet still loads offline.
+              if (u.indexOf('/vendor/') !== 0) return;
+              return fetch(u, { mode: 'no-cors' })
+                .then(function (r) {
+                  if (POLICY.isCacheableVendorResponse(r)) return cache.put(u, r);
+                })
+                .catch(function () {});
+            });
           }),
         );
       } catch (e) {
@@ -96,17 +110,82 @@ self.addEventListener('message', function (event) {
   if (event.data && event.data.type === 'SKIP_WAITING') {
     self.skipWaiting();
   }
+  // Offline area packs or the user tile source changed: re-read routing.
+  if (event.data && event.data.type === 'OHC_PACKS_CHANGED') {
+    event.waitUntil(refreshTileRouting());
+  }
 });
 
-// ── Fetch routing ─────────────────────────────────────────────────────────
-self.addEventListener('fetch', function (event) {
-  var req = event.request;
-  var decision = POLICY.classifyRequest({
+// ── Offline area pack routing state ───────────────────────────────────────
+// URL prefixes of operator-supplied tile sources (their own server, a LAN
+// mbtiles server) and the pack manifests, both read from the pack cache.
+// The worker is stopped and restarted often (always, when idle offline), so
+// this reloads on every start; until it has loaded, image requests wait
+// for it instead of slipping past (see the fetch handler).
+var PACK_MANIFEST_KEY = '/__ohc-offline-packs/manifest.json';
+var PACK_SOURCES_KEY = '/__ohc-offline-packs/sources.json';
+var tileRouting = { prefixes: [], packs: [] };
+var tileRoutingPending = true;
+var tileRoutingReady = refreshTileRouting().then(function () {
+  tileRoutingPending = false;
+});
+
+async function refreshTileRouting() {
+  var next = { prefixes: [], packs: [] };
+  try {
+    var cache = await caches.open(POLICY.OFFLINE_PACK_CACHE);
+    var m = await cache.match(PACK_MANIFEST_KEY);
+    if (m) {
+      var body = await m.json();
+      next.packs = Array.isArray(body && body.packs) ? body.packs : [];
+    }
+    var src = await cache.match(PACK_SOURCES_KEY);
+    var list = src ? (await src.json()).prefixes : [];
+    if (Array.isArray(list)) next.prefixes = list.filter(Boolean);
+    next.packs.forEach(function (p) {
+      POLICY.tileUrlPrefixes(p && p.urlTemplate, p && p.subdomains).forEach(function (pre) {
+        if (next.prefixes.indexOf(pre) === -1) next.prefixes.push(pre);
+      });
+    });
+  } catch (e) {
+    // No pack cache yet — built-in hosts only.
+  }
+  tileRouting = next;
+}
+
+function classify(req) {
+  return POLICY.classifyRequest({
     url: req.url,
     method: req.method,
     mode: req.mode,
     origin: self.location.origin,
+    extraTilePrefixes: tileRouting.prefixes,
   });
+}
+
+// ── Fetch routing ─────────────────────────────────────────────────────────
+self.addEventListener('fetch', function (event) {
+  var req = event.request;
+  var decision = classify(req);
+
+  // Just (re)started and the user tile sources are not loaded yet: hold an
+  // image from a LAN/local host (where an operator's own tile server lives)
+  // until they are, so an offline tile is not missed. Public hosts are never
+  // held — they keep the browser's default handling.
+  if (
+    decision === 'bypass' &&
+    tileRoutingPending &&
+    req.method === 'GET' &&
+    req.destination === 'image' &&
+    POLICY.isLocalNetworkUrl(req.url, self.location.origin)
+  ) {
+    event.respondWith(
+      tileRoutingReady.then(function () {
+        return classify(req) === 'tile' ? handleTile(event, req) : fetch(req);
+      }),
+    );
+    return;
+  }
 
   if (decision === 'navigation') {
     event.respondWith(handleNavigation(req));
@@ -143,10 +222,21 @@ async function handleNavigation(req) {
 async function handleAsset(req) {
   var cached = await caches.match(req);
   if (cached) return cached;
-  var res = await fetch(req);
-  if (res.ok && res.status === 200 && res.type === 'basic') {
+  var res;
+  try {
+    res = await fetch(req);
+  } catch (e) {
+    // Offline and never cached (a lazy chunk or font not used online yet):
+    // answer with a plain 504 rather than rejecting the fetch event.
+    return new Response('', { status: 504, statusText: 'Offline' });
+  }
+  // /vendor/* may be the CDN copy the server redirects to (installs without
+  // self-hosted Leaflet): cache that too, even opaque, or the map cannot
+  // start offline.
+  var isVendor = new URL(req.url).pathname.indexOf('/vendor/') === 0;
+  if (isVendor ? POLICY.isCacheableVendorResponse(res) : res.ok && res.status === 200 && res.type === 'basic') {
     var cache = await caches.open(CACHE.app);
-    cache.put(req, res.clone());
+    cache.put(req, res.clone()).catch(function () {});
   }
   return res;
 }
@@ -195,38 +285,123 @@ function markStale(cached) {
  *  the worker existed. When the network fails, the browser reports offline,
  *  or a request hangs past PACK_TILE_NETWORK_TIMEOUT_MS while a pack holds
  *  the tile, the pack copy is served and the page is told (for the subtle
- *  "offline tiles" badge on the map). Tiles are never written here —
- *  only the explicit "Download area" action fills the pack cache. */
+ *  "offline tiles" badge on the map). With no copy of that exact tile —
+ *  zoomed in past the pack's top zoom, or a tile the server had no data
+ *  for — the nearest saved ancestor is scaled up (over-zoom) rather than
+ *  leaving a blank. Tiles are never written here; only the explicit
+ *  "Download area" action fills the pack cache. */
 async function handleTile(event, req) {
+  var cache = null;
   var cached = null;
   try {
-    var cache = await caches.open(POLICY.OFFLINE_PACK_CACHE);
+    cache = await caches.open(POLICY.OFFLINE_PACK_CACHE);
     cached = await cache.match(req.url, { ignoreVary: true });
   } catch (e) {
     cached = null;
   }
-  if (!cached) return fetch(req);
 
-  if (self.navigator && self.navigator.onLine === false) {
+  if (cached && self.navigator && self.navigator.onLine === false) {
     notifyPackTile(event);
     return cached;
   }
 
-  var timer;
-  var timeout = new Promise(function (resolve) {
-    timer = setTimeout(function () {
-      resolve(null);
-    }, POLICY.PACK_TILE_NETWORK_TIMEOUT_MS);
-  });
-  try {
-    var res = await Promise.race([fetch(req), timeout]);
-    clearTimeout(timer);
-    if (res && res.ok) return res;
-  } catch (e) {
-    clearTimeout(timer);
+  // Network first, but only PACK_TILE_NETWORK_TIMEOUT_MS of patience while
+  // a saved answer exists ("lie-fi", or a dead LAN server that never
+  // refuses). Without an exact copy, a slow network still gets its chance
+  // unless an over-zoomed ancestor can stand in.
+  var network = fetch(req).then(
+    function (r) {
+      return r;
+    },
+    function () {
+      return null;
+    },
+  );
+  var res = await withTimeout(network, POLICY.PACK_TILE_NETWORK_TIMEOUT_MS);
+  if (res && res.ok) return res;
+
+  if (cached) {
+    notifyPackTile(event);
+    return cached;
   }
-  notifyPackTile(event);
-  return cached;
+  var scaled = cache ? await overzoomFromPacks(cache, req.url) : null;
+  if (scaled) {
+    notifyPackTile(event);
+    return scaled;
+  }
+  if (res === undefined) res = await withTimeout(network, 26000); // still pending: keep waiting
+  if (res) return res;
+  return new Response('', { status: 504, statusText: 'Offline' });
+}
+
+/** Resolve with the promise's value, or undefined after `ms`. */
+function withTimeout(promise, ms) {
+  var timer;
+  return Promise.race([
+    promise,
+    new Promise(function (resolve) {
+      timer = setTimeout(resolve, ms);
+    }),
+  ]).then(function (v) {
+    clearTimeout(timer);
+    return v;
+  });
+}
+
+/** Scale up the nearest saved ancestor of a tile URL, or null. */
+async function overzoomFromPacks(cache, url) {
+  if (typeof OffscreenCanvas === 'undefined' || typeof createImageBitmap === 'undefined') return null;
+  await tileRoutingReady;
+  var packs = tileRouting.packs || [];
+  for (var i = 0; i < packs.length; i++) {
+    var p = packs[i];
+    var tile = POLICY.parseTileUrl(p.urlTemplate, url);
+    if (!tile || tile.z <= p.minZoom) continue;
+    var top = Math.min(tile.z - 1, p.maxZoom);
+    for (var z = top; z >= p.minZoom && tile.z - z <= POLICY.MAX_OVERZOOM_LEVELS; z--) {
+      var src = POLICY.overzoomSource(tile, tile.z - z);
+      if (!src) break;
+      var parentUrl = POLICY.buildTileUrl(p.urlTemplate, src.tile, {
+        subdomains: p.subdomains,
+        retina: !!p.retina,
+      });
+      var parent = await cache.match(parentUrl, { ignoreVary: true });
+      if (!parent) continue;
+      try {
+        return await scaleTile(parent, src);
+      } catch (e) {
+        return null; // undecodable or opaque — give up on this tile
+      }
+    }
+  }
+  return null;
+}
+
+// One scale-up at a time: a screenful of over-zoomed tiles decoding in
+// parallel is heavy for a worker, and WebKit has been seen to drop the
+// worker when several run at once.
+var scaleQueue = Promise.resolve();
+function scaleTile(parentRes, src) {
+  var run = scaleQueue.then(function () {
+    return scaleTileNow(parentRes, src);
+  });
+  scaleQueue = run.catch(function () {});
+  return run;
+}
+
+async function scaleTileNow(parentRes, src) {
+  var bmp = await createImageBitmap(await parentRes.blob());
+  var k = bmp.width / 256; // 512 px (retina) tiles scale the source square too
+  var canvas = new OffscreenCanvas(bmp.width, bmp.height);
+  var ctx = canvas.getContext('2d');
+  ctx.imageSmoothingEnabled = true;
+  ctx.drawImage(bmp, src.sx * k, src.sy * k, src.size * k, src.size * k, 0, 0, bmp.width, bmp.height);
+  if (bmp.close) bmp.close();
+  var blob = await canvas.convertToBlob({ type: 'image/png' });
+  return new Response(blob, {
+    status: 200,
+    headers: { 'Content-Type': 'image/png', 'X-OHC-Overzoom': String(src.tile.z) },
+  });
 }
 
 /** Tell the page that tiles are coming from an offline pack — at most once

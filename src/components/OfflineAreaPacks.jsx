@@ -36,11 +36,20 @@ import {
 } from '../utils/offlineTiles.js';
 import {
   BUDGET_OPTIONS_MB,
+  SNAPSHOT_KINDS,
   checkBudget,
   defaultPackName,
   formatAsOf,
+  isIncomplete,
+  storageNotes,
   totalPackBytes,
 } from '../utils/offlinePackManifest.js';
+import {
+  CUSTOM_STYLE_ID,
+  readCustomTileSource,
+  validateCustomTileSource,
+  writeCustomTileSource,
+} from '../utils/customTileSource.js';
 import {
   PACKS_CHANGED_EVENT,
   offlinePacksSupported,
@@ -50,6 +59,8 @@ import {
   getBudgetMB,
   setBudgetMB,
   startPackDownload,
+  resumePackDownload,
+  registerTileSource,
   cancelPackDownload,
   resetDownloadState,
   getDownloadState,
@@ -219,6 +230,19 @@ export default function OfflineAreaPacks({ deLocation, compact = false }) {
       requestMapFocus({ lat: c.lat, lon: c.lon, zoom: Math.min(p.maxZoom, Math.max(p.minZoom + 3, 9)), force: true });
   };
 
+  const notes = storageNotes({
+    ua: typeof navigator !== 'undefined' ? navigator.userAgent : '',
+    vendor: typeof navigator !== 'undefined' ? navigator.vendor : '',
+    standalone:
+      (typeof window !== 'undefined' && window.matchMedia?.('(display-mode: standalone)')?.matches) ||
+      (typeof navigator !== 'undefined' && navigator.standalone === true),
+    persisted: storage.persisted,
+  });
+
+  const onResume = (id) => {
+    resumePackDownload(id);
+  };
+
   const gap = compact ? '6px' : '10px';
   const muted = { fontSize: '10px', color: 'var(--text-muted)' };
   const note = (color) => ({ fontSize: '11px', color, lineHeight: 1.4 });
@@ -278,7 +302,9 @@ export default function OfflineAreaPacks({ deLocation, compact = false }) {
     if (download.status === 'cancelled') {
       return (
         <span style={{ color: 'var(--text-muted)' }}>
-          {t('offlinePacks.status.cancelled', { defaultValue: 'Download cancelled; its tiles were removed.' })}
+          {t('offlinePacks.status.paused', {
+            defaultValue: 'Paused. The tiles saved so far are kept; Resume continues where it stopped.',
+          })}
         </span>
       );
     }
@@ -286,10 +312,15 @@ export default function OfflineAreaPacks({ deLocation, compact = false }) {
       return (
         <span style={{ color: 'var(--accent-red, #ef4444)' }}>
           {download.error === 'quota'
-            ? t('offlinePacks.status.quota', { defaultValue: 'Stopped: browser storage is full.' })
-            : t('offlinePacks.status.network', {
-                defaultValue: 'Stopped: the tile server stopped answering. Try again later.',
-              })}
+            ? t('offlinePacks.status.quotaKept', {
+                defaultValue:
+                  'Stopped: browser storage is full. The tiles saved so far are kept — delete another area or lower the zoom, then Resume.',
+              })
+            : download.error === 'network'
+              ? t('offlinePacks.status.networkKept', {
+                  defaultValue: 'Stopped: the tile server stopped answering. The area is kept; Resume later.',
+                })
+              : t('offlinePacks.status.failed', { defaultValue: 'The download stopped unexpectedly.' })}
         </span>
       );
     }
@@ -418,7 +449,7 @@ export default function OfflineAreaPacks({ deLocation, compact = false }) {
           <div style={muted}>
             {t('offlinePacks.styleNote', {
               defaultValue:
-                'Only basemaps whose terms allow saving an area for offline use are offered. USGS Topo covers the United States in detail; elsewhere it has only coarse world data.',
+                'Only basemaps whose terms allow saving an area for offline use are offered: USGS Topo (United States), Plan IGN (France), GSI (Japan), Kartverket (Norway), GA Base Map (Australia), and your own tile server if you add one below. Each is detailed only in its own country.',
             })}
           </div>
           {mapStyleId && !mapOnPackStyle && style && (
@@ -536,7 +567,7 @@ export default function OfflineAreaPacks({ deLocation, compact = false }) {
           <div style={muted}>
             {t('offlinePacks.dataNote', {
               defaultValue:
-                'Each pack also saves the NWS alerts, shelters, and repeaters for the area, so the EmComm panels show last-known data (with an "as of" time) when offline.',
+                'Each pack also saves the NWS alerts, shelters, repeaters, and (in the US) FEMA disaster declarations for the area, so the EmComm panels show last-known data (with an "as of" time) when offline.',
             })}
           </div>
         </>
@@ -573,6 +604,22 @@ export default function OfflineAreaPacks({ deLocation, compact = false }) {
           </span>
         )}
       </div>
+      {notes.includes('webkit-7day') && (
+        <div style={note('var(--accent-amber, #fbbf24)')}>
+          {t('offlinePacks.webkit7day', {
+            defaultValue:
+              'Safari (and every browser on iPhone/iPad) deletes saved areas if this site is not opened for 7 days of browser use, and may cap storage around 1 GB. Add OpenHamClock to the Home Screen (iOS) or Dock (macOS) and open it from there to keep them; check your areas before relying on them.',
+          })}
+        </div>
+      )}
+      {notes.includes('not-persistent') && !notes.includes('webkit-7day') && (
+        <div style={muted}>
+          {t('offlinePacks.notPersistent', {
+            defaultValue:
+              'The browser has not granted persistent storage, so it may clear saved areas if the disk gets full. Installing the app usually grants it.',
+          })}
+        </div>
+      )}
 
       {/* Saved packs */}
       <div>
@@ -601,6 +648,22 @@ export default function OfflineAreaPacks({ deLocation, compact = false }) {
                   {p.name}
                 </span>
                 <span style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
+                  {isIncomplete(p) && !(running && download.packId === p.id) && (
+                    <button
+                      type="button"
+                      disabled={running || busyId === p.id}
+                      onClick={() => onResume(p.id)}
+                      style={btn({
+                        fontSize: '10px',
+                        padding: '1px 6px',
+                        background: 'var(--accent-amber)',
+                        color: '#000',
+                        borderColor: 'var(--accent-amber)',
+                      })}
+                    >
+                      {t('offlinePacks.resume', { defaultValue: 'Resume' })}
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => showPack(p)}
@@ -613,7 +676,7 @@ export default function OfflineAreaPacks({ deLocation, compact = false }) {
                     disabled={busyId === p.id}
                     onClick={() => onRefresh(p.id)}
                     title={t('offlinePacks.refreshTitle', {
-                      defaultValue: 'Save fresh alerts, shelters, and repeaters for this area',
+                      defaultValue: 'Save fresh alerts, shelters, repeaters, and disaster declarations for this area',
                     })}
                     style={btn({ fontSize: '10px', padding: '1px 6px' })}
                   >
@@ -644,6 +707,15 @@ export default function OfflineAreaPacks({ deLocation, compact = false }) {
                   )}
                 </span>
               </div>
+              {isIncomplete(p) && (
+                <div style={{ fontSize: '10px', color: 'var(--accent-amber, #fbbf24)' }}>
+                  {t('offlinePacks.incomplete', {
+                    defaultValue: 'Incomplete — {{saved}} of {{total}} tiles saved',
+                    saved: p.tileCount.toLocaleString(),
+                    total: (p.totalTiles || p.tileCount).toLocaleString(),
+                  })}
+                </div>
+              )}
               <div style={{ ...muted, fontFamily: 'var(--font-mono)', marginTop: '2px' }}>
                 {p.styleName} · z{p.minZoom}–{p.maxZoom} · {p.tileCount.toLocaleString()}{' '}
                 {t('offlinePacks.tiles', { defaultValue: 'tiles' })} · {formatBytes(p.bytes)} ·{' '}
@@ -651,9 +723,15 @@ export default function OfflineAreaPacks({ deLocation, compact = false }) {
               </div>
               <div style={{ ...muted, fontFamily: 'var(--font-mono)' }}>{fmtBbox(p.bbox)}</div>
               <div style={muted}>
-                {['alerts', 'shelters', 'repeaters']
-                  .filter((k) => p.data?.[k])
-                  .map((k) => `${p.data[k].count} ${t(`offlinePacks.kind.${k}`, { defaultValue: k })}`)
+                {SNAPSHOT_KINDS.filter((k) => p.data?.[k])
+                  .map((k) =>
+                    k === 'disasters' && p.data[k].state
+                      ? `${p.data[k].count} ${t('offlinePacks.kind.disastersIn', {
+                          defaultValue: 'declarations ({{state}})',
+                          state: p.data[k].state,
+                        })}`
+                      : `${p.data[k].count} ${t(`offlinePacks.kind.${k}`, { defaultValue: k })}`,
+                  )
                   .join(' · ') || t('offlinePacks.noData', { defaultValue: 'No EmComm data saved' })}
                 {p.data &&
                   Object.values(p.data).some((d) => d?.fetchedAt) &&
@@ -666,6 +744,162 @@ export default function OfflineAreaPacks({ deLocation, compact = false }) {
           ))
         )}
       </div>
+
+      <CustomTileSourceForm t={t} muted={muted} note={note} />
+    </div>
+  );
+}
+
+const inputStyle = { ...selectStyle, padding: '3px 6px', width: '100%', boxSizing: 'border-box' };
+
+/**
+ * "Use my own tile server" — an operator-supplied tile URL template (their
+ * own tile server, a LAN/Pi mbtiles server) that offline areas can be
+ * saved from. The operator confirms the source's terms allow it.
+ */
+function CustomTileSourceForm({ t, muted, note }) {
+  const saved = readCustomTileSource();
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState(() => ({
+    name: saved?.name || '',
+    url: saved?.url || '',
+    maxZoom: saved?.maxZoom ?? 18,
+    attribution: saved?.attribution || '',
+    confirmed: !!saved?.confirmed,
+  }));
+  const [error, setError] = useState(null);
+  const [changed, setChanged] = useState(false);
+  const active = !!MAP_STYLES[CUSTOM_STYLE_ID];
+
+  const errorText = {
+    url: t('offlinePacks.custom.err.url', { defaultValue: 'Enter a full http:// or https:// tile URL.' }),
+    placeholders: t('offlinePacks.custom.err.placeholders', {
+      defaultValue: 'The URL needs {z}, {x} and {y} placeholders.',
+    }),
+    forbidden: t('offlinePacks.custom.err.forbidden', {
+      defaultValue: "That public tile server's terms do not allow saving areas for offline use.",
+    }),
+    confirm: t('offlinePacks.custom.err.confirm', {
+      defaultValue: 'Tick the box to confirm this source allows offline storage.',
+    }),
+  };
+
+  const save = async () => {
+    const v = validateCustomTileSource(draft);
+    if (!v.ok) {
+      setError(v.error);
+      return;
+    }
+    setError(null);
+    writeCustomTileSource(v.source);
+    await registerTileSource(v.source.url, { subdomains: v.source.subdomains });
+    setChanged(true);
+  };
+
+  const remove = async () => {
+    writeCustomTileSource(null);
+    await registerTileSource(null);
+    setDraft({ name: '', url: '', maxZoom: 18, attribution: '', confirmed: false });
+    setChanged(true);
+  };
+
+  const set = (k) => (e) =>
+    setDraft((d) => ({ ...d, [k]: e.target.type === 'checkbox' ? e.target.checked : e.target.value }));
+
+  return (
+    <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '6px' }}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        style={{ ...btn({ border: 'none', background: 'transparent', padding: 0 }), ...muted, cursor: 'pointer' }}
+      >
+        {open ? '▼' : '▶'} {t('offlinePacks.custom.title', { defaultValue: 'Use my own tile server' })}
+        {saved ? ` · ${saved.name}` : ''}
+      </button>
+      {open && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '6px' }}>
+          <div style={muted}>
+            {t('offlinePacks.custom.intro', {
+              defaultValue:
+                'For your own tile server (for example an mbtiles server on the shack Pi or the LAN) or a provider whose terms allow offline storage. It is added to the basemap list and offered for offline areas. You are responsible for following the source’s terms. The server must send CORS headers, and a plain-http server only works when OpenHamClock itself is opened over http on localhost.',
+            })}
+          </div>
+          <input
+            type="text"
+            value={draft.name}
+            onChange={set('name')}
+            placeholder={t('offlinePacks.custom.namePh', { defaultValue: 'Name (e.g. Shack Pi tiles)' })}
+            aria-label={t('offlinePacks.custom.name', { defaultValue: 'Source name' })}
+            maxLength={40}
+            style={inputStyle}
+          />
+          <input
+            type="text"
+            value={draft.url}
+            onChange={set('url')}
+            placeholder="https://tiles.example.net/osm/{z}/{x}/{y}.png"
+            aria-label={t('offlinePacks.custom.url', { defaultValue: 'Tile URL template' })}
+            spellCheck={false}
+            style={{ ...inputStyle, fontFamily: 'var(--font-mono)' }}
+          />
+          <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+            <span style={muted}>{t('offlinePacks.custom.maxZoom', { defaultValue: 'Highest zoom it serves' })}</span>
+            <input
+              type="number"
+              min={1}
+              max={20}
+              value={draft.maxZoom}
+              onChange={set('maxZoom')}
+              aria-label={t('offlinePacks.custom.maxZoom', { defaultValue: 'Highest zoom it serves' })}
+              style={{ ...selectStyle, width: '56px' }}
+            />
+          </div>
+          <input
+            type="text"
+            value={draft.attribution}
+            onChange={set('attribution')}
+            placeholder={t('offlinePacks.custom.attributionPh', {
+              defaultValue: 'Attribution shown on the map (e.g. © OpenStreetMap contributors)',
+            })}
+            aria-label={t('offlinePacks.custom.attribution', { defaultValue: 'Attribution' })}
+            maxLength={200}
+            style={inputStyle}
+          />
+          <label style={{ display: 'flex', gap: '6px', alignItems: 'flex-start', fontSize: '11px', cursor: 'pointer' }}>
+            <input type="checkbox" checked={draft.confirmed} onChange={set('confirmed')} />
+            <span>
+              {t('offlinePacks.custom.confirm', {
+                defaultValue:
+                  'I run this tile server, or its terms allow downloading areas for offline use. I am responsible for following them.',
+              })}
+            </span>
+          </label>
+          {error && <div style={note('var(--accent-red, #ef4444)')}>{errorText[error]}</div>}
+          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
+            <button type="button" onClick={save} style={btn({ fontWeight: 700 })}>
+              {t('offlinePacks.custom.save', { defaultValue: 'Save source' })}
+            </button>
+            {saved && (
+              <button type="button" onClick={remove} style={btn()}>
+                {t('offlinePacks.custom.remove', { defaultValue: 'Remove source' })}
+              </button>
+            )}
+            {(changed || (saved && !active)) && (
+              <>
+                <span style={muted}>
+                  {t('offlinePacks.custom.reloadNote', {
+                    defaultValue: 'Reload to update the basemap list.',
+                  })}
+                </span>
+                <button type="button" onClick={() => window.location.reload()} style={btn()}>
+                  {t('offlinePacks.custom.reload', { defaultValue: 'Reload' })}
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
