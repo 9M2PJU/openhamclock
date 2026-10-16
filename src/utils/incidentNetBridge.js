@@ -36,7 +36,14 @@ import {
   NET_CONTROL_KEY,
   NET_CONTROL_HISTORY_KEY,
 } from './netControl.js';
-import { reconcileNet, netTag, conflictRecord, mergeConflictRecords, removeConflictEntry } from './incidentNetMerge.js';
+import {
+  reconcileNet,
+  netTag,
+  sameNetContent,
+  conflictRecord,
+  mergeConflictRecords,
+  removeConflictEntry,
+} from './incidentNetMerge.js';
 
 export const BRIDGE_ID = 'shared-incident';
 export const STASH_KEY = 'openhamclock_netControlBeforeIncident';
@@ -133,14 +140,20 @@ function readStash() {
 }
 
 /** This browser's running net (or closed-net record) changed: share it. */
-export function publishNet() {
+export function publishNet(extra = null) {
   if (!state.attached) return;
   const plain = serializeNetState(readRunningNetRecord());
   const key = netKey(plain);
   if (key === state.known.net) return;
   state.known.net = key;
   // tag / parentTag let the other sites find the common ancestor (incidentNetMerge.js).
-  const data = { ...plain, tag: netTag(plain), parentTag: state.head || null, origin: state.origin || null };
+  const data = {
+    ...plain,
+    tag: netTag(plain),
+    parentTag: state.head || null,
+    origin: state.origin || null,
+    ...(extra || {}),
+  };
   remember(data.tag, data.net);
   state.head = data.tag;
   state.publish?.('net-running', data);
@@ -171,6 +184,13 @@ export function receiveNet(data, { force = false } = {}) {
   if (!state.attached || !data || data.kind !== 'net-control') return false;
   const key = netKey(data);
   if (!force && key === state.known.net) return false;
+  // A state this site has already dealt with, announced again (a site that
+  // kept its change in a conflict re-publishes it; an echo of our own older
+  // state): acting on it again could undo what happened since — e.g. an
+  // "Apply mine" made after it.
+  if (!force && data.tag && state.seen.has(data.tag) && sameNetContent(state.seen.get(data.tag), data.net)) {
+    return false;
+  }
   if (data.tag) remember(data.tag, data.net);
   const local = loadRunningNet();
 
@@ -209,6 +229,17 @@ export function receiveNet(data, { force = false } = {}) {
         }
       }
       return true;
+    }
+    if (r.action === 'keep') {
+      // Same station changed at both sites and ours is the later change:
+      // ours stands. Publish it again as the successor of theirs, so the
+      // incident (and every other site) ends on ours too.
+      state.head = data.tag;
+      state.known.net = '';
+      // `overrode` tells that site its change lost (and which lines), so it
+      // shows "your change" instead of reading this as a plain update.
+      publishNet({ overrode: { tag: data.tag, calls: r.calls, fields: r.fields } });
+      return false;
     }
     if (r.action === 'merge') {
       writeNet({ ...r.net, updatedAt: Date.now() }, Math.max(data.rev ?? 0, local?.rev ?? 0) + 1);

@@ -65,6 +65,22 @@ describe('reconcileNet (shared net across sites)', () => {
     expect(r).toMatchObject({ action: 'conflict', calls: ['W1AW'], net: theirs });
   });
 
+  it('in a conflict both sites keep the later change: the earlier site takes it, the later keeps its own', () => {
+    const early = { ...base, stations: [st('W1AW', { flags: ['T'] }), st('K1ABC')], rev: 11, updatedAt: 150 };
+    const late = { ...base, stations: [st('W1AW', { flags: ['M'] }), st('K1ABC')], rev: 11, updatedAt: 180 };
+    // at the early site, the late state arrives: take it (and show "your change")
+    expect(
+      reconcileNet({ head: netTag(early), history, local: early, remote: doc(late, '10:100', 11, 180) }),
+    ).toMatchObject({ action: 'conflict', calls: ['W1AW'] });
+    // at the late site, the early state arrives: keep ours (and republish it on top)
+    expect(
+      reconcileNet({ head: netTag(late), history, local: late, remote: doc(early, '10:100', 11, 150) }),
+    ).toMatchObject({
+      action: 'keep',
+      calls: ['W1AW'],
+    });
+  });
+
   it('the same field set differently at both sites is a conflict; the same value is not', () => {
     const mine = { ...base, frequency: '147.00', rev: 11, updatedAt: 150 };
     expect(
@@ -76,6 +92,17 @@ describe('reconcileNet (shared net across sites)', () => {
       reconcileNet({ head: '11:150', history, local: mine2, remote: doc({ ...sameLine, name: 'ARES 2' }, '10:100') })
         .action,
     ).toBe('merge');
+  });
+
+  it('a state made from ours that overrode our change in a conflict is our loss, not a plain update', () => {
+    const ours = { ...base, stations: [st('W1AW', { flags: ['T'] }), st('K1ABC')], rev: 11, updatedAt: 150 };
+    const theirs = { ...base, stations: [st('W1AW', { flags: ['M'] }), st('K1ABC')] };
+    const remote = { ...doc(theirs, '11:150', 11, 180), overrode: { tag: '11:150', calls: ['W1AW'], fields: [] } };
+    expect(reconcileNet({ head: '11:150', history, local: ours, remote })).toMatchObject({
+      action: 'conflict',
+      calls: ['W1AW'],
+      net: theirs,
+    });
   });
 
   it('fast-forwards when theirs was made from what we have', () => {

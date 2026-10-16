@@ -251,6 +251,84 @@ async function main() {
       'the incident bridge is not counted as another Net Control panel',
     );
 
+    log('Both operators change W9NET at the same moment: one change stands, the other site gets "your change"');
+    const ncRow = (page) => page.locator('[data-testid="nc-station"][data-call="W9NET"]');
+    await ncRow(b.page).waitFor({ timeout: T });
+    const debugLog = [];
+    if (process.env.E2E_DEBUG) {
+      for (const [who, page] of [
+        ['A', a.page],
+        ['B', b.page],
+      ]) {
+        page.on('requestfinished', async (r) => {
+          if (!/\/api\/incident\//.test(r.url())) return;
+          const body = r.postData() || '';
+          const docs = body.includes('net-running') ? 'net-running' : '';
+          debugLog.push(
+            `${who} ${r.method()} ${r.url().replace(BASE, '').split('?')[0]} ${docs} ${(await r.response())?.status()}`,
+          );
+        });
+        page.on(
+          'requestfailed',
+          (r) =>
+            /\/api\/incident\//.test(r.url()) &&
+            debugLog.push(`${who} FAILED ${r.url().replace(BASE, '').split('?')[0]}`),
+        );
+      }
+    }
+    // Offline, so neither sees the other's change before making its own.
+    await a.context.setOffline(true);
+    await b.context.setOffline(true);
+    await ncRow(a.page).getByTitle('Traffic', { exact: true }).click();
+    await b.page.waitForTimeout(50); // B's change is the later one
+    await ncRow(b.page).getByTitle('Mobile', { exact: true }).click();
+    await a.context.setOffline(false);
+    await b.context.setOffline(false);
+    const pressed = async (page, title) =>
+      (await ncRow(page).getByTitle(title, { exact: true }).getAttribute('aria-pressed')) === 'true';
+    const flags = async (page) => [await pressed(page, 'Traffic'), await pressed(page, 'Mobile')].join(',');
+    const chipA = a.page.getByTestId('net-conflict-W9NET');
+    const chipB = b.page.getByTestId('net-conflict-W9NET');
+    for (let waited = 0; (await chipA.count()) + (await chipB.count()) === 0; waited += 500) {
+      if (waited > 60_000) {
+        const r = await fetch(`${BASE}/api/incident/${id}`, { headers: { 'X-Incident-Key': joinKey } });
+        const net = (await r.json()).docs?.find((d) => d.id === 'net-running');
+        const w9 = net?.data?.net?.stations?.find((x) => x.call === 'W9NET');
+        if (debugLog.length) console.log(debugLog.join('\n'));
+        throw new Error(
+          `FAILED: no "your change" chip at either site (A: ${await flags(a.page)}, B: ${await flags(b.page)}; ` +
+            `server: ${JSON.stringify(w9?.flags)} tag ${net?.data?.tag} from ${net?.data?.origin?.site} rev ${net?.docRev})`,
+        );
+      }
+      await a.page.waitForTimeout(500);
+    }
+    await a.page.waitForTimeout(3000); // let both sides settle
+    const [onA, onB] = [await chipA.count(), await chipB.count()];
+    check(onA + onB === 1, `exactly one site shows the chip (A: ${onA}, B: ${onB})`);
+    check(
+      (await flags(a.page)) === (await flags(b.page)),
+      `both sites show the same W9NET flags (${await flags(a.page)})`,
+    );
+    check(
+      onA === 1 && (await flags(a.page)) === 'false,true',
+      'the later change (B: Mobile) stands; A is offered its own',
+    );
+    check((await chipA.textContent()).includes('EOC South'), 'the chip names the other site');
+
+    log('A applies its change from the chip');
+    await chipA.getByRole('button', { name: 'Apply mine', exact: true }).click();
+    for (let waited = 0; (await flags(b.page)) !== 'true,false'; waited += 500) {
+      if (waited > 30_000) {
+        throw new Error(
+          `FAILED: Apply mine did not reach B (A: ${await flags(a.page)}, chip ${await chipA.count()}; B: ${await flags(b.page)})`,
+        );
+      }
+      await b.page.waitForTimeout(500);
+    }
+    check((await flags(a.page)) === 'true,false', 'A’s change is back at A');
+    check((await flags(b.page)) === 'true,false', 'and reached B');
+    check((await chipA.count()) === 0, 'the chip is gone');
+
     log('B goes offline, checks in; the update waits and flushes on reconnect');
     await b.context.setOffline(true);
     await b.page.locator('input[name="checkin-call"]').fill('N0OFF');

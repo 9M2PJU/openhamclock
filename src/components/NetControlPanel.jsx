@@ -1316,6 +1316,8 @@ export default function NetControlPanel({ callsign = '', embedded = false, timeZ
             return (
               <div
                 key={s.call}
+                data-testid="nc-station"
+                data-call={s.call}
                 style={{
                   display: 'grid',
                   gridTemplateColumns: '36px 1fr auto',
