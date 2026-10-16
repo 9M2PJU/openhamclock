@@ -111,8 +111,9 @@
   /** True for API paths that stream (SSE) and must be left to the browser. */
   function isStreamingApiPath(pathname) {
     if (STREAMING_API_PATHS.indexOf(pathname) !== -1) return true;
-    // Defensive: any future /api/**/stream endpoint is assumed to be SSE.
-    return pathname.indexOf('/api/') === 0 && /\/stream\/?$/.test(pathname);
+    // Defensive: any /api/**/stream endpoint (also /stream/<id>, e.g. the
+    // per-callsign PSK Reporter feed) is assumed to be SSE.
+    return pathname.indexOf('/api/') === 0 && /\/stream(\/|$)/.test(pathname);
   }
 
   /**
@@ -124,6 +125,7 @@
    *   mode   - Request.mode ('navigate' for top-level navigations)
    *   origin - the service worker's own origin (self.location.origin)
    *   extraTilePrefixes - URL prefixes of operator-supplied tile sources
+   *   accept - the request's Accept header (EventSource: text/event-stream)
    * @returns {'navigation'|'asset'|'api'|'tile'|'bypass'}
    *   navigation - network-first with cached-shell fallback
    *   asset      - cache-first, cache-on-fetch
@@ -134,6 +136,11 @@
    */
   function classifyRequest(req) {
     if (!req || req.method !== 'GET') return 'bypass';
+    // EventSource requests announce themselves. A stream answered through
+    // the worker keeps that request in flight for as long as the stream
+    // lives — and Chromium will not activate an updated worker while the
+    // old one has requests in flight, so an update could wait forever.
+    if (String(req.accept || '').indexOf('text/event-stream') !== -1) return 'bypass';
     var u;
     try {
       u = new URL(req.url, req.origin);
@@ -194,37 +201,6 @@
     return (
       a === 10 || a === 127 || (a === 192 && b === 168) || (a === 172 && b >= 16 && b <= 31) || (a === 169 && b === 254)
     );
-  }
-
-  /** Most hosts carried in the registration URL's `t` param. */
-  var MAX_HELD_HOSTS = 8;
-
-  /**
-   * Parse the registration URL's `t` param ("host1,host2[:port]") into the
-   * list of operator tile-source hosts to hold at worker start.
-   */
-  function parseHeldHosts(param) {
-    return String(param || '')
-      .split(',')
-      .map(function (h) {
-        return h.trim().toLowerCase();
-      })
-      .filter(function (h) {
-        return /^[a-z0-9.-]+(:\d+)?$/.test(h);
-      })
-      .slice(0, MAX_HELD_HOSTS);
-  }
-
-  /** True when the URL's host (with port) is exactly one of `hosts`. */
-  function isHeldHost(url, hosts) {
-    if (!hosts || !hosts.length) return false;
-    var u;
-    try {
-      u = new URL(url);
-    } catch (e) {
-      return false;
-    }
-    return hosts.indexOf(u.host.toLowerCase()) !== -1;
   }
 
   /**
@@ -396,8 +372,6 @@
     tileUrlPrefix: tileUrlPrefix,
     tileUrlPrefixes: tileUrlPrefixes,
     isLocalNetworkUrl: isLocalNetworkUrl,
-    parseHeldHosts: parseHeldHosts,
-    isHeldHost: isHeldHost,
     parseTileUrl: parseTileUrl,
     subdomainFor: subdomainFor,
     buildTileUrl: buildTileUrl,

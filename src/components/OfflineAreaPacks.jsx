@@ -18,7 +18,6 @@ import { latLonToMaidenhead } from '../utils/geo.js';
 import { requestMapFocus } from '../utils/mapFocus.js';
 import { getMapViewport, subscribeMapViewport, requestBasemap } from '../utils/mapViewport.js';
 import { applyCustomTileSource, useMapStylesVersion } from '../utils/mapStylesLive.js';
-import { refreshServiceWorkerRegistration } from '../pwa/registerServiceWorker.js';
 import {
   OFFLINE_ZOOM_MIN,
   OFFLINE_ZOOM_MAX,
@@ -801,7 +800,6 @@ function CustomTileSourceForm({ t, muted, note }) {
     writeCustomTileSource(v.source);
     applyCustomTileSource(v.source); // basemap list updates at once
     await registerTileSource(v.source.url, { subdomains: v.source.subdomains });
-    refreshServiceWorkerRegistration(); // worker learns the host for restarts
     setChanged(true);
   };
 
@@ -809,7 +807,6 @@ function CustomTileSourceForm({ t, muted, note }) {
     writeCustomTileSource(null);
     applyCustomTileSource(null);
     await registerTileSource(null);
-    refreshServiceWorkerRegistration();
     setDraft({ name: '', url: '', maxZoom: 18, attribution: '', confirmed: false });
     setChanged(true);
   };

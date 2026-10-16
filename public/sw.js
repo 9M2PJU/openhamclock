@@ -37,16 +37,12 @@
 'use strict';
 
 var RAW_VERSION = new URL(self.location.href).searchParams.get('v') || 'dev';
-// Hosts of the operator's own tile source(s), carried in the registration
-// URL (`t`) so they are known synchronously the moment the worker starts.
-var HELD_HOSTS_PARAM = new URL(self.location.href).searchParams.get('t') || '';
 
 // Same version token on the import keeps the policy file in lockstep with
 // this worker across deploys (and past any HTTP cache).
 importScripts('./sw-policy.js?v=' + encodeURIComponent(RAW_VERSION));
 
 var POLICY = self.OHC_SW_POLICY;
-var HELD_HOSTS = POLICY.parseHeldHosts(HELD_HOSTS_PARAM);
 var VERSION = POLICY.normalizeVersion(RAW_VERSION);
 var CACHE = POLICY.cacheNames(VERSION);
 
@@ -130,7 +126,6 @@ var PACK_MANIFEST_KEY = '/__ohc-offline-packs/manifest.json';
 var PACK_SOURCES_KEY = '/__ohc-offline-packs/sources.json';
 var tileRouting = { prefixes: [], packs: [] };
 var tileRoutingPending = true;
-var HOLD_MS = 3000;
 var tileRoutingReady = refreshTileRouting().then(function () {
   tileRoutingPending = false;
 });
@@ -164,6 +159,7 @@ function classify(req) {
     method: req.method,
     mode: req.mode,
     origin: self.location.origin,
+    accept: req.headers && req.headers.get ? req.headers.get('accept') : '',
     extraTilePrefixes: tileRouting.prefixes,
   });
 }
@@ -173,25 +169,19 @@ self.addEventListener('fetch', function (event) {
   var req = event.request;
   var decision = classify(req);
 
-  // Just (re)started and the tile-source routing is not loaded yet: hold an
-  // image from the operator's own tile host (exact host from the
-  // registration URL, public HTTPS or LAN) or any local/LAN host until it
-  // is — at most HOLD_MS — so an offline tile is not missed. Every other
-  // host keeps the browser's default handling.
+  // Just (re)started and the user tile sources are not loaded yet: hold an
+  // image from a LAN/local host (where an operator's own tile server lives)
+  // until they are, so an offline tile is not missed. Public hosts are never
+  // held — they keep the browser's default handling.
   if (
     decision === 'bypass' &&
     tileRoutingPending &&
     req.method === 'GET' &&
     req.destination === 'image' &&
-    (POLICY.isHeldHost(req.url, HELD_HOSTS) || POLICY.isLocalNetworkUrl(req.url, self.location.origin))
+    POLICY.isLocalNetworkUrl(req.url, self.location.origin)
   ) {
     event.respondWith(
-      Promise.race([
-        tileRoutingReady,
-        new Promise(function (resolve) {
-          setTimeout(resolve, HOLD_MS);
-        }),
-      ]).then(function () {
+      tileRoutingReady.then(function () {
         return classify(req) === 'tile' ? handleTile(event, req) : fetch(req);
       }),
     );

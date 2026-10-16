@@ -11,16 +11,7 @@ const SW_SOURCE = readFileSync(resolve(process.cwd(), 'public/sw.js'), 'utf8');
 const TILE = 'https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/9/193/106';
 const ORIGIN = 'https://openhamclock.com';
 
-function loadWorker({
-  fetchImpl,
-  packTiles = {},
-  packDocs = {},
-  apiCache = {},
-  onLine = true,
-  canvas = null,
-  query = '',
-  slowCache = 0,
-}) {
+function loadWorker({ fetchImpl, packTiles = {}, packDocs = {}, apiCache = {}, onLine = true, canvas = null }) {
   const listeners = {};
   const posted = [];
   const stores = {
@@ -34,7 +25,6 @@ function loadWorker({
   };
   const caches = {
     open: async (name) => {
-      if (slowCache) await new Promise((r) => setTimeout(r, slowCache));
       if (!stores[name]) stores[name] = new Map(name.endsWith('-api') ? Object.entries(apiCache) : []);
       const m = stores[name];
       return {
@@ -53,7 +43,7 @@ function loadWorker({
   };
   const client = { postMessage: (msg) => posted.push(msg) };
   const self = {
-    location: { href: `${ORIGIN}/sw.js?v=test${query}`, origin: ORIGIN },
+    location: { href: `${ORIGIN}/sw.js?v=test`, origin: ORIGIN },
     navigator: { onLine },
     addEventListener: (type, fn) => {
       listeners[type] = fn;
@@ -73,8 +63,8 @@ function loadWorker({
   );
   run(self, () => {}, caches, fetchImpl, canvas?.OffscreenCanvas, canvas?.createImageBitmap);
 
-  const dispatchFetch = async (request, { settle = true } = {}) => {
-    if (settle) await new Promise((r) => setTimeout(r, 0)); // let routing load from the pack cache
+  const dispatchFetch = async (request) => {
+    await new Promise((r) => setTimeout(r, 0)); // let routing load from the pack cache
     let responded = null;
     const waits = [];
     const event = {
@@ -340,43 +330,4 @@ describe('service worker: /vendor via CDN redirect', () => {
     await dispatchInstall();
     expect(stores['ohc-test-app'].get('/vendor/leaflet/leaflet.js')).toBe(opaque);
   });
-});
-
-describe('service worker: holding the operator tile host at start', () => {
-  const PUB = 'https://tiles.example.net/osm/12/850/1550.png';
-  const docs = { '/__ohc-offline-packs/sources.json': { prefixes: ['https://tiles.example.net/osm/'] } };
-  const offline = () =>
-    vi.fn(async () => {
-      throw new TypeError('Failed to fetch');
-    });
-
-  it('holds a public HTTPS own-server tile named in the registration URL until routing loads', async () => {
-    const { dispatchFetch } = loadWorker({
-      fetchImpl: offline(),
-      query: '&t=tiles.example.net',
-      slowCache: 50, // routing still loading when the request arrives
-      packTiles: { [PUB]: img('saved') },
-      packDocs: docs,
-    });
-    const res = await dispatchFetch({ url: PUB, destination: 'image' }, { settle: false });
-    expect(await res.text()).toBe('saved');
-  });
-
-  it('does not hold other public hosts (exact host match only)', async () => {
-    const fetchImpl = vi.fn();
-    const { dispatchFetch } = loadWorker({ fetchImpl, query: '&t=tiles.example.net', slowCache: 50 });
-    for (const url of ['https://other.example.net/1/2/3.png', 'https://x.tiles.example.net/1/2/3.png']) {
-      expect(await dispatchFetch({ url, destination: 'image' }, { settle: false })).toBeUndefined();
-    }
-    expect(fetchImpl).not.toHaveBeenCalled();
-  });
-
-  it('a held request is released after a bounded wait even if routing never loads', async () => {
-    const fetchImpl = vi.fn(async () => img('net'));
-    const { dispatchFetch } = loadWorker({ fetchImpl, query: '&t=tiles.example.net', slowCache: 60000 });
-    const t0 = Date.now();
-    const res = await dispatchFetch({ url: PUB, destination: 'image' }, { settle: false });
-    expect(await res.text()).toBe('net');
-    expect(Date.now() - t0).toBeLessThan(4500);
-  }, 8000);
 });
