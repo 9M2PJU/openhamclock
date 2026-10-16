@@ -54,6 +54,9 @@ import {
 import * as incidentDocs from '../utils/incidentDocs.js';
 
 const OUTBOX_ID_KEY = 'openhamclock_incidentOutboxId';
+// Set when the join key was changed under this browser: other tabs show the
+// same "join again" prompt.
+const REJOIN_KEY = 'openhamclock_incidentRejoin';
 const FLUSH_DEBOUNCE_MS = 1000;
 const RETRY_MS = [2000, 5000, 10000, 30000, 60000];
 const POLL_FALLBACK_MS = 10000;
@@ -198,12 +201,23 @@ export function useSharedIncident({
     if (!s) return;
     goneRef.current = true;
     sessionRef.current = null;
+    writeJson(REJOIN_KEY, { id: s.id, site: s.site || '' });
     writeJson(SESSION_KEY, null);
     setSession(null);
     setState(emptyIncidentState());
     setStatus('idle');
     setError(REKEYED_MESSAGE);
     setInvite({ id: s.id, key: '', site: s.site || '' });
+  }, []);
+
+  /** Admin: keep the session's copy of the current join key in step with the server. */
+  const noteJoinKey = useCallback((joinKey) => {
+    const cur = sessionRef.current;
+    if (!cur || cur.role !== 'admin' || !joinKey || cur.joinKey === joinKey) return;
+    const next = { ...cur, joinKey };
+    sessionRef.current = next;
+    writeJson(SESSION_KEY, next);
+    setSession(next);
   }, []);
 
   flushRef.current = async () => {
@@ -320,6 +334,7 @@ export function useSharedIncident({
       es.addEventListener('snapshot', (e) => {
         const d = parse(e);
         if (d) apply(d);
+        if (d?.joinKey) noteJoinKey(d.joinKey);
         attempt = 0;
         setStatus('live');
         setError(null);
@@ -373,6 +388,7 @@ export function useSharedIncident({
         if (res.status === 403 || res.status === 404) return authFailed(res.status);
         if (res.ok) {
           apply(res.data);
+          if (res.data?.joinKey) noteJoinKey(res.data.joinKey);
           setStatus('live');
           setError(null);
           flushRef.current?.();
@@ -406,7 +422,56 @@ export function useSharedIncident({
       window.removeEventListener('online', onOnline);
       window.removeEventListener('offline', onOffline);
     };
-  }, [sessionId, sessionKey, clientId, markGone, suspendForRekey]);
+  }, [sessionId, sessionKey, clientId, markGone, suspendForRekey, noteJoinKey]);
+
+  // Other tabs of this browser: joining, leaving, a key change or a rotation
+  // there takes effect here too (the session lives in localStorage).
+  useEffect(() => {
+    const onStorage = (e) => {
+      if (e.key !== SESSION_KEY && e.key !== null) return;
+      const next = readJson(SESSION_KEY, null);
+      const cur = sessionRef.current;
+      if (!next) {
+        if (!cur) return;
+        sessionRef.current = null;
+        setSession(null);
+        setState(emptyIncidentState());
+        setDocsReady(false);
+        setStatus('idle');
+        outboxRef.current = readJson(OUTBOX_KEY, null) || emptyOutbox();
+        setPending(outboxSize(outboxRef.current));
+        const rejoin = readJson(REJOIN_KEY, null);
+        if (rejoin?.id === cur.id) {
+          setError(REKEYED_MESSAGE);
+          setInvite({ id: rejoin.id, key: '', site: rejoin.site || '' });
+        } else {
+          setError(null);
+        }
+        return;
+      }
+      if (!cur || cur.id !== next.id || cur.key !== next.key) {
+        const cached = readJson(CACHE_KEY, null);
+        goneRef.current = false;
+        rosterPrevRef.current = null;
+        pushedEventsRef.current = new Set();
+        pushedReportsRef.current = new Set();
+        sessionRef.current = next;
+        setSession(next);
+        setState(cached?.id === next.id && cached.state ? cached.state : emptyIncidentState());
+        setDocsReady(false);
+        setStatus('connecting');
+        setError(null);
+        setInvite(null);
+        return;
+      }
+      if (next.joinKey !== cur.joinKey || next.keyGen !== cur.keyGen || next.site !== cur.site) {
+        sessionRef.current = next;
+        setSession(next);
+      }
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
 
   // Flush/retry timers die with the component.
   useEffect(
@@ -438,7 +503,11 @@ export function useSharedIncident({
   );
   useEffect(() => {
     if (!sessionId || !docsReady) return undefined;
-    incidentDocs.attach({ docs: stateRef.current.docs, publish: publishDoc });
+    incidentDocs.attach({
+      docs: stateRef.current.docs,
+      publish: publishDoc,
+      origin: { site: sessionRef.current?.site || '', call: callsignRef.current || '' },
+    });
     return () => incidentDocs.detach();
   }, [sessionId, docsReady, publishDoc]);
   const stateDocs = state.docs;
@@ -511,6 +580,7 @@ export function useSharedIncident({
         joinedAt: Date.now(),
       };
       writeJson(SESSION_KEY, next);
+      writeJson(REJOIN_KEY, null);
       rosterPrevRef.current = null;
       pushedEventsRef.current = new Set();
       pushedReportsRef.current = new Set();
@@ -563,7 +633,7 @@ export function useSharedIncident({
         body: { clientId, call: callsignRef.current },
       });
       if (!res.ok) throw new Error(res.data?.error || `HTTP ${res.status}`);
-      adopt({ id, key, role: res.data.role, site, snapshot: res.data.incident });
+      adopt({ id, key, role: res.data.role, joinKey: res.data.joinKey || '', site, snapshot: res.data.incident });
       return res.data;
     },
     [adopt, clientId],
@@ -573,6 +643,7 @@ export function useSharedIncident({
     const s = sessionRef.current;
     sessionRef.current = null;
     writeJson(SESSION_KEY, null);
+    writeJson(REJOIN_KEY, null);
     writeJson(CACHE_KEY, null);
     outboxRef.current = emptyOutbox();
     outboxIdRef.current = null;

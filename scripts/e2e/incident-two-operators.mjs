@@ -5,10 +5,13 @@
  *   OHC_URL=http://127.0.0.1:3000 node scripts/e2e/incident-two-operators.mjs [screenshot-dir]
  *
  * Two Chromium contexts (separate storage = two stations) walk the whole
- * flow: create, invite link, join, check-in propagation, OUT, board edit
- * (admin) and its absence for an operator, an admin deletion, the offline
- * buffer flushing on reconnect, reload without duplicates, join-key
- * rotation, and leave. Screenshots of the EmComm rail at desktop width and
+ * flow: create, invite link, join, check-in propagation, message traffic
+ * from two sites in the shared ICS 309 (own numbers plain, the other site's
+ * as SITE:n) and a shared ICS 214 draft, OUT, board edit (admin) and its
+ * absence for an operator, a shared Net Control net, an admin deletion, the
+ * offline buffer flushing on reconnect, reload without duplicates, join-key
+ * rotation, and leave. APRS sends are answered inside the browser, so the
+ * script never reaches a radio. Screenshots of the EmComm rail at desktop width and
  * at 390×844 go to the screenshot directory (default: ./e2e-shots).
  *
  * Exits non-zero on the first failed check. Uses the server's incident
@@ -67,6 +70,22 @@ const waitLive = (page) => status(page).filter({ hasText: 'LIVE' }).waitFor({ ti
 const rosterRow = (page, call) => page.locator(`[data-testid="roster-row"][data-call="${call}"]`);
 const eventRows = (page, text) => page.getByTestId('event-row').filter({ hasText: text });
 const participants = (page) => page.getByTestId('incident-participants');
+const dialog = (page) => page.getByRole('dialog');
+
+/** Open an ICS form from the EmComm rail; returns the overlay. */
+async function openIcs(page, label) {
+  await page.getByRole('button', { name: new RegExp(label) }).click();
+  await dialog(page).waitFor({ timeout: T });
+  return dialog(page);
+}
+const closeIcs = async (page) => {
+  await page.keyboard.press('Escape');
+  await dialog(page).waitFor({ state: 'detached', timeout: T });
+};
+/** Values of the 309 rows' message-number cells (both columns). */
+const msgNumbers = (overlay) =>
+  overlay.getByLabel('Msg #', { exact: true }).evaluateAll((els) => els.map((e) => e.value));
+const inputValues = (overlay) => overlay.locator('input, textarea').evaluateAll((els) => els.map((e) => e.value));
 
 async function railShot(page, file) {
   // The rail is the scrolling sidebar holding the Incident panel.
@@ -124,6 +143,75 @@ async function main() {
     check((await rosterRow(a.page, 'KD0ABC').textContent()).includes('@EOC South'), 'roster row tagged with B’s site');
     await eventRows(a.page, 'KD0ABC').first().waitFor({ timeout: T });
     check(true, 'check-in event in A’s shared log');
+
+    log('Message traffic from two sites; the shared ICS 309 numbers it per site');
+    // A messages KD0ABC from the roster. The APRS send is answered here — never a radio.
+    await a.page.route('**/api/aprs/message', (r) =>
+      r.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true}' }),
+    );
+    await rosterRow(a.page, 'KD0ABC').getByRole('button', { name: 'MSG', exact: true }).click();
+    await a.page.getByPlaceholder('Type message (67 char max)').fill('Go to shelter 2');
+    await a.page.getByRole('button', { name: 'Send', exact: true }).click();
+    // A message station at "South" logs a received message numbered 7 there (a script, through the API).
+    const south = await fetch(`${BASE}/api/incident/${id}/sync`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Incident-Key': joinKey },
+      body: JSON.stringify({
+        site: 'South',
+        events: [
+          {
+            id: 'south-rx-1',
+            ts: Date.now(),
+            type: 'aprs_msg_rx',
+            callsign: 'KD0ABC',
+            summary: 'Message to W1AW',
+            details: 'Need water at shelter 2',
+            msgNo: 7,
+          },
+        ],
+      }),
+    });
+    check(south.ok, 'South’s message accepted by the incident');
+    await eventRows(a.page, 'Message to KD0ABC').first().waitFor({ timeout: T });
+    await eventRows(b.page, 'Message to KD0ABC').first().waitFor({ timeout: T });
+    await eventRows(a.page, 'Message to W1AW').first().waitFor({ timeout: T });
+
+    const ics309A = await openIcs(a.page, '309 Comm Log');
+    const numsA = await msgNumbers(ics309A);
+    const textA = await inputValues(ics309A);
+    check(
+      textA.includes('Go to shelter 2') && textA.includes('Need water at shelter 2'),
+      'A’s 309 lists both sites’ traffic',
+    );
+    check(numsA.includes('South:7'), `A’s 309 shows South’s message as South:7 (${numsA.filter(Boolean).join(', ')})`);
+    check(
+      numsA.some((n) => /^\d+$/.test(n)),
+      'A’s own message keeps A’s own plain number',
+    );
+    await closeIcs(a.page);
+    const ics309B = await openIcs(b.page, '309 Comm Log');
+    const numsB = await msgNumbers(ics309B);
+    check(numsB.includes('South:7'), 'B’s 309 shows South:7 too');
+    check(
+      numsB.some((n) => /^EOC North:\d+$/.test(n)),
+      `B shows A’s message under A’s site (${numsB.filter(Boolean).join(', ')})`,
+    );
+    await closeIcs(b.page);
+
+    log('A fills in the ICS 214; B opens the same shared draft');
+    const ics214A = await openIcs(a.page, '214 Activity Log');
+    await ics214A.getByLabel('Name', { exact: true }).first().fill('K0CJH Logistics');
+    await a.page.waitForTimeout(800); // the panel saves after a short pause
+    await closeIcs(a.page);
+    const ics214B = await openIcs(b.page, '214 Activity Log');
+    await b.page.waitForFunction(
+      () => [...document.querySelectorAll('[role="dialog"] input')].some((e) => e.value === 'K0CJH Logistics'),
+      null,
+      { timeout: T },
+    );
+    check(true, 'B’s 214 shows A’s entry');
+    void ics214B;
+    await closeIcs(b.page);
 
     log('A checks the station OUT; it leaves B’s roster');
     await rosterRow(a.page, 'KD0ABC').getByRole('button', { name: 'OUT', exact: true }).click();
@@ -241,6 +329,37 @@ async function main() {
     await status(b.page).filter({ hasText: 'LOCAL' }).waitFor({ timeout: T });
     await participants(a.page).filter({ hasText: '1 connected' }).waitFor({ timeout: T });
     check(true, 'B is LOCAL and A shows 1 connected');
+
+    log('A deputy joins with the admin key on another device and can invite straight away');
+    await a.page.getByRole('button', { name: 'Show admin key', exact: true }).click();
+    const adminKey = (await a.page.getByTestId('incident-admin-key').textContent()).replace(/-/g, '');
+    const currentJoin = (await a.page.getByTestId('incident-join-key').textContent()).replace(/-/g, '');
+    const deputy = await station(browser, { call: 'N0DEP' });
+    await deputy.page.goto(BASE, { waitUntil: 'domcontentloaded' });
+    const dLocal = deputy.page.getByTestId('incident-panel-local');
+    await dLocal.getByRole('button', { name: 'Join', exact: true }).click();
+    await deputy.page.locator('input[name="incident-id"]').fill(id);
+    await deputy.page.locator('input[name="incident-key"]').fill(adminKey);
+    await dLocal.locator('button[type="submit"]').click();
+    await waitLive(deputy.page);
+    check((await deputy.page.getByTestId('incident-role').textContent()).includes('ADMIN'), 'deputy is ADMIN');
+    await deputy.page.getByRole('button', { name: 'Invite', exact: true }).click();
+    const deputyJoin = (await deputy.page.getByTestId('incident-join-key').textContent()).replace(/-/g, '');
+    check(deputyJoin === currentJoin, 'deputy’s Invite shows the current join key without rotating');
+    await deputy.page.getByRole('button', { name: 'Leave', exact: true }).click();
+    await deputy.page.getByTestId('incident-panel-local').waitFor({ timeout: T });
+    await deputy.context.close();
+
+    log('A has a second tab open; leaving in the first takes the second out too');
+    const a2 = await a.context.newPage();
+    a2.on('dialog', (d) => d.accept());
+    await a2.goto(BASE, { waitUntil: 'domcontentloaded' });
+    await waitLive(a2);
+    check(true, 'second tab joined from the stored session');
+    await a.page.getByRole('button', { name: 'Leave', exact: true }).click();
+    await status(a.page).filter({ hasText: 'LOCAL' }).waitFor({ timeout: T });
+    await status(a2).filter({ hasText: 'LOCAL' }).waitFor({ timeout: T });
+    check(true, 'both tabs are LOCAL');
 
     console.log('\nAll checks passed.');
   } finally {

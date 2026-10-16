@@ -36,19 +36,36 @@ import {
   NET_CONTROL_KEY,
   NET_CONTROL_HISTORY_KEY,
 } from './netControl.js';
+import { reconcileNet, netTag } from './incidentNetMerge.js';
 
 export const BRIDGE_ID = 'shared-incident';
 export const STASH_KEY = 'openhamclock_netControlBeforeIncident';
 /** Stay under the hosted server's 64 KB per-document cap. */
 export const NET_DOC_MAX_BYTES = 60 * 1024;
 
+/**
+ * Fired on window when another site changed the same station (or net field)
+ * at the same time: detail { calls, fields, site }. Net Control shows it.
+ */
+export const NET_REMOTE_CONFLICT_EVENT = 'ohc-net-control-remote-conflict';
+const HISTORY_MAX = 30;
+
 const state = {
   attached: false,
   publish: null,
+  origin: null, // { site, call } stamped on what this browser publishes
   known: { net: '', history: '' },
+  head: '', // tag of the last net state this site published or took
+  seen: new Map(), // tag → net, recent states (common ancestors for merging)
   channel: null,
   onStorage: null,
 };
+
+function remember(tag, net) {
+  if (!tag || !net) return;
+  state.seen.set(tag, net);
+  while (state.seen.size > HISTORY_MAX) state.seen.delete(state.seen.keys().next().value);
+}
 
 /** Comparison key for a serialized net state (updatedAt of an empty state changes every call). */
 const netKey = (d) => JSON.stringify([d?.net ?? null, d?.closedId ?? null, d?.rev ?? 0]);
@@ -84,11 +101,22 @@ function readStash() {
 /** This browser's running net (or closed-net record) changed: share it. */
 export function publishNet() {
   if (!state.attached) return;
-  const data = serializeNetState(readRunningNetRecord());
-  const key = netKey(data);
+  const plain = serializeNetState(readRunningNetRecord());
+  const key = netKey(plain);
   if (key === state.known.net) return;
   state.known.net = key;
+  // tag / parentTag let the other sites find the common ancestor (incidentNetMerge.js).
+  const data = { ...plain, tag: netTag(plain), parentTag: state.head || null, origin: state.origin || null };
+  remember(data.tag, data.net);
+  state.head = data.tag;
   state.publish?.('net-running', data);
+}
+
+/** Write a net state received or merged here, with a revision this browser's panels accept. */
+function writeNet(net, rev) {
+  const localRev = readRunningNetRecord()?.rev ?? 0;
+  saveRunningNet({ ...net, rev: Math.max(rev ?? 0, localRev + 1), undo: [] });
+  state.known.net = netKey(serializeNetState(readRunningNetRecord()));
 }
 
 /** This browser's net history changed: share it (trimmed to fit). */
@@ -109,8 +137,52 @@ export function receiveNet(data, { force = false } = {}) {
   if (!state.attached || !data || data.kind !== 'net-control') return false;
   const key = netKey(data);
   if (!force && key === state.known.net) return false;
-  state.known.net = key;
+  if (data.tag) remember(data.tag, data.net);
   const local = loadRunningNet();
+
+  // Both sites may have changed the same net at once: reconcile through the
+  // common ancestor the way Net Control rebases a refused change in a tab.
+  if (!force) {
+    const r = reconcileNet({ head: state.head, history: state.seen, local, remote: data });
+    if (r.action === 'ignore') return false;
+    if (r.action === 'same') {
+      state.head = data.tag;
+      state.known.net = key;
+      return false;
+    }
+    if (r.action === 'adopt' || r.action === 'conflict') {
+      writeNet(r.net, data.rev);
+      state.head = data.tag;
+      announce('net');
+      if (r.action === 'conflict') {
+        try {
+          window.dispatchEvent(
+            new CustomEvent(NET_REMOTE_CONFLICT_EVENT, {
+              detail: {
+                calls: r.calls,
+                fields: r.fields,
+                site: data.origin?.site || data.origin?.call || '',
+              },
+            }),
+          );
+        } catch {
+          /* no window */
+        }
+      }
+      return true;
+    }
+    if (r.action === 'merge') {
+      writeNet({ ...r.net, updatedAt: Date.now() }, Math.max(data.rev ?? 0, local?.rev ?? 0) + 1);
+      state.head = data.tag; // the merged state is made from theirs…
+      state.known.net = '';
+      publishNet(); // …and goes out with it as its parent
+      announce('net');
+      return true;
+    }
+    // 'legacy': no common ancestor known — fall through to revision rules.
+  }
+  state.known.net = key;
+  if (data.tag) state.head = data.tag;
   let next;
   let changed;
   if (force) {
@@ -154,8 +226,11 @@ export function receiveHistory(list) {
  * Joined (or resumed after a reload). `docs` are the incident's documents
  * ({ id: { data } }); `publish(id, data)` sends one.
  */
-export function attach({ docs = {}, publish }) {
+export function attach({ docs = {}, publish, origin = null }) {
   if (state.attached) detachListeners();
+  state.origin = origin;
+  state.head = '';
+  state.seen = new Map();
   // Set this browser's own net aside once — a reload while joined must not
   // overwrite the stash with the incident's copy.
   if (!readStash()) {
@@ -217,6 +292,14 @@ function detachListeners() {
 export function detach() {
   if (!state.attached) return;
   const stash = readStash();
+  if (!stash) {
+    // Another tab of this browser left first and already put our own net back.
+    detachListeners();
+    state.attached = false;
+    state.publish = null;
+    state.known = { net: '', history: '' };
+    return;
+  }
   const current = loadRunningNet();
   const rev = (readRunningNetRecord()?.rev ?? 0) + 1;
   const now = Date.now();
@@ -250,5 +333,8 @@ export function _resetForTests() {
   detachListeners();
   state.attached = false;
   state.publish = null;
+  state.origin = null;
   state.known = { net: '', history: '' };
+  state.head = '';
+  state.seen = new Map();
 }

@@ -88,6 +88,7 @@ import {
 import { loadNetSchedule, sortByNextOccurrence } from '../utils/netSchedule.js';
 import { formatMemoryFreq } from '../utils/freqMemories.js';
 import { recordEvent } from '../utils/emcommEventLog.js';
+import { NET_REMOTE_CONFLICT_EVENT } from '../utils/incidentNetBridge.js';
 import { apiFetch } from '../utils/apiFetch.js';
 import { callbookAuthHeaders } from '../utils/callbookAuth.js';
 import { spellPhonetic } from '../utils/phonetics.js';
@@ -319,6 +320,30 @@ export default function NetControlPanel({ callsign = '', embedded = false, timeZ
     },
     [broadcast, showFlash, t],
   );
+
+  // Shared incident: the same station was changed at another site at the
+  // same moment. Their version was kept; say so, naming the site.
+  useEffect(() => {
+    const onConflict = (e) => {
+      const { calls = [], site = '' } = e.detail || {};
+      const where = site || t('netControl.anotherSite', { defaultValue: 'another site' });
+      showFlash(
+        calls.length
+          ? t('netControl.conflictSite', {
+              defaultValue: '{{calls}} was changed at {{site}} too — check it and try again',
+              calls: calls.join(', '),
+              site: where,
+            })
+          : t('netControl.conflictSiteNet', {
+              defaultValue: 'The net was changed at {{site}} too — updated, please check',
+              site: where,
+            }),
+        '#f59e0b',
+      );
+    };
+    window.addEventListener(NET_REMOTE_CONFLICT_EVENT, onConflict);
+    return () => window.removeEventListener(NET_REMOTE_CONFLICT_EVENT, onConflict);
+  }, [showFlash, t]);
 
   /** Pick up a newer running net written elsewhere. */
   const syncFromStorage = useCallback(() => {

@@ -351,7 +351,14 @@ salted SHA-256 of each key and checks both in constant time.
   - edit and delete events and reports (`/admin`),
   - change or clear the board (operator board writes are ignored and listed
     in `denied`),
-  - replace the join key (`/rotate`).
+  - replace the join key (`/rotate`),
+  - read the current join key: admin replies to join, read and the stream
+    snapshot include `joinKey`, so any device holding the admin key can hand
+    out invites.
+
+The join key is never stored in plaintext. Besides its hash, the server keeps
+a copy sealed with AES-256-GCM under a key derived (HKDF-SHA256) from the
+admin key. Only a request that presents the admin key can open it.
 
 A key travels only as an `X-Incident-Key: <key>` header or as `key` in a JSON
 body. It is never accepted in a URL, so proxy logs never see it. The live
@@ -375,13 +382,27 @@ nothing:
 | `board`    | —                    | `name, ic, netFreq, notes, updatedAt`                                                                                                              | Newest `updatedAt` wins; admin only                                                                                   |
 
 A deleted event or report leaves a tombstone, `{kind, id, seq, deleted: true}`.
-Tombstones travel in `deleted[]`, and a deleted id cannot be added again.
+Tombstones travel in `deleted[]`, and a deleted id cannot be added again,
+even after a server restart (tombstones are saved with the incident).
 
 **Message numbers.** Each station numbers its own message traffic, so two
 sites can both have a message 12. Events keep their own `msgNo` together with
 their `site`. The app shows another site's number as `SITE:12`. In an ICS
 309, a station numbers only its own traffic, and other sites' rows keep their
 `SITE:n` label.
+
+**The running net (`net-running`).** The document is Net Control's own
+serialised net state plus `tag` (`rev:updatedAt`), `parentTag` (the state it
+was made from) and `origin` (`{site, call}`). When two sites change the net
+at the same moment, each site reconciles the other's state through their
+common ancestor, using Net Control's `rebaseCheck`:
+
+- If the two changes touched different station lines and different net
+  fields, both changes are kept. The merged state is published with the
+  other site's state as its parent.
+- If the same station line or field was changed at both sites, the other
+  site's version is kept and Net Control shows which call changed, and at
+  which site.
 
 **Withdrawals.** A `net_withdrawn` event names the entry it withdraws in
 `ref`. Clients hide withdrawn entries from the merged log, so a withdrawal
@@ -398,7 +419,7 @@ keep it; otherwise the request's `site` is stamped on them.
 | -------------------------------------- | ---------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `GET /api/incident`                    | —                                                                                                    | `{hosted, listing, requireCallsign, limits}`                                                                                                                      |
 | `POST /api/incident`                   | `{name?, ic?, netFreq?, notes?, clientId?, call}`                                                    | `{ok, id, joinKey, adminKey, role, incident}`. `incident` is the full state (below)                                                                               |
-| `POST /api/incident/:id/join`          | key + `{clientId?, call?}`                                                                           | `{ok, id, role, incident}`. `role` is `admin` or `operator`, depending on the key                                                                                 |
+| `POST /api/incident/:id/join`          | key + `{clientId?, call?}`                                                                           | `{ok, id, role, joinKey?, incident}`. `role` is `admin` or `operator`, depending on the key; `joinKey` for an admin                                               |
 | `POST /api/incident/:id/leave`         | key + `{clientId}`                                                                                   | `{ok, participants}`                                                                                                                                              |
 | `GET /api/incident/:id`                | key + `?since=<seq>&clientId=`                                                                       | `{id, seq, since, full, role, board, participants, counts, roster[], events[], reports[], docs[], deleted[]}`. Only what changed after `since`                    |
 | `POST /api/incident/:id/sync`          | key + `{clientId?, call?, site?, roster?[], events?[], reports?[], docs?[], board?}` (≤200 per list) | `{ok, seq, accepted:{roster, events, reports, docs, board}, denied[]}`. Counts of records that actually changed                                                   |
@@ -418,7 +439,8 @@ keep it; otherwise the request's `site` is stamped on them.
    same URL.
 
 The stream first sends `event: snapshot` (the full state, or the changes since
-`since` / `Last-Event-ID`, plus your `role`). After that it sends:
+`since` / `Last-Event-ID`, plus your `role`, and for an admin the current
+`joinKey`). After that it sends:
 
 - `event: change` (`{seq, roster[], events[], reports[], docs[], board, deleted[]}`)
   whenever anything changes.
@@ -513,9 +535,16 @@ at one site often share an address.
 **Persistence.** Incidents are written to `data/incidents.json` (override with
 `INCIDENT_FILE`; same location rules as the group-log file) a couple of
 seconds after each change, atomically, and reloaded at start-up. The file
-holds both key hashes, the documents and edit revisions. It does not hold
-tombstones, presence or tickets, so after a restart every client gets one full
-snapshot. Incidents idle for 7 days expire.
+holds:
+
+- both key hashes and the sealed join key,
+- the documents and edit revisions,
+- the tombstones (up to 1000 per incident).
+
+Because the tombstones are saved, a deleted record stays deleted after a
+restart, and a client that was up to date before the restart still gets a
+delta rather than a full snapshot. Presence and tickets are not saved.
+Incidents idle for 7 days expire, together with their tombstones.
 
 **Net roster boot id.** `GET /api/aprs/net` returns `bootId` (new on every
 server start) and `generation` (bumped on every roster change). A browser

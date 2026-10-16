@@ -65,6 +65,18 @@ describe('incidentNetBridge', () => {
     expect(loadHistory().map((n) => n.name)).toEqual(['Mine']);
   });
 
+  it('a second tab leaving after the first does not close the restored net', () => {
+    saveRunningNet(net('Mine', 2));
+    join({ 'net-running': { data: serializeNetState(net('Theirs', 5)) } });
+    detach(); // tab 1 leaves: ours is back
+    expect(loadRunningNet().name).toBe('Mine');
+    join({ 'net-running': { data: serializeNetState(net('Theirs', 5)) } }); // tab 2 still joined…
+    localStorage.removeItem(STASH_KEY); // …but tab 1 already restored and removed the stash
+    saveRunningNet({ ...net('Mine', 9) });
+    detach(); // tab 2 follows the leave
+    expect(loadRunningNet().name).toBe('Mine');
+  });
+
   it('a reload while joined does not overwrite the set-aside copy', () => {
     saveRunningNet(net('Mine', 2));
     join({ 'net-running': { data: serializeNetState(net('Theirs', 5)) } });
@@ -128,5 +140,81 @@ describe('incidentNetBridge', () => {
     expect(receiveNet(serializeNetState(net('X', 9)))).toBe(false);
     publishNet();
     expect(published).toEqual([]);
+  });
+
+  describe('concurrent edits at two sites', () => {
+    const st = (call, extra = {}) => ({ call, flags: [], checkinTime: 1, checkoutTime: null, ...extra });
+    /** Join with a shared net, as the other site would have published it. */
+    const startShared = () => {
+      const shared = { ...serializeNetState(net('ARES', 5, [st('W1AW'), st('K1ABC')])), tag: '5:1', parentTag: null };
+      attach({
+        docs: { 'net-running': { data: shared } },
+        publish: (id, data) => published.push({ id, data }),
+        origin: { site: 'North', call: 'K0CJH' },
+      });
+      return shared;
+    };
+    const localEdit = (fn) => {
+      const base = loadRunningNet();
+      commitRunningNet(base, fn(base));
+      publishNet();
+    };
+
+    it('non-overlapping edits from both sites survive at both', () => {
+      const shared = startShared();
+      published = [];
+      // here: check in KD0ABC; there (South, made from the same shared state): check in N0XYZ
+      localEdit((n) => ({ ...n, stations: [st('KD0ABC'), ...n.stations] }));
+      const mine = published.at(-1).data;
+      expect(mine).toMatchObject({ parentTag: '5:1', origin: { site: 'North' } });
+      const theirs = {
+        ...serializeNetState({ ...shared.net, stations: [st('N0XYZ'), ...shared.net.stations], rev: 6, updatedAt: 7 }),
+        tag: '6:7',
+        parentTag: '5:1',
+        origin: { site: 'South', call: 'W1AW' },
+      };
+      expect(receiveNet(theirs)).toBe(true);
+      const calls = loadRunningNet().stations.map((s) => s.call);
+      expect(calls.sort()).toEqual(['K1ABC', 'KD0ABC', 'N0XYZ', 'W1AW']);
+      const merged = published.at(-1).data; // the merge goes out, made from theirs
+      expect(merged.parentTag).toBe('6:7');
+      expect(merged.net.stations).toHaveLength(4);
+      // South receives our merge: it was made from South's state → fast-forward, nothing lost
+    });
+
+    it('the same station changed at both sites: theirs is kept and the operator is told where', () => {
+      const shared = startShared();
+      const heard = [];
+      const onConflict = (e) => heard.push(e.detail);
+      window.addEventListener('ohc-net-control-remote-conflict', onConflict);
+      try {
+        localEdit((n) => ({ ...n, stations: n.stations.map((s) => (s.call === 'W1AW' ? { ...s, flags: ['T'] } : s)) }));
+        const theirs = {
+          ...serializeNetState({
+            ...shared.net,
+            stations: shared.net.stations.map((s) => (s.call === 'W1AW' ? { ...s, flags: ['M'] } : s)),
+            rev: 6,
+            updatedAt: 7,
+          }),
+          tag: '6:7',
+          parentTag: '5:1',
+          origin: { site: 'South', call: 'W1AW' },
+        };
+        expect(receiveNet(theirs)).toBe(true);
+        expect(loadRunningNet().stations.find((s) => s.call === 'W1AW').flags).toEqual(['M']);
+        expect(heard).toEqual([{ calls: ['W1AW'], fields: [], site: 'South' }]);
+      } finally {
+        window.removeEventListener('ohc-net-control-remote-conflict', onConflict);
+      }
+    });
+
+    it('our own state echoed back is ignored', () => {
+      startShared();
+      localEdit((n) => ({ ...n, stations: [st('KD0ABC'), ...n.stations] }));
+      const mine = published.at(-1).data;
+      published = [];
+      expect(receiveNet(mine)).toBe(false);
+      expect(published).toEqual([]);
+    });
   });
 });
