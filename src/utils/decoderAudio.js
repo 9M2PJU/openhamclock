@@ -3,20 +3,23 @@
  *
  *   source ─► input gain ─┬─► AnalyserNode (waterfall/spectrum)  ─┐
  *                         ├─► AudioWorkletNode 'cw-decoder'       ─┼─► silent sink ─► destination
+ *                         │   (or 'pcm-tap' → FT8 worker in FT8 mode)
  *                         └─► monitor gain (0/1) ─────────────────────► destination
  *
  * Sources:
  *   'mic'  — getUserMedia on a chosen input device (sound card / line in
  *            from the receiver), with echo cancellation, noise suppression
  *            and AGC switched OFF: they would mangle CW keying.
- *   'kiwi' — a KiwiSDR via Rig Bridge (GET <bridge>/api/kiwi-audio/stream):
- *            s16be PCM over HTTP, decoded and scheduled as AudioBuffers.
+ *   'kiwi' — a KiwiSDR via Rig Bridge: directly (GET <bridge>/api/kiwi-audio/stream,
+ *            s16be PCM) or through the Cloud Relay (GET /api/rig-bridge/relay/audio,
+ *            µ-law); decoded and scheduled as AudioBuffers.
  *
  * The silent sink keeps the worklet and analyser pulled by the audio
  * rendering thread without making them audible.
  */
 import workletUrl from '../worklets/cwDecoderWorklet.js?worker&url';
-import { createS16beDecoder, PlayheadScheduler } from './pcmStream.js';
+import { createAudioDecoder, PlayheadScheduler } from './pcmStream.js';
+import { kiwiStreamRequest } from './kiwiAudioClient.js';
 
 /** Audio input devices (labels are blank until the user has granted permission once). */
 export async function listAudioInputs() {
@@ -39,10 +42,12 @@ export function audioDecoderSupported() {
 
 export class DecoderAudioEngine {
   /**
-   * @param {{ onUpdate?: (msg) => void, onError?: (err: Error) => void, onStatus?: (s: string) => void }} handlers
+   * @param {{ onUpdate?: (msg) => void, onError?: (err: Error) => void, onStatus?: (s: string) => void,
+   *           onPcm?: (samples: Float32Array, sampleRate: number, endTimeMs: number) => void }} handlers
    */
-  constructor({ onUpdate, onError, onStatus } = {}) {
+  constructor({ onUpdate, onError, onStatus, onPcm } = {}) {
     this.onUpdate = onUpdate || (() => {});
+    this.onPcm = onPcm || (() => {});
     this.onError = onError || (() => {});
     this.onStatus = onStatus || (() => {});
     this.ctx = null;
@@ -50,8 +55,8 @@ export class DecoderAudioEngine {
   }
 
   /**
-   * @param {{ source: 'mic'|'kiwi', deviceId?: string, tone?: number, bandwidth?: 'auto'|number,
-   *           kiwi?: { bridgeUrl: string, token?: string, freqKhz: number, mode?: string } }} opts
+   * @param {{ source: 'mic'|'kiwi', mode?: 'cw'|'ft8', deviceId?: string, tone?: number, bandwidth?: 'auto'|number,
+   *           kiwi?: { bridgeUrl?: string, token?: string, relaySession?: string, freqKhz: number, mode?: string } }} opts
    */
   async start(opts) {
     await this.stop();
@@ -69,20 +74,35 @@ export class DecoderAudioEngine {
       this.analyser.smoothingTimeConstant = 0;
       this.analyser.minDecibels = -120;
       this.analyser.maxDecibels = -20;
-      this.node = new AudioWorkletNode(ctx, 'cw-decoder', {
+      const nodeOpts = {
         numberOfInputs: 1,
         numberOfOutputs: 1,
         outputChannelCount: [1],
         channelCount: 1,
         channelCountMode: 'explicit',
         channelInterpretation: 'speakers',
-        processorOptions: {
-          tone: opts.tone || 600,
-          bandwidth: opts.bandwidth || 'auto',
-          squelch: opts.squelch || 'normal',
-        },
-      });
-      this.node.port.onmessage = (e) => this.onUpdate(e.data);
+      };
+      if (opts.mode === 'ft8') {
+        // FT8: raw audio goes to the FT8 worker; map the audio clock to UTC
+        // using the context clock at the moment each batch arrives.
+        this.node = new AudioWorkletNode(ctx, 'pcm-tap', nodeOpts);
+        this.node.port.onmessage = (e) => {
+          const { samples, endTime } = e.data || {};
+          if (!samples || this.ctx !== ctx) return;
+          const endTimeMs = Date.now() - (ctx.currentTime - endTime) * 1000;
+          this.onPcm(samples, ctx.sampleRate, endTimeMs);
+        };
+      } else {
+        this.node = new AudioWorkletNode(ctx, 'cw-decoder', {
+          ...nodeOpts,
+          processorOptions: {
+            tone: opts.tone || 600,
+            bandwidth: opts.bandwidth || 'auto',
+            squelch: opts.squelch || 'normal',
+          },
+        });
+        this.node.port.onmessage = (e) => this.onUpdate(e.data);
+      }
       this.sink = ctx.createGain();
       this.sink.gain.value = 0;
       this.monitor = ctx.createGain();
@@ -126,16 +146,14 @@ export class DecoderAudioEngine {
     this.onStatus('listening');
   }
 
-  async startKiwi({ bridgeUrl, token, freqKhz, mode = 'cw' }) {
-    if (!bridgeUrl) throw new Error('Rig Bridge is not configured');
+  async startKiwi({ bridgeUrl, token, relaySession, freqKhz, mode = 'cw' }) {
+    const request = kiwiStreamRequest({ bridgeUrl, token, relaySession, freqKhz, mode });
+    if (!request) throw new Error('Rig Bridge is not configured');
     const abort = new AbortController();
     this.abort = abort;
-    const url = `${bridgeUrl.replace(/\/$/, '')}/api/kiwi-audio/stream?freq=${encodeURIComponent(
-      freqKhz,
-    )}&mode=${encodeURIComponent(mode)}`;
     this.onStatus('connecting');
-    const res = await fetch(url, {
-      headers: token ? { 'X-RigBridge-Token': token } : {},
+    const res = await fetch(request.url, {
+      headers: request.headers,
       signal: abort.signal,
       cache: 'no-store',
     });
@@ -151,9 +169,13 @@ export class DecoderAudioEngine {
     }
     const rate = parseFloat(res.headers.get('X-Sample-Rate')) || 12000;
     this.kiwiRate = rate;
+    // The bridge tunes CW so the station on the entered frequency is heard
+    // at this pitch; the panel sets the decoder tone from it.
+    this.kiwiCwPitch = Number(res.headers.get('X-CW-Pitch')) || null;
+    this.kiwiVia = request.via;
     this.onStatus('listening');
     const reader = res.body.getReader();
-    const decode = createS16beDecoder();
+    const decode = createAudioDecoder(res.headers.get('X-Audio-Format'));
     const sched = new PlayheadScheduler({ leadSec: 0.3, maxLagSec: 1.5 });
     const ctx = this.ctx;
     // Pump in the background; errors after start are reported, not thrown.

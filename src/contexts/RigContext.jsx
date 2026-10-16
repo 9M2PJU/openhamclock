@@ -623,6 +623,9 @@ export const RigProvider = ({ children, rigConfig }) => {
     // between direct rig-bridge requests and OHC server proxying.
     rigUrl,
     isCloudRelay,
+    // Cloud Relay session id (null when the bridge is reached directly) — the
+    // Decoder panel streams KiwiSDR audio through it.
+    relaySession: cloudRelaySession || null,
     setFreq,
     setMode,
     setPTT,

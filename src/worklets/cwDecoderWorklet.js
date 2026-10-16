@@ -13,6 +13,9 @@
  *                      { type: 'squelch', level: 'low'|'normal'|'high' } | { type: 'reset' }
  *                      { type: 'find', seconds }   — scan for the strongest tone, then lock to it
  * Messages out:        { type: 'update', text, state, found? }
+ *
+ * The module also registers 'pcm-tap' (below), which hands raw audio to the
+ * main thread for the FT8 decoder.
  */
 /* global sampleRate, currentTime, registerProcessor, AudioWorkletProcessor */
 import { CWPipeline } from '../utils/cwDecoder.js';
@@ -97,3 +100,40 @@ class CWDecoderProcessor extends AudioWorkletProcessor {
 }
 
 registerProcessor('cw-decoder', CWDecoderProcessor);
+
+/**
+ * pcm-tap — forwards raw mono audio to the main thread in batches of 4096
+ * samples (~85 ms at 48 kHz) for the FT8 worker. Each message carries the
+ * audio-clock time of the sample just after the batch so the main thread can
+ * map it to UTC: { samples: Float32Array (transferred), endTime: seconds }.
+ */
+const TAP_BATCH = 4096;
+
+class PcmTapProcessor extends AudioWorkletProcessor {
+  constructor() {
+    super();
+    this.buf = new Float32Array(TAP_BATCH);
+    this.fill = 0;
+  }
+
+  process(inputs) {
+    const ch = inputs[0] && inputs[0][0];
+    if (!ch) return true;
+    let i = 0;
+    while (i < ch.length) {
+      const n = Math.min(ch.length - i, TAP_BATCH - this.fill);
+      this.buf.set(ch.subarray(i, i + n), this.fill);
+      this.fill += n;
+      i += n;
+      if (this.fill === TAP_BATCH) {
+        // currentTime is the start of this render quantum; the batch ends i samples into it
+        this.port.postMessage({ samples: this.buf, endTime: currentTime + i / sampleRate }, [this.buf.buffer]);
+        this.buf = new Float32Array(TAP_BATCH);
+        this.fill = 0;
+      }
+    }
+    return true;
+  }
+}
+
+registerProcessor('pcm-tap', PcmTapProcessor);
