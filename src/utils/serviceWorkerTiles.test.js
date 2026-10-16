@@ -228,6 +228,21 @@ describe('service worker: over-zoom from a pack', () => {
     expect(posted[0].type).toBe('OHC_OFFLINE_PACK_TILE');
   });
 
+  it('does not wait out a hung network when an over-zoom stand-in exists', async () => {
+    const canvas = fakeCanvas();
+    const hung = vi.fn(() => new Promise(() => {})); // a LAN server that never answers
+    const { dispatchFetch } = loadWorker({
+      fetchImpl: hung,
+      canvas,
+      packTiles: { [usgs(12, 850, 1550)]: img('parent') },
+      packDocs: { '/__ohc-offline-packs/manifest.json': { packs: [PACK] } },
+    });
+    const t0 = Date.now();
+    const res = await dispatchFetch({ url: usgs(13, 1700, 3100), destination: 'image' });
+    expect(res.headers.get('x-ohc-overzoom')).toBe('12');
+    expect(Date.now() - t0).toBeLessThan(6000);
+  }, 10000);
+
   it('gives up beyond the over-zoom limit or without a parent', async () => {
     const canvas = fakeCanvas();
     const { dispatchFetch } = loadWorker({

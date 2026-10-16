@@ -19,9 +19,14 @@
  *                         behavior is unchanged, offline panels get their
  *                         last-known data (marked X-OHC-Stale: 1 so the UI
  *                         can say "as of"). SSE streams are never touched.
- *   - offline-pack tiles: cross-origin tiles from hosts whose terms allow
- *                         offline area packs — network when it works, the
- *                         operator's downloaded pack when it doesn't.
+ *   - offline-pack tiles: tiles from hosts whose terms allow offline area
+ *                         packs, and from the operator's own tile server —
+ *                         network when it works, the downloaded pack when it
+ *                         doesn't, a scaled-up saved ancestor past the
+ *                         pack's zoom (over-zoom).
+ *   - /vendor/*:          self-hosted Leaflet + fonts, or the CDN copy the
+ *                         server redirects to — cached so the map starts
+ *                         offline either way.
  *   - everything else:    bypassed (browser default), incl. cross-origin
  *
  * Escape hatch: loading the app with ?nosw unregisters this worker and
@@ -291,24 +296,19 @@ async function handleTile(event, req) {
     return cached;
   }
 
-  var timer;
-  var timeout = new Promise(function (resolve) {
-    timer = setTimeout(
-      function () {
-        resolve(null);
-      },
-      // Without a pack copy there is nothing better to serve — let the
-      // network take its time (over-zoom is only a fallback for failures).
-      cached ? POLICY.PACK_TILE_NETWORK_TIMEOUT_MS : 30000,
-    );
-  });
-  var res = null;
-  try {
-    res = await Promise.race([fetch(req), timeout]);
-  } catch (e) {
-    res = null;
-  }
-  clearTimeout(timer);
+  // Network first, but only PACK_TILE_NETWORK_TIMEOUT_MS of patience while
+  // a saved answer exists ("lie-fi", or a dead LAN server that never
+  // refuses). Without an exact copy, a slow network still gets its chance
+  // unless an over-zoomed ancestor can stand in.
+  var network = fetch(req).then(
+    function (r) {
+      return r;
+    },
+    function () {
+      return null;
+    },
+  );
+  var res = await withTimeout(network, POLICY.PACK_TILE_NETWORK_TIMEOUT_MS);
   if (res && res.ok) return res;
 
   if (cached) {
@@ -320,8 +320,23 @@ async function handleTile(event, req) {
     notifyPackTile(event);
     return scaled;
   }
+  if (res === undefined) res = await withTimeout(network, 26000); // still pending: keep waiting
   if (res) return res;
   return new Response('', { status: 504, statusText: 'Offline' });
+}
+
+/** Resolve with the promise's value, or undefined after `ms`. */
+function withTimeout(promise, ms) {
+  var timer;
+  return Promise.race([
+    promise,
+    new Promise(function (resolve) {
+      timer = setTimeout(resolve, ms);
+    }),
+  ]).then(function (v) {
+    clearTimeout(timer);
+    return v;
+  });
 }
 
 /** Scale up the nearest saved ancestor of a tile URL, or null. */
@@ -353,7 +368,19 @@ async function overzoomFromPacks(cache, url) {
   return null;
 }
 
-async function scaleTile(parentRes, src) {
+// One scale-up at a time: a screenful of over-zoomed tiles decoding in
+// parallel is heavy for a worker, and WebKit has been seen to drop the
+// worker when several run at once.
+var scaleQueue = Promise.resolve();
+function scaleTile(parentRes, src) {
+  var run = scaleQueue.then(function () {
+    return scaleTileNow(parentRes, src);
+  });
+  scaleQueue = run.catch(function () {});
+  return run;
+}
+
+async function scaleTileNow(parentRes, src) {
   var bmp = await createImageBitmap(await parentRes.blob());
   var k = bmp.width / 256; // 512 px (retina) tiles scale the source square too
   var canvas = new OffscreenCanvas(bmp.width, bmp.height);
