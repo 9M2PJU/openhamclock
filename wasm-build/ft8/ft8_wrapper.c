@@ -47,12 +47,34 @@
 #define FT8_API
 #endif
 
+/*
+ * Decoder search settings (overridable with -D for tuning). Chosen by a sweep
+ * over ft8_lib's test WAVs against WSJT-X (wasm-build/ft8/README.md): more
+ * candidates, a lower sync threshold or more LDPC iterations found nothing
+ * new; 4x time oversampling and a second masked pass did (71.5 % → 76.0 %).
+ */
+#ifndef MIN_SCORE
 #define MIN_SCORE 10
-#define MAX_CANDIDATES 140
+#endif
+#ifndef MAX_CANDIDATES
+#define MAX_CANDIDATES 300
+#endif
+#ifndef LDPC_ITERATIONS
 #define LDPC_ITERATIONS 25
-#define MAX_DECODED 50
+#endif
+#ifndef FREQ_OSR
 #define FREQ_OSR 2
-#define TIME_OSR 2
+#endif
+#ifndef TIME_OSR
+#define TIME_OSR 4 /* finer time steps: +2.5 pts recall vs 2 (README.md) */
+#endif
+#ifndef DECODE_PASSES
+#define DECODE_PASSES 2 /* second pass over the masked waterfall: +2 pts recall */
+#endif
+#ifndef MASK_BINS
+#define MASK_BINS 0
+#endif
+#define MAX_DECODED 100
 #define FT8_START_OFFSET_S 0.5f
 /*
  * SNR calibration: snr = SNR_SLOPE * 10log10(P_tone / P_noise - 1) + SNR_ICPT_DB.
@@ -258,6 +280,42 @@ static float estimate_snr(const ftx_waterfall_t *wf, const ftx_candidate_t *cand
     return snr;
 }
 
+/* dB → stored waterfall element (inverse of WF_ELEM_MAG for uint8 waterfalls) */
+static int WF_ELEM_FROM_DB(float db)
+{
+    float v = db * 2.0f + 240.0f;
+    return v < 0 ? 0 : (v > 255 ? 255 : (int)v);
+}
+
+/*
+ * Spectral masking for multi-pass decoding: set the waterfall cells a decoded
+ * signal occupies (its 79 tones in every time/frequency sub-step, ±MASK_BINS)
+ * to the noise level, so a weaker signal underneath can sync and decode on
+ * the next pass.
+ */
+static void mask_signal(ftx_waterfall_t *wf, const ftx_candidate_t *cand, const ftx_message_t *msg, uint8_t noise_el)
+{
+    uint8_t tones[FT8_NN];
+    ft8_encode(msg->payload, tones);
+    for (int k = 0; k < FT8_NN; ++k)
+    {
+        int block = cand->time_offset + k;
+        if (block < 0 || block >= wf->num_blocks)
+            continue;
+        int bin = cand->freq_offset + tones[k];
+        for (int ts = 0; ts < wf->time_osr; ++ts)
+            for (int fs = 0; fs < wf->freq_osr; ++fs)
+                for (int d = -MASK_BINS; d <= MASK_BINS; ++d)
+                {
+                    int b = bin + d;
+                    if (b < 0 || b >= wf->num_bins)
+                        continue;
+                    size_t off = (((size_t)block * wf->time_osr + ts) * wf->freq_osr + fs) * wf->num_bins + b;
+                    wf->mag[off] = noise_el;
+                }
+    }
+}
+
 /* ── decode ─────────────────────────────────────────────────────────────── */
 FT8_API char *ft8_decode(const float *pcm, int num_samples, int sample_rate, float f_min, float f_max)
 {
@@ -286,14 +344,30 @@ FT8_API char *ft8_decode(const float *pcm, int num_samples, int sample_rate, flo
     for (int pos = 0; pos + mon.block_size <= num_samples; pos += mon.block_size)
         monitor_process(&mon, pcm + pos);
 
-    const ftx_waterfall_t *wf = &mon.wf;
-    ftx_candidate_t candidates[MAX_CANDIDATES];
-    int num_candidates = ftx_find_candidates(wf, MAX_CANDIDATES, candidates, MIN_SCORE);
+    ftx_waterfall_t *wf = &mon.wf;
     float noise_db = waterfall_median_db(wf);
+    uint8_t noise_el = (uint8_t)WF_ELEM_FROM_DB(noise_db);
 
-    ftx_message_t decoded[MAX_DECODED];
+    /* static: keeps the (sizeable) arrays off the small WASM stack */
+    static ftx_candidate_t candidates[MAX_CANDIDATES];
+    static ftx_message_t decoded[MAX_DECODED];
+    static ftx_candidate_t found_cand[MAX_DECODED];
+    static ftx_message_t found_msg[MAX_DECODED];
     ftx_message_t *slots[MAX_DECODED] = { 0 };
+    int num_found = 0, num_masked = 0;
     int num_decoded = 0;
+
+    for (int pass = 0; pass < DECODE_PASSES; ++pass)
+    {
+        if (pass > 0)
+        {
+            /* Mask what earlier passes decoded, so weaker signals under them can sync */
+            if (num_masked == num_found)
+                break; /* nothing new removed — another pass would find the same */
+            for (; num_masked < num_found; ++num_masked)
+                mask_signal(wf, &found_cand[num_masked], &found_msg[num_masked], noise_el);
+        }
+        int num_candidates = ftx_find_candidates(wf, MAX_CANDIDATES, candidates, MIN_SCORE);
 
     for (int idx = 0; idx < num_candidates && num_decoded < MAX_DECODED; ++idx)
     {
@@ -319,6 +393,9 @@ FT8_API char *ft8_decode(const float *pcm, int num_samples, int sample_rate, flo
             continue;
         decoded[h] = message;
         slots[h] = &decoded[h];
+        found_cand[num_found] = *cand;
+        found_msg[num_found] = message;
+        ++num_found;
 
         char text[FTX_MAX_MESSAGE_LENGTH];
         ftx_message_offsets_t offsets;
@@ -337,6 +414,7 @@ FT8_API char *ft8_decode(const float *pcm, int num_samples, int sample_rate, flo
         sb_str(&out, "}");
         ++num_decoded;
     }
+    } /* passes */
     sb_str(&out, "]");
 
     monitor_free(&mon);

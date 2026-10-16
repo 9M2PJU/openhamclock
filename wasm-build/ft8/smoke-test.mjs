@@ -3,7 +3,7 @@
  *
  * Runs the built module through the app's own JS glue
  * (src/utils/ft8Wasm.js) on ft8_lib's test WAVs, scores the decodes against
- * WSJT-X's reference output with compare.mjs, and checks that repeated
+ * WSJT-X's reference output with compare.mjs (recall must stay ≥ 72 %), and checks that repeated
  * decodes do not grow WASM memory (every call frees what it allocates).
  * Exits non-zero on any failure so the workflow never publishes a bad asset.
  */
@@ -73,6 +73,6 @@ const results = resolve(here, '..', 'dist', 'ft8-smoke-results.jsonl');
 writeFileSync(results, lines.join('\n') + '\n');
 execFileSync(process.execPath, [resolve(here, 'compare.mjs'), results], {
   stdio: 'inherit',
-  env: { ...process.env, MIN_RECALL: process.env.MIN_RECALL || '0.65' },
+  env: { ...process.env, MIN_RECALL: process.env.MIN_RECALL || '0.72' },
 });
 console.log('smoke-test: OK');

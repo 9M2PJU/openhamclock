@@ -37,11 +37,33 @@ cd wasm-build/ft8
 ./build.sh --native     # cc + ft8_lib's 31 test WAVs → compare.mjs
 ```
 
-Result at the pinned commit (2026-10): 259 of the 362 messages WSJT-X decoded
-from the same recordings (71.5 %), 6 decodes WSJT-X did not list; SNR within
-±3 dB of WSJT-X for 60 % (median error 3.0 dB, mean bias 0.1 dB); DT within
-0.1 s for 96 %; frequency within 3 Hz for 98 %. AddressSanitizer/UBSan clean
-over all WAVs, and macOS `leaks` finds 0 bytes leaked after 40 decode calls.
+Result at the pinned commit with the shipped settings (2026-10): 275 of the
+362 messages WSJT-X decoded from the same recordings (76.0 %), 8 decodes
+WSJT-X did not list; SNR within ±3 dB of WSJT-X for 65 % (median error 3.0 dB,
+mean bias 0.25 dB); DT within 0.1 s for 91 %; frequency within 3 Hz for 98 %.
+AddressSanitizer/UBSan clean over all WAVs, and macOS `leaks` finds 0 bytes
+leaked after 40 decode calls.
+
+### Choosing the settings
+
+Native sweep over the same 31 WAVs (time per 15 s slot on an M-series Mac;
+the WASM build in node takes about 2.3× that):
+
+| min score | candidates | LDPC iter. | freq / time OSR | passes | recall     | ms/slot |
+| --------- | ---------- | ---------- | --------------- | ------ | ---------- | ------- |
+| 10        | 140        | 25         | 2 / 2           | 1      | 71.5 %     | 11      |
+| 5         | 500        | 50         | 2 / 2           | 1      | 71.5 %     | 68      |
+| 10        | 300        | 25         | 4 / 2           | 1      | 58.8 %     | 17      |
+| 10        | 300        | 25         | 2 / 4           | 1      | 74.0 %     | 19      |
+| 10        | 300        | 25         | 2 / 8           | 1      | 74.0 %     | 26      |
+| **10**    | **300**    | **25**     | **2 / 4**       | **2**  | **76.0 %** | **38**  |
+| 10        | 300        | 25         | 2 / 4           | 3      | 76.0 %     | 42      |
+
+More candidates, a lower sync threshold or more LDPC iterations find nothing
+new (the misses are not candidates that ran out of iterations); 4× time
+oversampling and a second pass over the waterfall with the first pass's
+signals masked (`mask_signal`) do. Shipped: the bold row — 45 ms per slot in
+WASM on the Mac, comfortably inside the ~300 ms budget on slower machines.
 
 ## Building the WASM locally
 
@@ -51,11 +73,11 @@ cd wasm-build/ft8
 ./build.sh && node smoke-test.mjs
 ```
 
-`smoke-test.mjs` fails (and CI does not publish) if recall drops below 65 % or
+`smoke-test.mjs` fails (and CI does not publish) if recall drops below 72 % or
 if WASM memory grows between two identical passes over the test set. Built
 this way with Emscripten 3.1.64 (2026-10): `ft8.wasm` 59 KB, `ft8.mjs` 12 KB;
-the WASM decodes exactly what the native build does (same 259/362), memory
-stays at its initial 16 MB across 93 decodes, and a slot decodes in 25–40 ms
+the WASM decodes exactly what the native build does (same 275/362), memory
+stays at its initial 16 MB across 93 decodes, and a slot decodes in 20–50 ms
 in Chromium.
 
 ## Licensing
