@@ -30,7 +30,7 @@ Features tagged are already merged and will ship in the next monthly drop — yo
 - [Satellites](#satellites)
 - [Rig control and Rig Bridge](#rig-control-and-rig-bridge)
 - [WSJT-X and digital modes](#wsjt-x-and-digital-modes)
-  - [Decoder panel: CW from your receiver](#decoder-panel-cw-from-your-receiver)
+  - [Decoder panel: CW and FT8 from your receiver](#decoder-panel-cw-and-ft8-from-your-receiver)
 - [The EmComm layout](#the-emcomm-layout)
 - [The EME layout](#the-eme-layout)
 - [Alerts and notifications](#alerts-and-notifications)
@@ -339,7 +339,7 @@ _The Solar panel cycling through live imagery, indices, X-ray flux, and the moon
 - **Rig Control** — current frequency and mode from your radio via Rig Bridge, with a band plan overlay on the frequency display and PTT status. Set your US license class in Settings → Station and the band plan bar hatches out the ranges outside your privileges (Technician/General/Amateur Extra, per the FCC Part 97 / ARRL band chart); leave it on Other for no restriction display.
 - **Frequencies** — your own named channel list: calling frequencies, repeaters, club nets, whatever you keep going back to. Each entry has a name, frequency, optional mode and notes, and a band chip; with rig control enabled, clicking a row tunes the radio (same click-to-tune path as spots). A "From rig" button grabs the current frequency and mode from a connected rig, and up/down buttons reorder the list. Synced, profiled, and backed up with the rest of your settings.
 - **Nets** — two tabs. **My nets** is a recurring net schedule you define: name, day (or daily), start time in UTC, optional frequency/mode/duration/notes. The list sorts by next occurrence with a live countdown ("in 2h 14m"), highlights nets that are **ON NOW**, shows each start in your local time, and click-to-tunes when a frequency is set. All the occurrence math is done in UTC, so daylight-saving shifts never move your net. **Live** shows what is actually on the air right now according to [NetLogger](https://www.netlogger.org) — every net currently being logged, with frequency, mode, band, net control and check-in count, refreshed every minute through the server (one upstream request per minute for everyone). Expand a net to see its check-ins (callsign, name, city/state, grid — never street addresses) and click the frequency to tune the rig.
-- **Decoder (CW)** — listens to your receiver through a sound input or a KiwiSDR, shows a live waterfall and copies CW in the browser, with clickable callsigns and a local My decodes list. See [Decoder panel](#decoder-panel-cw-from-your-receiver).
+- **Decoder (CW, FT8)** — listens to your receiver through a sound input or a KiwiSDR, shows a live waterfall and decodes CW or FT8 in the browser, with clickable callsigns, worked-before badges on FT8 and a local My decodes list. See [Decoder panel](#decoder-panel-cw-and-ft8-from-your-receiver).
 - **On Air** — a big red ON AIR light driven by your rig's PTT. Point a webcam at it, or don't — it looks great either way.
 - **ID Timer** — 10-minute countdown that beeps and pops a reminder to identify; dismissing restarts it.
 - **Rotator** — compass rose, live bearing, and controls for a PSTRotator-compatible rotator (self-hosted only).
@@ -677,39 +677,63 @@ Decodes from WSJT-X, JTDX, or anything speaking the same UDP protocol appear liv
 
 Selecting a callsign in WSJT-X can auto-set your DX target, and clicking a decode tunes the rig to the correct dial frequency. PSKReporter integration is separate and automatic — see the PSK Reporter panel.
 
-### Decoder panel: CW from your receiver
+### Decoder panel: CW and FT8 from your receiver
 
-The **Decoder** panel (🎧, in the ＋ panel picker) listens to your receiver's audio right in the browser, shows it on a live waterfall, and copies CW — no extra decoding program needed. Everything runs on your own machine; no audio leaves the browser.
+The **Decoder** panel (🎧, in the ＋ panel picker) listens to your receiver's audio right in the browser, shows it on a live waterfall, and decodes **CW** or **FT8** — no extra decoding program needed. Everything runs on your own machine; no audio leaves the browser (except through the Cloud Relay, below, if you turn that on).
 
 ![The Decoder panel copying a CW signal: waterfall with the passband on the trace, speed and S/N meters, clickable callsigns](images/manual/decoder-panel.jpg)
 
 _The Decoder panel locked onto a 700 Hz CW signal: the yellow passband sits on the trace, the meters show 21 WPM and 22 dB S/N, and W1AW is clickable in the copy and in the chip above it._
 
+Pick **CW** or **FT8** next to the DECODER title before pressing Start.
+
 **Pick a source**
 
 - **Sound input** — any audio input the browser can see: the USB sound card built into most modern rigs, a SignaLink-style interface, a line-in, or (for practice) the microphone. Choose the device from the list (names appear after you have allowed microphone access once). The decoder turns off the browser's echo cancellation, noise suppression and automatic gain, which would otherwise chew up keying.
-- **KiwiSDR (Rig Bridge)** — hear what a KiwiSDR hears. Turn on _KiwiSDR Audio (Decoder panel)_ in the Rig Bridge setup page (leave its host blank to reuse the beacon monitor's receiver), then enter a frequency in kHz and press **Start**; **← rig** copies your rig's frequency. The bridge connects to the Kiwi only while the panel is listening and lets go the moment you press Stop. This needs a direct connection to Rig Bridge — it does not work through the Cloud Relay.
+- **KiwiSDR (Rig Bridge)** — hear what a KiwiSDR hears. Turn on _KiwiSDR Audio (Decoder panel)_ in the Rig Bridge setup page (leave its host blank to reuse the beacon monitor's receiver), then enter a frequency in kHz and press **Start**; **← rig** copies your rig's frequency. In CW the frequency is the station's frequency: the bridge tunes the Kiwi so that station is heard at 600 Hz and the decoder starts there. In FT8 it is the dial frequency (USB), and a list offers the usual FT8 frequencies. The bridge connects to the Kiwi only while the panel is listening and lets go the moment you press Stop.
+  - **One receiver slot:** if the KiwiSDR beacon monitor runs on the same Kiwi, it pauses while you listen and picks up again when you stop (set _Beacon Monitor on the same Kiwi while listening_ to _keep_ to run both, using two slots).
+  - **On the hosted site / through the Cloud Relay:** turn on _Relay KiwiSDR audio to the Decoder panel_ in the bridge's Cloud Relay plugin (and restart the bridge). This browser must be paired with the bridge (**Connect Cloud Relay** in Settings → Rig Bridge, with the command key pasted into Rig Bridge): starting a receiver is a signed command like tuning or PTT, and the bridge refuses it otherwise; the audio itself is only handed to a browser holding the session's read key. It then travels bridge → OpenHamClock server → browser as compressed 8-bit audio, about 12 kB/s while you listen and nothing otherwise.
 
-**Tune and copy**
+**CW: tune and copy**
 
 1. Press **Start**. The waterfall shows the audio from about 0 to 2.5 kHz (0–1.5 kHz for a KiwiSDR in CW mode); the yellow band is the decoder's passband.
-2. **Click a trace** on the waterfall (or focus it and use ←/→, Shift for bigger steps) to put the passband on that signal, type a **Tone** in Hz, or press **Find** — the decoder listens for three seconds and locks onto the strongest keyed tone. With a KiwiSDR it runs Find for you right after starting.
+2. **Click a trace** on the waterfall (or focus it and use ←/→, Shift for bigger steps) to put the passband on that signal, type a **Tone** in Hz, or press **Find** — the decoder listens for three seconds and locks onto the strongest keyed tone.
 3. Decoded text scrolls in the **Copy** tab. The meter row shows key-down (the dot), the measured speed in WPM (tracked automatically from 5 to 45 WPM, including Farnsworth spacing) and a signal-to-noise bar.
+4. **Off tune?** When the passband sits beside a signal instead of on it — close enough to hear its key clicks — the decoder stops printing (that is where strings of E's and T's come from) and an amber bar says how far off the signal is. **Retune** moves the passband onto it; **Find** looks for the strongest signal instead. A different station inside the passband keeps copying even when a much stronger one is right next door.
 
-**Settings**
+**CW settings**
 
 - **Filter** — _Auto_ narrows the detector as the sender slows down (better weak-signal copy) and widens it for fast senders; fixed widths of 50–300 Hz are there for crowded bands or drifting signals.
 - **Squelch** — _Normal_ prints nothing from band noise; _Low_ digs deeper into weak signals at the cost of the odd stray E or T; _High_ only copies strong signals.
 - **🔊** — play the audio through your speakers (handy with a KiwiSDR; leave it off with a microphone to avoid feedback).
 
-**Callsigns in the copy** are highlighted. Click one for the callsign popup (with the frequency filled in when it is known from the rig or the KiwiSDR), or use the chips above the copy: 🎯 sets that station as your DX target (honours DX lock) and ＋ adds it to **My decodes** — a list kept on this device with the time (UTC), frequency, speed, signal and the line of copy it came from. Logging the same call on the same frequency within five minutes just updates its entry. From My decodes, 📻 tunes the rig to the decode (same as clicking a spot) and 🎯 sets DX.
+**FT8**
+
+![The Decoder panel's FT8 tab: one slot of decodes with dB, DT, audio frequency and message, CQ calls highlighted](images/manual/decoder-ft8.jpg)
+
+_The FT8 tab after one 15-second slot: thirteen stations decoded in 39 ms, CQ calls in green, the calling station's callsign highlighted and clickable._
+
+Choose **FT8**, tune the receiver (or the KiwiSDR) to an FT8 dial frequency in USB — 14074, 7074, 21074 kHz… — and press **Start**. The panel decodes each 15-second slot (:00, :15, :30, :45 UTC) about half a second after it ends, with the same open-source decoder engine many FT8 programs use, compiled to run in your browser. The **FT8** tab lists every decode: UTC, signal report in dB, time offset (DT), audio frequency, and the message. CQ calls are highlighted green, every callsign opens the callsign popup, the calling station gets the same **NEW / BAND / ✓** badges as cluster spots (from your logbook), and ＋ keeps it in My decodes. **CQ only** hides everything else.
+
+- Your computer's clock must be right to within about a second (as for any FT8 program); DT shows how far off a station is. Audio from a KiwiSDR arrives late (the receiver's buffering plus two network hops, often a second or more); the panel learns that delay from the first slot's decodes — most stations' clocks are close, so their median DT is the delay — then re-times the audio by it, so DT reads true and transmissions are not cut off at the slot end. The status line shows the delay it is correcting.
+- The decoder is a separate download installed with the app (`node scripts/fetch-wasm.js`, run automatically by `npm run build`, the Docker image and the update script). If the panel says it is not installed, run that and rebuild.
+- It receives only — to make FT8 contacts keep using WSJT-X or JTDX and the WSJT-X panel above. It finds about three in four of the messages WSJT-X decodes from the same recording — two passes, the second after removing the signals already decoded, so weaker stations under strong ones come through; WSJT-X still digs deeper into the very weakest — and its dB figures agree with WSJT-X's to within about 3 dB.
+
+**Callsigns in the copy** are highlighted. Click one for the callsign popup (with the frequency filled in when it is known from the rig or the KiwiSDR), or use the chips above the copy: 🎯 sets that station as your DX target (honours DX lock) and ＋ adds it to **My decodes** — a list kept on this device with the time (UTC), frequency, mode, speed or signal, and the line it came from. Logging the same call on the same frequency within five minutes just updates its entry. From My decodes, 📻 tunes the rig to the decode (same as clicking a spot) and 🎯 sets DX.
 
 **What it needs, and what to expect**
 
-- A secure page: OpenHamClock over **HTTPS**, on **localhost**, or the desktop app. Browsers only allow audio capture there — opening a Pi's dashboard from another computer as `http://192.168.x.x` will show a notice instead.
+- A secure page: OpenHamClock over **HTTPS**, on **localhost**, or the desktop app. Browsers only allow audio capture there — see [Listening from another computer on the LAN](#listening-from-another-computer-on-the-lan) when your dashboard runs on a Pi.
 - Clean machine-sent CW at everyday speeds (12–25 WPM) is copied essentially perfectly down to a signal-to-noise ratio of about −3 dB (in a 2.5 kHz bandwidth), and most of it still at −5 dB; fast senders (35 WPM and up) need a few dB more. Hand-sent CW with an uneven fist, heavy QSB and QRM cost accuracy, as with any machine decoder.
-- **Try it without a radio:** play a CW practice recording (an MP3 from an online Morse trainer) out of a phone or speaker near your computer's microphone, choose the microphone, press Start and click the trace.
-- It decodes CW only. For FT8, FT4 and the other WSJT modes keep using WSJT-X/JTDX and the WSJT-X panel above.
+- **Try it without a radio:** play a CW practice recording (an MP3 from an online Morse trainer) out of a phone or speaker near your computer's microphone, choose the microphone, press Start and click the trace. For FT8, play a recorded FT8 slot the same way, started on a quarter-minute.
+
+#### Listening from another computer on the LAN
+
+A browser only lets a page use the microphone or a sound card when the page is **HTTPS** or comes from **localhost** on the same computer. Opening a Raspberry Pi's dashboard from your laptop as `http://192.168.1.20:3000` is neither, so the Decoder panel shows a notice instead of a Start button. Three ways round it:
+
+1. **Let OpenHamClock serve HTTPS on the LAN (recommended).** Add `HTTPS_PORT=3443` to the server's `.env` and restart it. The same dashboard then also answers on `https://192.168.1.20:3443` (and `https://<pi-name>.local:3443`) with a certificate it makes for itself the first time — the browser warns once per device that it does not know who signed it; choose _Advanced → Proceed_ (Chrome/Edge) or _Accept the risk_ (Firefox). The panel's notice links straight to that address when it is set up. Needs `openssl` on the server (standard on Raspberry Pi OS, Debian, Ubuntu and macOS, and included in the Docker image — publish the port too, e.g. `-p 3443:3443`, and mount `/app/data` to keep the certificate across container updates); with your own certificate set `HTTPS_CERT` and `HTTPS_KEY` instead. If the Pi's address or name changes, delete `data/lan-https` and restart to make a new certificate.
+2. **Run the browser on the Pi itself** (kiosk or desktop) — `http://localhost:3000` counts as secure.
+3. **Tell one Chrome or Edge that this address is safe:** open `chrome://flags/#unsafely-treat-insecure-origin-as-secure` (or `edge://flags/…`), enter `http://192.168.1.20:3000`, choose _Enabled_ and relaunch. This only affects that browser on that computer.
 
 ---
 

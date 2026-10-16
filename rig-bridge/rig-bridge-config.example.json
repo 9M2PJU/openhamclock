@@ -76,7 +76,8 @@
     "enabled": false,
     "host": "",
     "port": 8073,
-    "password": ""
+    "password": "",
+    "beaconMonitor": "pause"
   },
   "mqtt": {
     "enabled": false,

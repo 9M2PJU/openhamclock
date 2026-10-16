@@ -146,9 +146,18 @@ export function hannWindow(n) {
  * Narrower = better weak-signal copy but less tuning tolerance (±bw/2).
  */
 export class ToneDetector {
-  constructor({ sampleRate = 48000, tone = CW_DEFAULT_TONE_HZ, bandwidth = CW_DEFAULT_BANDWIDTH_HZ } = {}) {
+  constructor({
+    sampleRate = 48000,
+    tone = CW_DEFAULT_TONE_HZ,
+    bandwidth = CW_DEFAULT_BANDWIDTH_HZ,
+    probeFactors = null,
+  } = {}) {
     this.sampleRate = sampleRate;
     this.tone = tone;
+    // Optional off-tune probes at tone ± factor·bandwidth (just outside the
+    // Hann main lobe, which spans ±1.33·bandwidth). See OffTuneTracker.
+    this.probeFactors = probeFactors;
+    this.probeOut = { lo: 0, hi: 0, loHz: 0, hiHz: 0 };
     this.setBandwidth(bandwidth);
   }
 
@@ -172,8 +181,10 @@ export class ToneDetector {
   }
 
   /**
-   * Feed PCM. `onPower(power, dtMs)` is called once per hop with the tone
-   * power (≈ amplitude²) over the last window and the hop duration in ms.
+   * Feed PCM. `onPower(power, dtMs, probes)` is called once per hop with the
+   * tone power (≈ amplitude²) over the last window and the hop duration in ms;
+   * `probes` ({ lo, hi, loHz, hiHz }, a reused object) is set when
+   * probeFactors were given.
    */
   process(chunk, onPower) {
     const { n, hop } = this;
@@ -188,7 +199,29 @@ export class ToneDetector {
         this.linear.set(this.ring.subarray(this.writePos), 0);
         this.linear.set(this.ring.subarray(0, this.writePos), tail);
         const p = goertzelPower(this.linear, 0, n, this.sampleRate, this.tone, this.window, 0.5);
-        onPower(p, this.hopMs);
+        let probes = null;
+        if (this.probeFactors) {
+          // Strongest power just outside the passband on each side, and where
+          probes = this.probeOut;
+          probes.lo = 0;
+          probes.hi = 0;
+          probes.loHz = 0;
+          probes.hiHz = 0;
+          for (const f of this.probeFactors) {
+            const off = f * this.bandwidth;
+            const lo = goertzelPower(this.linear, 0, n, this.sampleRate, this.tone - off, this.window, 0.5);
+            const hi = goertzelPower(this.linear, 0, n, this.sampleRate, this.tone + off, this.window, 0.5);
+            if (lo > probes.lo) {
+              probes.lo = lo;
+              probes.loHz = -off;
+            }
+            if (hi > probes.hi) {
+              probes.hi = hi;
+              probes.hiHz = off;
+            }
+          }
+        }
+        onPower(p, this.hopMs, probes);
       }
     }
   }
@@ -317,6 +350,151 @@ export function twoMeans(values, minRatio = 1.6) {
   return { lo, hi, loN, hiN };
 }
 
+// ── Off-tune detection ────────────────────────────────────────────────────
+
+/**
+ * Notices when the passband sits beside a signal rather than on it.
+ *
+ * Tuned ~60–300 Hz off a CW signal, the narrow filter still sees its key
+ * clicks and skirt leakage — keyed exactly in step with the real signal next
+ * door — and prints a stream of E's and T's. The tracker compares, per hop,
+ * the in-band amplitude with the strongest probe just outside the passband
+ * on each side (exponentially weighted over ~2 s):
+ *   - the side must be much stronger than the passband (≥ `ratio` × amplitude), and
+ *   - the passband envelope must follow the side — its envelope (skirt
+ *     leakage) or its on/off edges (key clicks): Pearson r ≥ corrOn.
+ * Only both together mean "we are hearing that station's splatter".
+ * Independently, every element the decoder hears in the passband is checked:
+ * if ≥ 90 % of the last 16–20 coincided with a neighbour at least twice as
+ * strong (the envelope test is too noisy at low SNR), that is splatter too.
+ * A different, independently keyed station in the passband only overlaps a
+ * strong neighbour part of the time and stays uncorrelated with it, so its
+ * copy is not gated.
+ */
+export class OffTuneTracker {
+  constructor({ tauSec = 2, ratio = 1.3, corrOn = 0.45, corrOff = 0.25, onMs = 1000, holdMs = 800 } = {}) {
+    this.tauSec = tauSec;
+    this.ratio = ratio;
+    this.corrOn = corrOn;
+    this.corrOff = corrOff;
+    this.onMs = onMs; // both conditions must hold this long before gating
+    this.holdMs = holdMs; // …and be gone this long before releasing
+    this.reset();
+  }
+
+  reset() {
+    const side = () => ({ mS: 0, vS: 0, cov: 0, prev: 0, mE: 0, vE: 0, covE: 0, hz: 0 });
+    this.mA = 0;
+    this.vA = 0;
+    this.sides = [side(), side()];
+    this.n = 0;
+    this.offTune = false;
+    this.offTuneHz = 0;
+    this.clearMs = 0;
+    this.setMs = 0;
+    this.r = 0;
+    // Mark coincidence: for each element the decoder hears in the passband,
+    // was the neighbour much stronger the whole time?
+    this.inMark = false;
+    this.markHops = 0;
+    this.markSideHops = 0;
+    this.markSideHz = 0;
+    this.marks = []; // verdicts for the last 20 elements (true = splatter-like)
+  }
+
+  /** Share of recent in-band elements that coincided with a much stronger neighbour. */
+  get coincidence() {
+    if (this.marks.length < 16) return 0;
+    return this.marks.filter(Boolean).length / this.marks.length;
+  }
+
+  /**
+   * Feed one hop. `rawKeyed` is the decoder's keyed state before any gating.
+   * Returns true while the passband is judged off-tune.
+   */
+  update(power, probes, dtMs, rawKeyed = false) {
+    const a = Math.sqrt(power);
+    // ── mark coincidence ──
+    const lo = Math.sqrt(probes.lo);
+    const hi = Math.sqrt(probes.hi);
+    const side = Math.max(lo, hi);
+    if (rawKeyed) {
+      if (!this.inMark) {
+        this.inMark = true;
+        this.markHops = 0;
+        this.markSideHops = 0;
+      }
+      this.markHops++;
+      if (side >= 2 * a) {
+        this.markSideHops++;
+        this.markSideHz = hi >= lo ? probes.hiHz : probes.loHz;
+      }
+    } else if (this.inMark) {
+      this.inMark = false;
+      this.marks.push(this.markSideHops >= 0.6 * this.markHops);
+      if (this.marks.length > 20) this.marks.shift();
+    }
+    const alpha = Math.min(1, dtMs / 1000 / this.tauSec);
+    if (this.n === 0) this.mA = a;
+    const dA = a - this.mA;
+    this.mA += alpha * dA;
+    this.vA = (1 - alpha) * (this.vA + alpha * dA * dA);
+    let best = null;
+    const feeds = [
+      [probes.lo, probes.loHz],
+      [probes.hi, probes.hiHz],
+    ];
+    for (let i = 0; i < 2; i++) {
+      const st = this.sides[i];
+      const s = Math.sqrt(feeds[i][0]);
+      if (this.n === 0) st.mS = s;
+      const dS = s - st.mS;
+      st.mS += alpha * dS;
+      st.vS = (1 - alpha) * (st.vS + alpha * dS * dS);
+      st.cov = (1 - alpha) * (st.cov + alpha * dA * dS);
+      // Edge activity next door: key clicks land in the passband at the
+      // neighbour's on/off transitions, not during its steady tone.
+      const e = Math.abs(s - st.prev);
+      st.prev = s;
+      if (this.n === 0) st.mE = e;
+      const dE = e - st.mE;
+      st.mE += alpha * dE;
+      st.vE = (1 - alpha) * (st.vE + alpha * dE * dE);
+      st.covE = (1 - alpha) * (st.covE + alpha * dA * dE);
+      st.hz = feeds[i][1];
+      const rEnv = st.vS > 0 && this.vA > 0 ? st.cov / Math.sqrt(st.vS * this.vA) : 0;
+      const rEdge = st.vE > 0 && this.vA > 0 ? st.covE / Math.sqrt(st.vE * this.vA) : 0;
+      const r = Math.max(rEnv, rEdge);
+      if (!best || st.mS > best.mS) best = { mS: st.mS, r, hz: st.hz };
+    }
+    this.n++;
+    if (this.n * dtMs < 500) return this.offTune; // need some history first
+    this.r = best.r;
+    const strongSide = best.mS >= this.ratio * this.mA;
+    this.strongSide = strongSide;
+    const coincident = this.coincidence >= 0.9;
+    if (!this.offTune) {
+      this.setMs = strongSide && best.r >= this.corrOn ? this.setMs + dtMs : 0;
+      if (this.setMs >= this.onMs || coincident) {
+        this.offTune = true;
+        this.offTuneHz = coincident && this.setMs < this.onMs ? this.markSideHz : best.hz;
+        this.clearMs = 0;
+        this.setMs = 0;
+      }
+    } else if (!coincident && (!strongSide || best.r < this.corrOff)) {
+      this.clearMs += dtMs;
+      if (this.clearMs >= this.holdMs) {
+        this.offTune = false;
+        this.offTuneHz = 0;
+      }
+    } else {
+      this.clearMs = 0;
+      this.offTuneHz = best.hz;
+    }
+    return this.offTune;
+  }
+}
+
 // ── CWDecoder: tone power → keyed state → symbols → text ──────────────────
 
 /**
@@ -363,6 +541,7 @@ export class CWDecoder {
     this.strongRun = 0;
     this.primed = false;
     this.keyed = false;
+    this.rawKeyed = false;
     // Timing machine
     this.dit = this.initialDit;
     this.marks = []; // recent mark durations (ms) for dit tracking
@@ -408,7 +587,7 @@ export class CWDecoder {
    * of the way from noise to peak in linear power — symmetric crossings, so
    * mark and space lengths survive the smoothing.
    */
-  processLevel(power, dtMs) {
+  processLevel(power, dtMs, suppress = false) {
     // Boxcar over K hops of power, K tied to the current dit estimate
     const len = this.smooth.length;
     const k = Math.max(1, Math.min(len, Math.round((this.smoothDits * this.dit) / dtMs)));
@@ -431,7 +610,10 @@ export class CWDecoder {
       this.peakAmp = this.noiseAmp;
     }
     const dtSec = dtMs / 1000;
-    if (!this.keyed) {
+    if (suppress) {
+      // Gated (off-tune): the passband holds a neighbour's splatter — keep the
+      // noise floor and peak from before so copy resumes cleanly on release.
+    } else if (!this.keyed) {
       // Noise: mean and mean-absolute-deviation of the unkeyed amplitude.
       // Falls fast (a signal ended / QSB), rises slowly (a signal started).
       // The first 200 ms converge fast both ways (no history yet).
@@ -469,8 +651,12 @@ export class CWDecoder {
       this.peakAmp >= this.noiseAmp + devs * this.noiseDev;
     if (open) {
       const span = this.peakAmp - this.noiseAmp;
-      keyed = this.keyed ? a > this.noiseAmp + span * 0.4 : a > this.noiseAmp + span * 0.5;
+      const was = suppress ? this.rawKeyed : this.keyed;
+      keyed = was ? a > this.noiseAmp + span * 0.4 : a > this.noiseAmp + span * 0.5;
     }
+    // rawKeyed: what the passband shows; keyed: what is decoded (gated off-tune)
+    this.rawKeyed = keyed;
+    if (suppress) keyed = false;
     this.keyed = keyed;
     this.processEnvelope(keyed, dtMs);
   }
@@ -661,6 +847,9 @@ export const CW_SQUELCH_LEVELS = {
   high: { minSnrDb: 9, devs: 6.5 },
 };
 
+/** Off-tune probe positions, in multiples of the filter bandwidth. */
+export const OFF_TUNE_PROBES = [1.5, 2, 3, 4];
+
 /** Auto filter width for a dit length: the window spans ≈ ½ dit. */
 export function autoBandwidthForDit(ditMs) {
   const bw = 3000 / ditMs; // ENBW of a Hann window of ditMs/2
@@ -683,15 +872,25 @@ export class CWPipeline {
     initialWpm = 20,
     squelch = 'normal',
     findTone = false,
+    offTuneGate = true,
   } = {}) {
     this.sampleRate = sampleRate;
     this.autoBandwidth = bandwidth === 'auto';
     this.decoder = new CWDecoder({ onText, initialWpm });
     this.setSquelch(squelch);
     const bw = this.autoBandwidth ? autoBandwidthForDit(this.decoder.dit) : bandwidth;
-    this.detector = new ToneDetector({ sampleRate, tone, bandwidth: bw });
+    this.detector = new ToneDetector({
+      sampleRate,
+      tone,
+      bandwidth: bw,
+      probeFactors: offTuneGate ? OFF_TUNE_PROBES : null,
+    });
     this.finder = findTone ? new ToneFinder({ sampleRate }) : null;
-    this.onPower = (p, dt) => this.decoder.processLevel(p, dt);
+    this.offTune = offTuneGate ? new OffTuneTracker() : null;
+    this.onPower = (p, dt, probes) => {
+      const gated = this.offTune && probes ? this.offTune.update(p, probes, dt, this.decoder.rawKeyed) : false;
+      this.decoder.processLevel(p, dt, gated);
+    };
   }
 
   get tone() {
@@ -703,7 +902,10 @@ export class CWPipeline {
   }
 
   setTone(hz) {
-    if (Number.isFinite(hz) && hz > 0 && hz < this.sampleRate / 2) this.detector.setTone(hz);
+    if (Number.isFinite(hz) && hz > 0 && hz < this.sampleRate / 2) {
+      this.detector.setTone(hz);
+      this.offTune?.reset();
+    }
   }
 
   setBandwidth(bw) {
@@ -727,7 +929,10 @@ export class CWPipeline {
   process(chunk) {
     this.detector.process(chunk, this.onPower);
     if (this.finder) this.finder.process(chunk);
-    if (this.autoBandwidth) {
+    this.trackNeighbour(chunk);
+    // Hold the filter width while a much stronger neighbour dominates: its
+    // splatter would otherwise drag the speed estimate (and the width) around.
+    if (this.autoBandwidth && !this.offTune?.strongSide) {
       const want = autoBandwidthForDit(this.decoder.dit);
       if (Math.abs(want - this.detector.bandwidth) / this.detector.bandwidth > 0.25) this.detector.setBandwidth(want);
     }
@@ -741,10 +946,55 @@ export class CWPipeline {
     this.decoder.reset();
     if (this.autoBandwidth) this.detector.setBandwidth(autoBandwidthForDit(this.decoder.dit));
     if (this.finder) this.finder.reset();
+    this.offTune?.reset();
   }
 
+  /**
+   * While off-tune, find where the neighbour actually is: a narrow ToneFinder
+   * scan from just outside the passband to five widths out on the gated side
+   * (the probes only say which side, and roughly). Feeds "Retune".
+   */
+  trackNeighbour(chunk) {
+    const ot = this.offTune;
+    if (!ot || !ot.offTune) {
+      this.sideFinder = null;
+      return;
+    }
+    const side = Math.sign(ot.offTuneHz) || 1;
+    const tone = this.detector.tone;
+    const bw = this.detector.bandwidth;
+    if (!this.sideFinder || this.sideFinder.side !== side || this.sideFinder.tone !== tone) {
+      const a = tone + side * bw * 0.75;
+      const b = tone + side * bw * 5;
+      this.sideFinder = new ToneFinder({
+        sampleRate: this.sampleRate,
+        minHz: Math.max(100, Math.min(a, b)),
+        maxHz: Math.min(this.sampleRate / 2 - 100, Math.max(a, b)),
+        stepHz: 10, // parabolic interpolation in best() gets well under that
+      });
+      this.sideFinder.side = side;
+      this.sideFinder.tone = tone;
+    }
+    this.sideFinder.process(chunk);
+  }
+
+  /** offTuneHz: 0, or the signed offset (Hz) of the station the passband sits beside. */
   getState() {
-    return { ...this.decoder.getState(), tone: this.detector.tone, bandwidth: this.detector.bandwidth };
+    let offTuneHz = 0;
+    if (this.offTune?.offTune) {
+      offTuneHz = this.offTune.offTuneHz;
+      const f = this.sideFinder;
+      if (f && f.updates >= 3) {
+        const best = f.best();
+        if (best.snrDb >= 6) offTuneHz = best.freq - this.detector.tone;
+      }
+    }
+    return {
+      ...this.decoder.getState(),
+      tone: this.detector.tone,
+      bandwidth: this.detector.bandwidth,
+      offTuneHz: Math.round(offTuneHz),
+    };
   }
 }
 

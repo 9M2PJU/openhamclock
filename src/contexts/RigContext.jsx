@@ -665,6 +665,9 @@ export const RigProvider = ({ children, rigConfig }) => {
     isCloudRelay,
     // Relay session — hooks that send their own relay commands (useFldigi) use it
     cloudRelaySession,
+    // Cloud Relay session id (null when the bridge is reached directly) — the
+    // Decoder panel streams KiwiSDR audio through it.
+    relaySession: cloudRelaySession || null,
     setFreq,
     setMode,
     setPTT,

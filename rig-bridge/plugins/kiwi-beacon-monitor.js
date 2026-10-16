@@ -104,6 +104,7 @@ const descriptor = {
     let lastMeasurement = null;
     let measurementCount = 0;
     let lastPost = null; // { at, ok, status, error, count }
+    let paused = null; // { reason, since } while another listener has the receiver slot
     const forwardQueue = [];
 
     const verbose = () => !!live().verbose;
@@ -203,14 +204,7 @@ const descriptor = {
       if (conn) conn.tune(target.band.mhz * 1000, { mode: 'cw', lowCut: CW_LOW_CUT, highCut: CW_HIGH_CUT });
     }
 
-    function connect() {
-      if (!host) {
-        log('no KiwiSDR host configured — set beaconMonitor.host in the setup UI');
-        return;
-      }
-      running = true;
-      log(`monitoring ${bands.map((b) => b.label).join('/')} via KiwiSDR ${host}:${port}`);
-
+    function openConn() {
       const first = sampler.targetFor(Date.now());
       conn = new KiwiConnection({
         host,
@@ -235,6 +229,24 @@ const descriptor = {
         if (verbose()) log(`socket error: ${err && err.message ? err.message : err}`);
       });
       conn.connect();
+    }
+
+    function closeConn() {
+      if (!conn) return;
+      try {
+        conn.close();
+      } catch (e) {}
+      conn = null;
+    }
+
+    function connect() {
+      if (!host) {
+        log('no KiwiSDR host configured — set beaconMonitor.host in the setup UI');
+        return;
+      }
+      running = true;
+      log(`monitoring ${bands.map((b) => b.label).join('/')} via KiwiSDR ${host}:${port}`);
+      openConn();
 
       tickTimer = setInterval(tick, TICK_MS);
       flushTimer = setInterval(flushForwardQueue, FLUSH_INTERVAL_MS);
@@ -247,15 +259,32 @@ const descriptor = {
       tickTimer = null;
       if (flushTimer) clearInterval(flushTimer);
       flushTimer = null;
-      if (conn) {
-        try {
-          conn.close();
-        } catch (e) {}
-        conn = null;
-      }
+      closeConn();
+      paused = null;
       flushForwardQueue();
-      _currentInstance = null;
+      if (_currentInstance === instance) _currentInstance = null;
       log('Stopped');
+    }
+
+    /**
+     * Give the receiver slot to someone else (the Decoder panel's KiwiSDR
+     * audio) — the Kiwi socket closes, the schedule keeps ticking, and slots
+     * without readings simply produce no measurement. resume() reconnects.
+     */
+    function pause(reason = 'paused') {
+      if (!running || paused) return false;
+      paused = { reason, since: Date.now() };
+      closeConn();
+      log(`paused (${reason}) — receiver slot released`);
+      return true;
+    }
+
+    function resume() {
+      if (!running || !paused) return false;
+      paused = null;
+      log('resumed');
+      openConn();
+      return true;
     }
 
     function getMeasurements({ sinceMs = 0, band = null } = {}) {
@@ -266,6 +295,7 @@ const descriptor = {
       return {
         enabled: !!live().enabled,
         running,
+        paused: paused ? { reason: paused.reason, since: paused.since } : null,
         connected: !!(conn && conn.connected),
         state: conn ? conn.state : 'idle',
         host,
@@ -289,10 +319,29 @@ const descriptor = {
       };
     }
 
-    const instance = { connect, disconnect, getStatus, getMeasurements, _sampler: sampler };
+    const instance = {
+      connect,
+      disconnect,
+      getStatus,
+      getMeasurements,
+      pause,
+      resume,
+      get host() {
+        return host;
+      },
+      get port() {
+        return port;
+      },
+      get running() {
+        return running;
+      },
+      _sampler: sampler,
+    };
     _currentInstance = instance;
     return instance;
   },
 };
 
 module.exports = descriptor;
+/** The running monitor instance, if any (used by kiwi-audio to share the receiver). */
+module.exports.getActive = () => _currentInstance;

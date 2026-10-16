@@ -183,6 +183,7 @@ const DEFAULT_CONFIG = {
     session: '', // Browser session ID for per-user isolation
     pushInterval: 2000, // State push interval in ms
     pollInterval: 1000, // Command poll interval in ms
+    relayAudio: false, // Opt-in: carry KiwiSDR audio (µ-law, ~12 kB/s) to the Decoder panel while it listens
     verbose: false,
     // Key shared with the browser that pressed Connect Cloud Relay; commands
     // must be signed with it (lib/relay-sign.js). Never sent to the server.

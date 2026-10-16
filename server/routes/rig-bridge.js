@@ -16,6 +16,7 @@ const fs = require('fs');
 const { getClientIP } = require('../utils/helpers');
 const crypto = require('crypto');
 const { validateCustomHost } = require('../utils/ssrf');
+const { registerRelayAudio } = require('./relayAudio');
 
 const { sanitizeRelayIndicators, queueRelayCommand } = require('../utils/relay-indicators');
 
@@ -843,6 +844,23 @@ module.exports = function (app, ctx) {
       logWarn(`[RigBridge] relay/commands error: ${err.message}`);
       if (!res.headersSent) res.json({ commands: [] });
     }
+  });
+
+  // ─── Cloud Relay: KiwiSDR audio for the Decoder panel (opt-in) ────────
+  // See relayAudio.js. The browser sends its signed kiwiAudioStart/Tune through
+  // /relay/command like any other command; this route only carries audio.
+  registerRelayAudio(app, {
+    requireRelayAuth,
+    // Same read rule as /relay/stream: header token, or a one-time ticket
+    canRead: (req, sessionId) => {
+      const verdict = checkRelayRead(sessionId, req.headers['x-relay-read']);
+      if (verdict === 'ok' || verdict === 'legacy') return 'ok';
+      if (verdict === 'denied' && redeemStreamTicket(req.query.ticket, sessionId)) return 'ok';
+      return verdict;
+    },
+    hasSession: (sessionId) => relaySessions.has(sessionId),
+    logInfo,
+    logWarn,
   });
 
   // ─── Cloud Relay: Configure ─────────────────────────────────────────

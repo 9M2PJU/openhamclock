@@ -212,6 +212,79 @@ describe('CWPipeline — PCM through the Goertzel tone detector', () => {
   });
 });
 
+// ── Off-tune gate ─────────────────────────────────────────────────────────
+
+describe('CWPipeline — off-tune gate', () => {
+  const B = 'TEST DE K9ZZ K9ZZ TEST UP 1 5NN TU EE TEST DE K9ZZ QRZ? TEST K9ZZ AGN 73';
+  const mix = (...xs) => {
+    const out = new Float32Array(Math.max(...xs.map((x) => x.length)));
+    for (const x of xs) for (let i = 0; i < x.length; i++) out[i] += x[i];
+    return out;
+  };
+  const run = (pcm, opts = {}) => {
+    let out = '';
+    const pipe = new CWPipeline({ sampleRate: 8000, tone: 600, onText: (s) => (out += s), ...opts });
+    let offTuneSeen = 0;
+    for (let i = 0; i < pcm.length; i += 128) {
+      pipe.process(pcm.subarray(i, i + 128));
+      if (pipe.getState().offTuneHz) offTuneSeen = pipe.getState().offTuneHz;
+    }
+    pipe.flush();
+    return { text: out.trim().replace(/\s+/g, ' '), offTuneSeen, pipe };
+  };
+
+  // Without the gate these print 30–300 characters of E/T/I junk (key clicks
+  // and skirt leakage from the station next door); with it, only what slips
+  // out in the second or so before the gate engages.
+  for (const [wpm, off, snr] of [
+    [15, 80, 10],
+    [20, 100, 10],
+    [20, 150, null],
+    [15, -120, null],
+  ]) {
+    it(`${wpm} WPM station ${off > 0 ? '+' : ''}${off} Hz from the passband: no junk, reports the side`, () => {
+      const pcm = synthPcm(keying(B, wpm), { toneHz: 600 + off, snrDb: snr, seed: 5 });
+      const ungated = run(pcm, { offTuneGate: false });
+      const gated = run(pcm);
+      expect(ungated.text.replace(/\s/g, '').length).toBeGreaterThan(25);
+      expect(gated.text.replace(/\s/g, '').length).toBeLessThanOrEqual(20);
+      expect(Math.sign(gated.offTuneSeen)).toBe(Math.sign(off));
+      // the hint points at the station, so "Retune" lands on it
+      expect(Math.abs(gated.offTuneSeen - off), `estimated ${gated.offTuneSeen} Hz`).toBeLessThanOrEqual(15);
+    });
+  }
+
+  // A different station in the passband with a stronger neighbour: its keying
+  // is independent of the neighbour's, so the gate must stay open.
+  for (const [wpm, off, db] of [
+    [20, 100, 10],
+    [20, 150, 20],
+    [30, 80, 10],
+    [30, 250, 20],
+  ]) {
+    it(`${wpm} WPM in the passband, neighbour +${off} Hz at +${db} dB: copy intact`, () => {
+      const a = synthPcm(keying(TEXT, wpm), { toneHz: 600, snrDb: 10, seed: 1 });
+      const b = synthPcm(keying(B, wpm + 3, { seed: 9 }), { toneHz: 600 + off, amp: 0.5 * 10 ** (db / 20), seed: 2 });
+      const { text } = run(mix(a, b));
+      expect(accuracy(TEXT, text), text).toBeGreaterThanOrEqual(0.97);
+    });
+  }
+
+  it('copy resumes once the passband is moved onto the station', () => {
+    const pcm = synthPcm(keying(`${B} ${B}`, 20), { toneHz: 700, snrDb: 10, seed: 3 });
+    let out = '';
+    const pipe = new CWPipeline({ sampleRate: 8000, tone: 600, onText: (s) => (out += s) });
+    const half = Math.floor(pcm.length / 2);
+    for (let i = 0; i < half; i += 128) pipe.process(pcm.subarray(i, Math.min(i + 128, half)));
+    expect(pipe.getState().offTuneHz).toBeGreaterThan(0);
+    const before = out.length;
+    pipe.setTone(600 + pipe.getState().offTuneHz); // what the panel's "retune" hint suggests
+    for (let i = half; i < pcm.length; i += 128) pipe.process(pcm.subarray(i, i + 128));
+    pipe.flush();
+    expect(out.slice(before)).toContain('K9ZZ');
+  });
+});
+
 // ── Callsigns ─────────────────────────────────────────────────────────────
 
 describe('findCallsigns / tokenizeCallsigns', () => {

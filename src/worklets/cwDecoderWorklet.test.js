@@ -9,6 +9,7 @@ import { keying, synthPcm, accuracy } from '../utils/cwSynth.js';
 
 const RATE = 48000;
 let Processor = null;
+let TapProcessor = null;
 
 class FakePort {
   constructor() {
@@ -33,6 +34,7 @@ beforeAll(async () => {
   };
   globalThis.registerProcessor = (name, cls) => {
     if (name === 'cw-decoder') Processor = cls;
+    if (name === 'pcm-tap') TapProcessor = cls;
   };
   await import('./cwDecoderWorklet.js');
 });
@@ -94,5 +96,34 @@ describe('cw-decoder AudioWorklet', () => {
     expect(proc.pipe.autoBandwidth).toBe(true);
     proc.port.deliver({ type: 'reset' });
     expect(proc.pipe.decoder.decodedChars).toBe(0);
+  });
+
+  it('reports the off-tune state with the meters', () => {
+    const proc = new Processor({ processorOptions: { tone: 600 } });
+    run(
+      proc,
+      synthPcm(keying('TEST DE K9ZZ K9ZZ TEST UP 1 5NN TU EE TEST DE K9ZZ QRZ? TEST K9ZZ AGN 73', 20), {
+        sampleRate: RATE,
+        toneHz: 700,
+        snrDb: 10,
+      }),
+    );
+    expect(proc.port.sent.some((m) => m.state.offTuneHz > 0)).toBe(true);
+  });
+});
+
+describe('pcm-tap AudioWorklet', () => {
+  it('hands the main thread contiguous 4096-sample batches with the audio-clock end time', () => {
+    expect(TapProcessor).toBeTypeOf('function');
+    const tap = new TapProcessor();
+    const x = new Float32Array(10000).map((_, i) => i);
+    run(tap, x);
+    const batches = tap.port.sent;
+    expect(batches).toHaveLength(2); // 8192 of 10000 samples
+    expect(batches[0].samples).toHaveLength(4096);
+    expect(batches[0].samples[0]).toBe(0);
+    expect(batches[1].samples[0]).toBe(4096); // nothing lost or repeated between batches
+    expect(batches[0].endTime).toBeCloseTo(4096 / RATE, 6);
+    expect(batches[1].endTime).toBeCloseTo(8192 / RATE, 6);
   });
 });

@@ -27,6 +27,8 @@
  *   relayAprs:      boolean  Relay APRS packets (default: true)
  *   relayFldigi:    boolean  Relay the fldigi plugin's status, receive text and
  *                            flmsg forms, and accept NBEMS commands (default: true)
+ *   relayAudio:     boolean  Carry KiwiSDR audio to the Decoder panel while it
+ *                            listens (µ-law, ~12 kB/s; default: false — opt-in)
  *   verbose:        boolean  Log all relay activity (default: false)
  *   commandKey:     string   64-hex key shared with the browser that pressed
  *                            Connect Cloud Relay (never sent to the server).
@@ -47,6 +49,7 @@
 const http = require('http');
 const https = require('https');
 const { URL } = require('url');
+const { createRelayAudio } = require('../lib/relay-audio');
 const { nextLongPollDelay, heartbeatDue } = require('../lib/relay-timing');
 const { createCommandVerifier, isValidKey, deriveReadToken, readTokenHash } = require('../lib/relay-sign');
 
@@ -205,6 +208,28 @@ const descriptor = {
       });
     }
     const FLDIGI_RX_MAX = 8000;
+
+    // Opt-in KiwiSDR audio over the relay (see lib/relay-audio.js)
+    const relayAudio = cfg.relayAudio
+      ? createRelayAudio({
+          serverUrl,
+          apiKey,
+          session,
+          getKiwiAudio: () => {
+            if (services && services.kiwiAudio) return services.kiwiAudio; // tests
+            try {
+              return require('./kiwi-audio').getActive();
+            } catch (e) {
+              return null;
+            }
+          },
+          parseTune: (f, m) => require('./kiwi-audio').parseTune(f, m),
+          log: (m) => console.log(`[CloudRelay] ${m}`),
+          // same read-token registration as every other bridge → server call
+          extraHeaders: () => (readHash() ? { 'X-Relay-Read-Hash': readHash() } : {}),
+        })
+      : null;
+    let audioRefusedLogged = false;
 
     function makeRequest(urlStr, method, body, callback, timeoutMs) {
       let parsed;
@@ -463,6 +488,15 @@ const descriptor = {
         return;
       }
       if (cfg.verbose) console.log(`[CloudRelay] Command: ${cmd.type} ${JSON.stringify(cmd.payload || {})}`);
+
+      if (relayAudio && relayAudio.handleCommand(cmd)) return;
+      if (!relayAudio && /^kiwiAudio/.test(cmd.type || '')) {
+        if (!audioRefusedLogged) {
+          audioRefusedLogged = true;
+          console.log('[CloudRelay] KiwiSDR audio was requested but "Relay KiwiSDR audio" is off — enable it to allow');
+        }
+        return;
+      }
 
       const localMod = config.tls?.enabled ? https : http;
       const localOptions = (path, body) => ({
@@ -745,6 +779,7 @@ const descriptor = {
       for (const [event, fn] of busListeners) pluginBus.removeListener(event, fn);
       busListeners = [];
       running = false;
+      if (relayAudio) relayAudio.stop('relay stopped');
       _currentInstance = null;
       console.log(`[CloudRelay] Stopped (pushed: ${totalPushed}, commands: ${totalCommands})`);
     }
@@ -760,6 +795,7 @@ const descriptor = {
         consecutiveErrors,
         pushInterval,
         commandDelivery: 'long-poll',
+        audio: relayAudio ? relayAudio.status() : { enabled: false },
         commandAuth: isValidKey(commandKey())
           ? 'hmac-sha256'
           : live().allowUnsigned === true

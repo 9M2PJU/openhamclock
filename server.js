@@ -496,6 +496,11 @@ app.listen(PORT, '0.0.0.0', () => {
   if (IS_PACKAGED && process.stdout.isTTY && process.env.OPEN_BROWSER !== 'false') {
     openInBrowser(`http://localhost:${PORT}`);
   }
+
+  // Optional HTTPS on the LAN (HTTPS_PORT) — a secure context for browsers
+  // opening a Pi's dashboard by IP, which microphone access (Decoder panel)
+  // requires. See server/utils/lanHttps.js.
+  require('./server/utils/lanHttps').startLanHttps(app, { dataDir: path.join(ROOT_DIR, 'data') });
 });
 
 function openInBrowser(url) {

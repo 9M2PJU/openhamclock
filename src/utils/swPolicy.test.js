@@ -86,6 +86,8 @@ describe('isStreamingApiPath', () => {
   it('matches the known SSE endpoints and generic /api/**/stream', () => {
     expect(isStreamingApiPath('/api/pskreporter/stream')).toBe(true);
     expect(isStreamingApiPath('/api/rig-bridge/relay/stream')).toBe(true);
+    // Decoder panel: KiwiSDR audio through the Cloud Relay never ends
+    expect(isStreamingApiPath('/api/rig-bridge/relay/audio')).toBe(true);
     expect(isStreamingApiPath('/api/foo/stream')).toBe(true);
     expect(isStreamingApiPath('/api/foo/stream/')).toBe(true);
     expect(isStreamingApiPath('/api/solar')).toBe(false);
