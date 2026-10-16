@@ -31,7 +31,8 @@
 // __OHC_VERSION__ / __OHC_BUILD_TS__ are injected by vite.config.mjs `define`
 // (declared as globals for src/ in eslint.config.js).
 
-import { isPersistentCacheName } from '../utils/swPolicy.js';
+import { isPersistentCacheName, tileUrlPrefixes } from '../utils/swPolicy.js';
+import { readCustomTileSource } from '../utils/customTileSource.js';
 
 const VERSION = typeof __OHC_VERSION__ !== 'undefined' ? `${__OHC_VERSION__}-${__OHC_BUILD_TS__}` : 'dev';
 
@@ -58,7 +59,7 @@ export function setupServiceWorker() {
     return;
   }
 
-  const swUrl = `/sw.js?v=${encodeURIComponent(VERSION)}`;
+  const swUrl = swScriptUrl();
 
   // Reload (once) after the user accepts an update and the new worker takes
   // control. Guarded so a skipWaiting triggered from another tab can't
@@ -90,11 +91,66 @@ export function setupServiceWorker() {
   });
 }
 
+/**
+ * Registration URL: the build version (`v`) plus the hosts of the
+ * operator's own tile source (`t`), which the worker must know the moment
+ * it starts (see public/sw.js HELD_HOSTS). Changing the tile source changes
+ * only `t`; such a worker is swapped in silently (sameBuild below).
+ */
+export function swScriptUrl(source = readCustomTileSource()) {
+  const hosts = new Set();
+  if (source?.url) {
+    for (const prefix of tileUrlPrefixes(source.url, source.subdomains)) {
+      try {
+        hosts.add(new URL(prefix).host.toLowerCase());
+      } catch {
+        /* skip */
+      }
+    }
+  }
+  const t = [...hosts].slice(0, 8).join(',');
+  return `/sw.js?v=${encodeURIComponent(VERSION)}${t ? `&t=${encodeURIComponent(t)}` : ''}`;
+}
+
+/** Same build (`v`) as the controlling worker — only the tile hosts differ. */
+function sameBuild(worker) {
+  const ctl = navigator.serviceWorker.controller;
+  if (!worker || !ctl) return false;
+  try {
+    return new URL(worker.scriptURL).searchParams.get('v') === new URL(ctl.scriptURL).searchParams.get('v');
+  } catch {
+    return false;
+  }
+}
+
+/** Waiting worker of the same build: take over without the update toast
+ *  (no reload — nothing the page runs has changed). */
+function activateOrOffer(worker) {
+  if (sameBuild(worker)) worker.postMessage({ type: 'SKIP_WAITING' });
+  else showUpdateToast(worker);
+}
+
+/**
+ * Re-register after the operator's tile source changes, so the worker
+ * learns the new host. No-op where no worker is in use.
+ */
+export function refreshServiceWorkerRegistration() {
+  try {
+    if (!import.meta.env.PROD || !window.isSecureContext || !navigator.serviceWorker?.controller) return;
+    navigator.serviceWorker
+      .register(swScriptUrl())
+      .then(watchForUpdates)
+      .catch(() => {});
+  } catch {
+    /* best-effort */
+  }
+}
+
 function watchForUpdates(reg) {
   // A worker may already be parked in waiting (e.g. the toast was dismissed
   // last session).
   if (reg.waiting && navigator.serviceWorker.controller) {
-    showUpdateToast(reg.waiting);
+    activateOrOffer(reg.waiting);
   }
   reg.addEventListener('updatefound', () => {
     const installing = reg.installing;
@@ -103,7 +159,7 @@ function watchForUpdates(reg) {
       // 'installed' with an existing controller = an update, not first
       // install. First installs activate silently.
       if (installing.state === 'installed' && navigator.serviceWorker.controller) {
-        showUpdateToast(installing);
+        activateOrOffer(installing);
       }
     });
   });

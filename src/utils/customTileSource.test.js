@@ -12,11 +12,15 @@ import {
   tileUrlPrefix,
   tileUrlPrefixes,
   isLocalNetworkUrl,
+  parseHeldHosts,
+  isHeldHost,
   parseTileUrl,
   overzoomSource,
   isCacheableVendorResponse,
 } from './swPolicy.js';
 import { isOfflinePackStyle } from './offlineTiles.js';
+import { applyCustomTileSource, MAP_STYLES_CHANGED_EVENT } from './mapStylesLive.js';
+import { swScriptUrl } from '../pwa/registerServiceWorker.js';
 import { storageNotes, createPackManifest, isIncomplete } from './offlinePackManifest.js';
 
 const LAN = 'http://192.168.1.5:8080/data/osm/{z}/{x}/{y}.png';
@@ -226,5 +230,47 @@ describe('manifest completeness', () => {
     expect(createPackManifest(base).complete).toBe(true);
     expect(isIncomplete(createPackManifest({ ...base, complete: false }))).toBe(true);
     expect(createPackManifest({ ...base, tileCount: 7 }).totalTiles).toBe(7);
+  });
+});
+
+describe('held hosts and the registration URL', () => {
+  it('parses and matches exact hosts (with port), nothing looser', () => {
+    const hosts = parseHeldHosts('Tiles.Example.net, 192.168.1.5:8080,bad host,');
+    expect(hosts).toEqual(['tiles.example.net', '192.168.1.5:8080']);
+    expect(isHeldHost('https://tiles.example.net/a.png', hosts)).toBe(true);
+    expect(isHeldHost('http://192.168.1.5:8080/a.png', hosts)).toBe(true);
+    expect(isHeldHost('http://192.168.1.5/a.png', hosts)).toBe(false);
+    expect(isHeldHost('https://a.tiles.example.net/a.png', hosts)).toBe(false);
+    expect(isHeldHost('nope', hosts)).toBe(false);
+    expect(parseHeldHosts('a.b,'.repeat(20))).toHaveLength(8);
+  });
+
+  it('swScriptUrl carries the own tile source hosts', () => {
+    expect(swScriptUrl(null)).toBe('/sw.js?v=dev');
+    const { source } = validateCustomTileSource({
+      url: 'https://{s}.t.example/{z}/{x}/{y}.png',
+      subdomains: 'ab',
+      confirmed: true,
+    });
+    expect(swScriptUrl(source)).toBe('/sw.js?v=dev&t=a.t.example%2Cb.t.example');
+  });
+});
+
+describe('applyCustomTileSource', () => {
+  it('adds, edits, and removes the custom basemap live and announces it', () => {
+    const styles = {};
+    const seen = [];
+    const on = (e) => seen.push(e.detail);
+    window.addEventListener(MAP_STYLES_CHANGED_EVENT, on);
+    const { source } = validateCustomTileSource({ url: LAN, confirmed: true, name: 'Pi' });
+    applyCustomTileSource(source, styles);
+    expect(styles.custom).toMatchObject({ name: 'Pi', url: LAN, offlinePack: true });
+    applyCustomTileSource(null, styles);
+    expect(styles.custom).toBeUndefined();
+    window.removeEventListener(MAP_STYLES_CHANGED_EVENT, on);
+    expect(seen).toEqual([
+      { id: 'custom', removed: false },
+      { id: 'custom', removed: true },
+    ]);
   });
 });

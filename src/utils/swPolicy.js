@@ -22,6 +22,8 @@ export const {
   tileUrlPrefix,
   tileUrlPrefixes,
   isLocalNetworkUrl,
+  parseHeldHosts,
+  isHeldHost,
   parseTileUrl,
   subdomainFor,
   buildTileUrl,

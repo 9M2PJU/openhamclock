@@ -196,6 +196,37 @@
     );
   }
 
+  /** Most hosts carried in the registration URL's `t` param. */
+  var MAX_HELD_HOSTS = 8;
+
+  /**
+   * Parse the registration URL's `t` param ("host1,host2[:port]") into the
+   * list of operator tile-source hosts to hold at worker start.
+   */
+  function parseHeldHosts(param) {
+    return String(param || '')
+      .split(',')
+      .map(function (h) {
+        return h.trim().toLowerCase();
+      })
+      .filter(function (h) {
+        return /^[a-z0-9.-]+(:\d+)?$/.test(h);
+      })
+      .slice(0, MAX_HELD_HOSTS);
+  }
+
+  /** True when the URL's host (with port) is exactly one of `hosts`. */
+  function isHeldHost(url, hosts) {
+    if (!hosts || !hosts.length) return false;
+    var u;
+    try {
+      u = new URL(url);
+    } catch (e) {
+      return false;
+    }
+    return hosts.indexOf(u.host.toLowerCase()) !== -1;
+  }
+
   /**
    * The fixed part of a tile URL template, up to its first placeholder —
    * what the worker matches requests against for a user-supplied source.
@@ -365,6 +396,8 @@
     tileUrlPrefix: tileUrlPrefix,
     tileUrlPrefixes: tileUrlPrefixes,
     isLocalNetworkUrl: isLocalNetworkUrl,
+    parseHeldHosts: parseHeldHosts,
+    isHeldHost: isHeldHost,
     parseTileUrl: parseTileUrl,
     subdomainFor: subdomainFor,
     buildTileUrl: buildTileUrl,

@@ -17,6 +17,8 @@ import { MAP_STYLES } from '../utils/config.js';
 import { latLonToMaidenhead } from '../utils/geo.js';
 import { requestMapFocus } from '../utils/mapFocus.js';
 import { getMapViewport, subscribeMapViewport, requestBasemap } from '../utils/mapViewport.js';
+import { applyCustomTileSource, useMapStylesVersion } from '../utils/mapStylesLive.js';
+import { refreshServiceWorkerRegistration } from '../pwa/registerServiceWorker.js';
 import {
   OFFLINE_ZOOM_MIN,
   OFFLINE_ZOOM_MAX,
@@ -69,7 +71,6 @@ import {
   refreshPackData,
 } from '../utils/offlinePackStore.js';
 
-const ELIGIBLE_STYLE_IDS = offlinePackStyleIds(MAP_STYLES);
 const MB = 1024 * 1024;
 
 const fmtBbox = (b) => {
@@ -108,10 +109,16 @@ export default function OfflineAreaPacks({ deLocation, compact = false }) {
   const [viewport, setViewport] = useState(getMapViewport);
   const [mode, setMode] = useState('radius');
   const [radiusKm, setRadiusKm] = useState(DEFAULT_RADIUS_KM);
-  const [styleId, setStyleId] = useState(() => {
+  // Re-read on live MAP_STYLES changes (operator tile source added/removed)
+  const stylesVersion = useMapStylesVersion();
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- MAP_STYLES is mutated in place; the version is the signal
+  const ELIGIBLE_STYLE_IDS = useMemo(() => offlinePackStyleIds(MAP_STYLES), [stylesVersion]);
+  const [styleIdState, setStyleId] = useState(() => {
     const cur = getMapViewport().styleId;
-    return ELIGIBLE_STYLE_IDS.includes(cur) ? cur : ELIGIBLE_STYLE_IDS[0] || null;
+    const ids = offlinePackStyleIds(MAP_STYLES);
+    return ids.includes(cur) ? cur : ids[0] || null;
   });
+  const styleId = ELIGIBLE_STYLE_IDS.includes(styleIdState) ? styleIdState : ELIGIBLE_STYLE_IDS[0] || null;
   const [minZoom, setMinZoom] = useState(DEFAULT_MIN_ZOOM);
   const [maxZoom, setMaxZoom] = useState(DEFAULT_MAX_ZOOM);
   const [name, setName] = useState('');
@@ -792,13 +799,17 @@ function CustomTileSourceForm({ t, muted, note }) {
     }
     setError(null);
     writeCustomTileSource(v.source);
+    applyCustomTileSource(v.source); // basemap list updates at once
     await registerTileSource(v.source.url, { subdomains: v.source.subdomains });
+    refreshServiceWorkerRegistration(); // worker learns the host for restarts
     setChanged(true);
   };
 
   const remove = async () => {
     writeCustomTileSource(null);
+    applyCustomTileSource(null);
     await registerTileSource(null);
+    refreshServiceWorkerRegistration();
     setDraft({ name: '', url: '', maxZoom: 18, attribution: '', confirmed: false });
     setChanged(true);
   };
@@ -885,17 +896,14 @@ function CustomTileSourceForm({ t, muted, note }) {
                 {t('offlinePacks.custom.remove', { defaultValue: 'Remove source' })}
               </button>
             )}
-            {(changed || (saved && !active)) && (
-              <>
-                <span style={muted}>
-                  {t('offlinePacks.custom.reloadNote', {
-                    defaultValue: 'Reload to update the basemap list.',
-                  })}
-                </span>
-                <button type="button" onClick={() => window.location.reload()} style={btn()}>
-                  {t('offlinePacks.custom.reload', { defaultValue: 'Reload' })}
-                </button>
-              </>
+            {changed && (
+              <span style={muted}>
+                {active
+                  ? t('offlinePacks.custom.savedLive', {
+                      defaultValue: 'Saved — it is in the basemap list now.',
+                    })
+                  : t('offlinePacks.custom.removedLive', { defaultValue: 'Removed.' })}
+              </span>
             )}
           </div>
         </div>
