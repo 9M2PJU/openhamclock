@@ -1902,6 +1902,17 @@ export default function EmcommLayout(props) {
                           {t('emcomm.fieldReports.local', { defaultValue: 'LOCAL' })}
                         </span>
                       )}
+                      {r?.extra?.origin === 'unknown' && (
+                        <span
+                          title={t('emcomm.fieldReports.originUnknownTitle', {
+                            defaultValue:
+                              'Saved in flmsg after being sent by a station; with no callsign set, Rig Bridge cannot tell whether that was you',
+                          })}
+                          style={{ marginLeft: '4px', fontSize: '8px', fontWeight: 700, color: '#f59e0b' }}
+                        >
+                          {t('emcomm.fieldReports.originUnknown', { defaultValue: 'ORIGIN?' })}
+                        </span>
+                      )}
                     </div>
                     <span style={{ color: '#888', fontSize: '10px', flexShrink: 0 }}>
                       {r.age < 1 ? 'now' : r.age < 60 ? `${r.age}m ago` : `${Math.floor(r.age / 60)}h ago`}

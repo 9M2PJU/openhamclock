@@ -4,6 +4,7 @@ import { getModeFromFreq, mapModeToRig } from '../utils/bandPlan.js';
 import { canTransmit, getLicenseClass, normalizeLicenseClass } from '../utils/privileges.js';
 import { showToast } from '../utils/toast.js';
 import { isRelayConfigured, setRelayConfigured, setRelaySessionId } from '../utils/relaySession.js';
+import { sendRelayCommand } from '../utils/relaySign';
 import { setTunedSpot } from '../services/logbookStore.js';
 
 // Default config
@@ -351,16 +352,9 @@ export const RigProvider = ({ children, rigConfig }) => {
   const sendCommand = useCallback(
     async (type, payload) => {
       if (isCloudRelay) {
-        // Route through OHC server relay
-        try {
-          await fetch(`/api/rig-bridge/relay/command?session=${encodeURIComponent(cloudRelaySession)}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ type, payload }),
-          });
-        } catch (err) {
-          console.error(`[RigContext] Cloud relay command failed:`, err);
-        }
+        // Route through OHC server relay, signed with this browser's command key
+        const r = await sendRelayCommand(cloudRelaySession, type, payload);
+        if (!r.ok) console.error(`[RigContext] Cloud relay command failed: ${r.error}`);
         return null; // No status code in relay mode
       }
       return null; // Caller handles direct mode

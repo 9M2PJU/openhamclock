@@ -21,6 +21,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { buildRigUrl } from '../../contexts/RigContext.jsx';
 import { getRelaySessionId, isRelayConfigured } from '../../utils/relaySession.js';
+import { sendRelayCommand } from '../../utils/relaySign.js';
 
 const PUSH_INTERVAL_MS = 15000;
 const CHANGE_DEBOUNCE_MS = 1000;
@@ -163,13 +164,11 @@ export default function useHardwareIndicators({ satellites, rigConfig, lightning
     const push = async () => {
       if (!active) return;
       try {
+        // Through the Cloud Relay the command is signed with this browser's
+        // relay command key (utils/relaySign.js); a paired bridge refuses
+        // unsigned commands, which would silently drop the lightning relay.
         const res = viaRelay
-          ? await fetch(`/api/rig-bridge/relay/command?session=${encodeURIComponent(getRelaySessionId() || '')}`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ type: 'indicators', payload }),
-              signal: AbortSignal.timeout(4000),
-            })
+          ? await sendRelayCommand(getRelaySessionId() || '', 'indicators', payload)
           : await fetch(`${rigUrl}/api/indicators`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json', ...(apiToken ? { 'X-RigBridge-Token': apiToken } : {}) },

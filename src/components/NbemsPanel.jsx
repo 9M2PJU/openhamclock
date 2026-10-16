@@ -60,6 +60,10 @@ export default function NbemsPanel({ apiToken = '' }) {
   const describeError = (r) => {
     if (r.error === 'relay' || r.error === 'relay-inactive')
       return t('nbems.errRelay', { defaultValue: 'Cloud relay is not connected to Rig Bridge' });
+    if (r.error === 'relay-unsigned' || (r.status === 401 && viaRelay))
+      return t('nbems.errRelayUnsigned', {
+        defaultValue: 'Rig Bridge refused an unsigned command — reconnect the Cloud Relay in Settings → Rig Bridge',
+      });
     if (r.error === 'relay-timeout')
       return t('nbems.errRelayTimeout', { defaultValue: 'No answer from Rig Bridge through the cloud relay' });
     if (r.status === 401)
@@ -203,6 +207,18 @@ export default function NbemsPanel({ apiToken = '' }) {
           </button>
         )}
       </div>
+
+      {status?.stationCall === '' && (
+        <div
+          role="alert"
+          style={{ ...box, color: '#f59e0b', border: '1px solid #78350f', fontSize: '10px', lineHeight: 1.4 }}
+        >
+          {t('nbems.noCallsign', {
+            defaultValue:
+              'No station callsign in Rig Bridge (fldigi plugin) or in flmsg. Forms saved in flmsg that were sent by a station cannot be told apart from your own, so they appear in Field Reports tagged ORIGIN?. Set your callsign to fix this.',
+          })}
+        </div>
+      )}
 
       {/* Receive pane */}
       <pre

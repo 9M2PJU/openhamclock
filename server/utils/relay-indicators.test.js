@@ -53,3 +53,28 @@ describe('cloud relay indicators', () => {
     expect(out.lightningGuard).toEqual({ lat: 45, lon: 7, warnKm: 40, repeatCloser: false, relayOn: 'warn' });
   });
 });
+
+describe('signed relay commands through the queue', () => {
+  const auth = { v: 1, ts: 1, nonce: 'a'.repeat(24), sig: 'b'.repeat(64) };
+
+  it('forwards a signed indicators payload byte-for-byte so the bridge can verify the HMAC', () => {
+    const payload = { satVisible: false, countdown: 'off', alarm: false, lightningRelay: true, extra: 'kept' };
+    const [cmd] = queueRelayCommand([], 'indicators', payload, 5, auth);
+    expect(cmd.payload).toBe(payload);
+    expect(cmd.auth).toEqual(auth);
+  });
+
+  it('still sanitizes unsigned indicators and keeps only the newest', () => {
+    let q = queueRelayCommand([], 'indicators', { lightningRelay: true, extra: 'x' }, 1);
+    q = queueRelayCommand(q, 'indicators', { lightningRelay: false }, 2);
+    expect(q).toHaveLength(1);
+    expect(q[0].payload.lightningRelay).toBe(false);
+    expect(q[0].payload.extra).toBeUndefined();
+    expect(q[0].auth).toBeUndefined();
+  });
+
+  it('carries the signature on other command types', () => {
+    const [cmd] = queueRelayCommand([], 'setFreq', { freq: 14074000 }, 3, auth);
+    expect(cmd).toMatchObject({ type: 'setFreq', payload: { freq: 14074000 }, auth });
+  });
+});

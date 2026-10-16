@@ -45,15 +45,18 @@ function sanitizeRelayIndicators(p) {
  * everything else is appended. The queue is capped at MAX_QUEUED_COMMANDS.
  * Returns the new queue.
  */
-function queueRelayCommand(commands, type, payload, now) {
+function queueRelayCommand(commands, type, payload, now, auth = null) {
   let next = Array.isArray(commands) ? commands.slice() : [];
   if (type === 'indicators') {
     const clean = sanitizeRelayIndicators(payload);
     if (!clean) return next;
     next = next.filter((c) => c.type !== 'indicators');
-    next.push({ type, payload: clean, timestamp: now });
+    // A signed command is forwarded byte-for-byte: the bridge verifies the
+    // HMAC over the browser's own payload (and sanitizes it again itself), so
+    // rewriting it here would break the signature.
+    next.push(auth ? { type, payload, auth, timestamp: now } : { type, payload: clean, timestamp: now });
   } else {
-    next.push({ type, payload, timestamp: now });
+    next.push({ type, payload, ...(auth ? { auth } : {}), timestamp: now });
   }
   return next.length > MAX_QUEUED_COMMANDS ? next.slice(-MAX_QUEUED_COMMANDS) : next;
 }

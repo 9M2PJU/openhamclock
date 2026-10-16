@@ -245,6 +245,8 @@ const descriptor = {
     function statusPayload() {
       return {
         connected,
+        // '' = no callsign in the plugin or in flmsg: the panel warns
+        stationCall: stationCall(),
         version,
         freq,
         mode,
@@ -577,7 +579,7 @@ const descriptor = {
       const { fields, form, senders, wrapped, origin, ...report } = record;
       pending.push({
         ...report,
-        extra: { ...report.extra, ...(origin === 'local' ? { origin: 'local' } : {}) },
+        extra: { ...report.extra, ...(origin === 'local' || origin === 'unknown' ? { origin } : {}) },
         receivedVia: origin === 'local' ? 'nbems-flmsg-local' : 'nbems-flmsg',
       });
       if (!postTimer) {
@@ -599,7 +601,11 @@ const descriptor = {
       vlog(
         `flmsg ${record.origin || 'form'}: ${record.formType} from ${record.callsign || 'unknown'}${show ? '' : ' (not forwarded)'}`,
       );
-      if (record.origin !== 'local') {
+      if (record.origin === 'unknown') {
+        log(
+          `flmsg form of unknown origin (no station callsign set): ${record.formType} sent by ${record.callsign || 'unknown'} — forwarded, tagged "origin unknown"`,
+        );
+      } else if (record.origin !== 'local') {
         log(
           `flmsg form received: ${record.formType} from ${record.callsign || 'unknown'}${record.text ? ` — ${record.text.slice(0, 60)}` : ''}`,
         );
@@ -704,7 +710,6 @@ const descriptor = {
         rxMethod,
         lastContact,
         modes: modemNames || [],
-        stationCall: stationCall(),
         ...statusPayload(),
         lastError: connected ? null : lastError,
         flmsg: watcher
