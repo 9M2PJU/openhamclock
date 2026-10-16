@@ -530,11 +530,14 @@ export function ackOutbox(outbox, sent) {
     reports: { ...outbox.reports },
     docs: { ...(outbox.docs || {}) },
   };
-  for (const r of sent.roster || []) if (next.roster[r.call] === r) delete next.roster[r.call];
-  for (const d of sent.docs || []) if (next.docs[d.id] === d) delete next.docs[d.id];
+  // By value, not identity: the outbox is re-read from localStorage (shared
+  // by every tab), so what was sent and what is stored are different objects.
+  const same = (a, b) => a === b || JSON.stringify(a) === JSON.stringify(b);
+  for (const r of sent.roster || []) if (same(next.roster[r.call], r)) delete next.roster[r.call];
+  for (const d of sent.docs || []) if (same(next.docs[d.id], d)) delete next.docs[d.id];
   for (const e of sent.events || []) delete next.events[e.id];
   for (const r of sent.reports || []) delete next.reports[r.id];
-  next.board = outbox.board && outbox.board !== sent.board ? outbox.board : null;
+  next.board = outbox.board && !same(outbox.board, sent.board) ? outbox.board : null;
   return next;
 }
 
