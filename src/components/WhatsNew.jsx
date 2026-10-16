@@ -202,7 +202,7 @@ const CHANGELOG = [
       {
         icon: '🩹',
         title: 'FIX: Crashes, Telemetry, First Run, a Lagging Version Badge',
-        desc: 'The Propagation panel could crash with React error #310, and the azimuthal view could crash too; both are fixed. APRS telemetry, broken on every frame since a parser rewrite, is stored again, and N3FJP QSOs without a grid are placed by callsign lookup again. Settings opens on the first visit again, with one prompt instead of a stack. The version badge beside your callsign no longer shows the previous version for up to an hour after an update, and live streams no longer hold up Update ready → Reload in Chrome. The server had blocked the microphone for every page; OpenHamClock itself may now use it (the Decoder needs it), embedded frames still may not.',
+        desc: 'The Propagation panel could take the whole dashboard down with React error #310 when its data finished loading, and switching to the azimuthal view always failed and quietly fell back to the flat map; both are fixed. APRS telemetry, broken on every frame since a parser rewrite, is stored again, and N3FJP QSOs without a grid are placed by callsign lookup again. Settings opens on the first visit again, with one prompt instead of a stack. The version badge beside your callsign no longer shows the previous version for up to an hour after an update, and live streams no longer hold up Update ready → Reload in Chrome. The server had blocked the microphone for every page; OpenHamClock itself may now use it (the Decoder needs it), embedded frames still may not.',
       },
       {
         icon: '📚',
