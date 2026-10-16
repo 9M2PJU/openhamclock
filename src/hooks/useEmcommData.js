@@ -7,9 +7,9 @@
  * declarations fall back to the newest last-known copy — the service
  * worker's cached response or an offline area pack snapshot (Settings →
  * Map Layers → Offline map areas) — and `asOf.<kind>` carries its
- * timestamp (null when live). With no connection the US state cannot be
- * looked up, so declarations come straight from the pack, which saved the
- * state it was resolved for at download time.
+ * timestamp (null when live). The US state comes from bundled outlines
+ * (utils/usState.js), so it resolves offline too; if it still cannot be
+ * found, declarations come straight from the pack covering DE.
  */
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { apiFetch } from '../utils/apiFetch';
@@ -87,8 +87,8 @@ export const useEmcommData = (options = {}) => {
     // Resolve state from lat/lon if not already set
     const resolved = await resolveState(loc || {});
     if (!resolved?.state) {
-      // Offline (or the lookup failed): the newest offline area covering DE
-      // saved the declarations for its state at download time.
+      // No state (point outside the outlines and Nominatim unreachable): the
+      // newest offline area covering DE saved its state's declarations.
       if (loc?.lat == null || loc?.lon == null) return;
       const snap = await loadPackSnapshot(loc.lat, loc.lon, 'disasters');
       if (snap && (snap.fetchedAt || 0) > liveAtRef.current.disasters) {
