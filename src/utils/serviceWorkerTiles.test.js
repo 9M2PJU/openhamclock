@@ -102,12 +102,21 @@ describe('service worker: offline pack tiles', () => {
     expect(posted).toEqual([]);
   });
 
-  it('prefers the network when it works, even with a pack copy', async () => {
+  it('serves a saved tile from the pack at once; no badge while the server answers', async () => {
     const fetchImpl = vi.fn(async () => img('net'));
     const { dispatchFetch, posted } = loadWorker({ fetchImpl, packTiles: { [TILE]: img('pack') } });
-    expect(await (await dispatchFetch({ url: TILE })).text()).toBe('net');
+    expect(await (await dispatchFetch({ url: TILE })).text()).toBe('pack');
+    expect(fetchImpl).toHaveBeenCalledWith(expect.anything(), { method: 'HEAD' }); // background reachability probe only
     expect(posted).toEqual([]);
   });
+
+  it('answers a saved tile even while the network hangs, and shows the badge once the probe times out', async () => {
+    const hung = vi.fn(() => new Promise(() => {}));
+    const { dispatchFetch, posted } = loadWorker({ fetchImpl: hung, packTiles: { [TILE]: img('pack') } });
+    const res = await dispatchFetch({ url: TILE }); // resolves after the probe's 4 s waitUntil
+    expect(await res.text()).toBe('pack');
+    expect(posted.map((m) => m.type)).toEqual(['OHC_OFFLINE_PACK_TILE']);
+  }, 10000);
 
   it('serves the pack copy when the network fails and tells the page', async () => {
     const fetchImpl = vi.fn(async () => {
