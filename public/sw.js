@@ -168,14 +168,16 @@ self.addEventListener('fetch', function (event) {
   var req = event.request;
   var decision = classify(req);
 
-  // Just (re)started and the user tile sources are not loaded yet: hold a
-  // cross-origin image until they are, so an offline LAN tile is not missed.
+  // Just (re)started and the user tile sources are not loaded yet: hold an
+  // image from a LAN/local host (where an operator's own tile server lives)
+  // until they are, so an offline tile is not missed. Public hosts are never
+  // held — they keep the browser's default handling.
   if (
     decision === 'bypass' &&
     tileRoutingPending &&
     req.method === 'GET' &&
     req.destination === 'image' &&
-    req.url.indexOf(self.location.origin + '/') !== 0
+    POLICY.isLocalNetworkUrl(req.url, self.location.origin)
   ) {
     event.respondWith(
       tileRoutingReady.then(function () {
@@ -220,7 +222,14 @@ async function handleNavigation(req) {
 async function handleAsset(req) {
   var cached = await caches.match(req);
   if (cached) return cached;
-  var res = await fetch(req);
+  var res;
+  try {
+    res = await fetch(req);
+  } catch (e) {
+    // Offline and never cached (a lazy chunk or font not used online yet):
+    // answer with a plain 504 rather than rejecting the fetch event.
+    return new Response('', { status: 504, statusText: 'Offline' });
+  }
   // /vendor/* may be the CDN copy the server redirects to (installs without
   // self-hosted Leaflet): cache that too, even opaque, or the map cannot
   // start offline.

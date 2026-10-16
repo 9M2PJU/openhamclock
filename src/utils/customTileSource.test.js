@@ -11,6 +11,7 @@ import {
   classifyRequest,
   tileUrlPrefix,
   tileUrlPrefixes,
+  isLocalNetworkUrl,
   parseTileUrl,
   overzoomSource,
   isCacheableVendorResponse,
@@ -110,6 +111,28 @@ describe('policy helpers for custom sources and over-zoom', () => {
     ]);
     expect(tileUrlPrefixes(LAN)).toEqual(['http://192.168.1.5:8080/data/osm/']);
     expect(tileUrlPrefixes('')).toEqual([]);
+  });
+
+  it('isLocalNetworkUrl spots LAN tile servers only', () => {
+    for (const u of [
+      'http://localhost:3656/t/1/2/3.png',
+      'http://192.168.1.5:8080/x.png',
+      'http://10.0.0.2/x.png',
+      'http://172.20.1.1/x.png',
+      'http://pi.local/x.png',
+      'http://shack.lan/x.png',
+    ]) {
+      expect(isLocalNetworkUrl(u, ORIGIN)).toBe(true);
+    }
+    for (const u of [
+      'https://services.arcgisonline.com/x',
+      'http://172.32.0.1/x.png',
+      'http://8.8.8.8/x.png',
+      `${ORIGIN}/assets/x.png`,
+      'not a url',
+    ]) {
+      expect(isLocalNetworkUrl(u, ORIGIN)).toBe(false);
+    }
   });
 
   it('classifies requests under a registered prefix as tiles, never the app API', () => {

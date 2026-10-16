@@ -173,6 +173,30 @@
   }
 
   /**
+   * True for a cross-origin URL on a local/LAN host — localhost, a private
+   * IPv4 address, or a .local/.lan/.home.arpa name — where an operator's
+   * own tile server typically runs.
+   */
+  function isLocalNetworkUrl(url, origin) {
+    var u;
+    try {
+      u = new URL(url, origin);
+    } catch (e) {
+      return false;
+    }
+    if (u.origin === origin) return false;
+    var h = u.hostname.toLowerCase();
+    if (h === 'localhost' || h === '[::1]' || /\.(local|lan|home\.arpa|internal)$/.test(h)) return true;
+    var m = /^(\d+)\.(\d+)\.\d+\.\d+$/.exec(h);
+    if (!m) return false;
+    var a = +m[1];
+    var b = +m[2];
+    return (
+      a === 10 || a === 127 || (a === 192 && b === 168) || (a === 172 && b >= 16 && b <= 31) || (a === 169 && b === 254)
+    );
+  }
+
+  /**
    * The fixed part of a tile URL template, up to its first placeholder —
    * what the worker matches requests against for a user-supplied source.
    * Returns '' when the template has no usable fixed scheme+host part.
@@ -340,6 +364,7 @@
     MAX_OVERZOOM_LEVELS: MAX_OVERZOOM_LEVELS,
     tileUrlPrefix: tileUrlPrefix,
     tileUrlPrefixes: tileUrlPrefixes,
+    isLocalNetworkUrl: isLocalNetworkUrl,
     parseTileUrl: parseTileUrl,
     subdomainFor: subdomainFor,
     buildTileUrl: buildTileUrl,

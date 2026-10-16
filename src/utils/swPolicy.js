@@ -21,6 +21,7 @@ export const {
   MAX_OVERZOOM_LEVELS,
   tileUrlPrefix,
   tileUrlPrefixes,
+  isLocalNetworkUrl,
   parseTileUrl,
   subdomainFor,
   buildTileUrl,
