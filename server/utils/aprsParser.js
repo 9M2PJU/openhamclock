@@ -363,23 +363,28 @@ function parseAprsPacket(line) {
     const { lat, lon, symbolTable, symbolCode } = parsed;
     if (!Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) return null;
 
-    const comment = stripDao(parsed.comment || '');
+    let comment = stripDao(parsed.comment || '');
     let speed = parsed.speed ?? null;
     let course = parsed.course ?? null;
     let altitude = parsed.altitude ?? null;
 
-    // Uncompressed extensions in the comment: CSE/SPD and /A=FFFFFF (feet)
+    // Uncompressed extensions in the comment: CSE/SPD and /A=FFFFFF (feet).
+    // Both are position data, so they come out of the comment once read —
+    // left in, a shelter beacon displayed as "/A=000921OPEN" (#1235).
     if (speed == null) {
       const csMatch = comment.match(/^(\d{3})\/(\d{3})/);
       if (csMatch && Number(csMatch[1]) <= 360) {
         course = parseInt(csMatch[1]);
         speed = parseInt(csMatch[2]); // knots
+        comment = comment.slice(csMatch[0].length);
       }
     }
-    if (altitude == null) {
-      const altMatch = comment.match(/\/A=(-\d{5}|\d{6})/);
-      if (altMatch) altitude = parseInt(altMatch[1]); // feet
+    const altMatch = comment.match(/\/A=(-\d{5}|\d{6})/);
+    if (altMatch) {
+      if (altitude == null) altitude = parseInt(altMatch[1]); // feet
+      comment = comment.replace(altMatch[0], '');
     }
+    comment = comment.trim();
 
     const { tokens, cleanComment } = parseResourceTokens(comment);
     // Objects and items are things a station reports (a repeater, a shelter,
