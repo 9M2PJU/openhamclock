@@ -3,14 +3,18 @@
  * Polls NWS Alerts, FEMA Shelters, and FEMA Disaster Declarations.
  * Zero API calls when not in EmComm layout.
  *
- * Offline: when a request fails, alerts and shelters fall back to the
- * newest last-known copy — the service worker's cached response or an
- * offline area pack snapshot (Settings → Map Layers → Offline map areas) —
- * and `asOf.alerts` / `asOf.shelters` carry its timestamp (null when live).
+ * Offline: when a request fails, alerts, shelters, and disaster
+ * declarations fall back to the newest last-known copy — the service
+ * worker's cached response or an offline area pack snapshot (Settings →
+ * Map Layers → Offline map areas) — and `asOf.<kind>` carries its
+ * timestamp (null when live). With no connection the US state cannot be
+ * looked up, so declarations come straight from the pack, which saved the
+ * state it was resolved for at download time.
  */
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { apiFetch } from '../utils/apiFetch';
-import { fetchWithPackFallback } from '../utils/offlinePackStore.js';
+import { fetchWithPackFallback, loadPackSnapshot } from '../utils/offlinePackStore.js';
+import { resolveUsState } from '../utils/usState.js';
 
 const ALERTS_INTERVAL = 3 * 60 * 1000; // 3 min
 const SHELTERS_INTERVAL = 5 * 60 * 1000; // 5 min
@@ -26,36 +30,22 @@ export const useEmcommData = (options = {}) => {
   const [disasters, setDisasters] = useState([]);
   const [loading, setLoading] = useState(false);
   // Timestamp of the last-known copy being shown per kind (null = live)
-  const [asOf, setAsOf] = useState({ alerts: null, shelters: null });
+  const [asOf, setAsOf] = useState({ alerts: null, shelters: null, disasters: null });
   // When each kind last came back live — an older offline copy never
   // replaces newer live data that is already on screen.
-  const liveAtRef = useRef({ alerts: 0, shelters: 0 });
+  const liveAtRef = useRef({ alerts: 0, shelters: 0, disasters: 0 });
 
   const locationRef = useRef(location);
   locationRef.current = location;
   const resolvedStateRef = useRef(null);
 
-  // Reverse geocode lat/lon to state code via Nominatim
+  // Reverse geocode lat/lon to state code (Nominatim, remembered per location)
   const resolveState = useCallback(async (loc) => {
     if (loc.state || loc.lat == null || loc.lon == null) return loc;
-    // Use cached result if location hasn't changed
-    if (resolvedStateRef.current?.lat === loc.lat && resolvedStateRef.current?.lon === loc.lon) {
-      return { ...loc, state: resolvedStateRef.current.state };
-    }
-    try {
-      const res = await fetch(
-        `https://nominatim.openstreetmap.org/reverse?lat=${loc.lat}&lon=${loc.lon}&format=json&zoom=5`,
-        { headers: { 'User-Agent': 'OpenHamClock' } },
-      );
-      const data = await res.json();
-      const iso = data?.address?.['ISO3166-2-lvl4']; // e.g., "US-CO"
-      if (iso) {
-        const state = iso.split('-')[1];
-        resolvedStateRef.current = { lat: loc.lat, lon: loc.lon, state };
-        return { ...loc, state };
-      }
-    } catch {
-      // Silently fail — disasters panel just stays empty
+    const state = await resolveUsState(loc.lat, loc.lon);
+    if (state) {
+      resolvedStateRef.current = { lat: loc.lat, lon: loc.lon, state };
+      return { ...loc, state };
     }
     return loc;
   }, []);
@@ -96,23 +86,23 @@ export const useEmcommData = (options = {}) => {
     const loc = locationRef.current;
     // Resolve state from lat/lon if not already set
     const resolved = await resolveState(loc || {});
-    if (!resolved?.state) return;
+    if (!resolved?.state) {
+      // Offline (or the lookup failed): the newest offline area covering DE
+      // saved the declarations for its state at download time.
+      if (loc?.lat == null || loc?.lon == null) return;
+      const snap = await loadPackSnapshot(loc.lat, loc.lon, 'disasters');
+      if (snap && (snap.fetchedAt || 0) > liveAtRef.current.disasters) {
+        setDisasters(Array.isArray(snap.data) ? snap.data : []);
+        setAsOf((prev) => ({ ...prev, disasters: snap.fetchedAt || null }));
+      }
+      return;
+    }
     // Update ref so subsequent calls use cached state
     if (!locationRef.current?.state && resolved.state) {
       locationRef.current = { ...locationRef.current, state: resolved.state };
     }
-    try {
-      const res = await apiFetch(`/api/emcomm/disasters?state=${encodeURIComponent(resolved.state)}`, {
-        cache: 'no-store',
-      });
-      if (res?.ok) {
-        const data = await res.json();
-        setDisasters(Array.isArray(data) ? data : []);
-      }
-    } catch (err) {
-      console.error('[EmComm] Disasters fetch error:', err);
-    }
-  }, [resolveState]);
+    await fetchKind('disasters', `/api/emcomm/disasters?state=${encodeURIComponent(resolved.state)}`, setDisasters);
+  }, [resolveState, fetchKind]);
 
   // Poll all endpoints at different intervals
   useEffect(() => {
@@ -121,8 +111,8 @@ export const useEmcommData = (options = {}) => {
       setAlerts([]);
       setShelters([]);
       setDisasters([]);
-      setAsOf({ alerts: null, shelters: null });
-      liveAtRef.current = { alerts: 0, shelters: 0 };
+      setAsOf({ alerts: null, shelters: null, disasters: null });
+      liveAtRef.current = { alerts: 0, shelters: 0, disasters: 0 };
       return;
     }
 

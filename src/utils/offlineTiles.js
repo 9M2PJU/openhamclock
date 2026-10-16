@@ -10,6 +10,8 @@
  * box crosses the antimeridian (e.g. west 170, east -170).
  */
 
+import { subdomainFor, buildTileUrl } from './swPolicy.js';
+
 export const MAX_MERCATOR_LAT = 85.0511287798066;
 
 /** Zoom range offered by the download control. */
@@ -195,33 +197,11 @@ export function formatBytes(bytes) {
 }
 
 /**
- * Subdomain Leaflet picks for a tile — the same formula as
- * L.TileLayer._getSubdomain — so pack URLs match the map's requests
- * byte-for-byte and the service worker finds them in the cache.
+ * Leaflet-identical subdomain choice and URL filling. The implementation
+ * lives in public/sw-policy.js so the service worker (which rebuilds
+ * ancestor-tile URLs for over-zoom) and the page share one copy.
  */
-export function subdomainFor(x, y, subdomains = 'abc') {
-  const list = typeof subdomains === 'string' ? subdomains.split('') : subdomains;
-  if (!list || list.length === 0) return '';
-  return list[Math.abs(x + y) % list.length];
-}
-
-/**
- * Fill a Leaflet URL template ({s} {z} {x} {y} {r} {lang}) for one tile.
- * Unknown {placeholders} are left as-is so a mistake shows up in the URL
- * rather than silently fetching the wrong tile.
- */
-export function buildTileUrl(template, tile, { subdomains = 'abc', lang = 'en', retina = false } = {}) {
-  if (!template || !tile) return '';
-  const values = {
-    s: subdomainFor(tile.x, tile.y, subdomains),
-    z: tile.z,
-    x: tile.x,
-    y: tile.y,
-    r: retina ? '@2x' : '',
-    lang,
-  };
-  return template.replace(/\{ *([\w_-]+) *\}/g, (m, key) => (key in values ? String(values[key]) : m));
-}
+export { subdomainFor, buildTileUrl };
 
 /** Whether a MAP_STYLES entry may be downloaded as an offline pack. */
 export function isOfflinePackStyle(style) {

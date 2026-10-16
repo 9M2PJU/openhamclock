@@ -7,6 +7,9 @@
  * 2. Server config (from .env file)
  * 3. Default values
  */
+
+import { readCustomTileSource, customSourceToStyle, CUSTOM_STYLE_ID } from './customTileSource.js';
+
 // Map offset for MODIS Gibs imagery to attempt to load latest global planetary coverage
 const getGIBSUrl = (offsetDays = 0) => {
   // Subtracts offsetDays and 12 hours to ensure a complete global pass
@@ -469,6 +472,8 @@ export const getCartoApiKey = () => {
 };
 
 const cartoApiKey = getCartoApiKey();
+// Operator's own tile server (Settings → Map Layers → Offline map areas).
+const customStyle = customSourceToStyle(readCustomTileSource());
 
 const CARTO_ATTRIBUTION =
   '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>';
@@ -558,6 +563,62 @@ export const MAP_STYLES = {
     offlineAvgTileBytes: 28 * 1024, // measured: ~10–36 KB JPEG tiles, z6–z16
     offlineMaxZoom: 16,
   },
+  // ── Regional offline-capable basemaps (national mapping agencies) ──────
+  // Each is an open-licence service whose terms allow copying the map data
+  // and do not forbid fetching an area ahead of time at a polite rate.
+  // `regional: true` keeps them out of the default wall-display rotation.
+  ignPlan: {
+    name: 'Plan IGN (France)',
+    // IGN Géoplateforme, Plan IGN v2. Licence Ouverte / Open Licence 2.0
+    // (Etalab); the Géoplateforme WMTS API is "non soumis à limite
+    // d'usage" (cartes.gouv.fr/cgu). France and overseas territories in
+    // detail, the world at low zoom.
+    url: 'https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2&STYLE=normal&TILEMATRIXSET=PM&FORMAT=image/png&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}',
+    attribution: '&copy; <a href="https://www.ign.fr/">IGN</a> Plan IGN, Licence Ouverte Etalab 2.0',
+    offlinePack: true,
+    offlineAvgTileBytes: 50 * 1024, // measured 39–74 KB PNG, z6–z16
+    offlineMaxZoom: 18,
+    regional: true,
+  },
+  gsiStd: {
+    name: 'GSI Standard (Japan)',
+    // Geospatial Information Authority of Japan, 地理院タイル 標準地図.
+    // GSI Content Terms of Use = Public Data License 1.0 (reproduction and
+    // redistribution allowed with attribution, CC BY 4.0-compatible); the
+    // service asks only that clients not overload it.
+    url: 'https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png',
+    attribution: '<a href="https://maps.gsi.go.jp/development/ichiran.html">地理院タイル (GSI)</a>',
+    offlinePack: true,
+    offlineAvgTileBytes: 55 * 1024, // measured 9–105 KB PNG (dense Tokyo high)
+    offlineMaxZoom: 18,
+    regional: true,
+  },
+  kartverketTopo: {
+    name: 'Kartverket Topo (Norway)',
+    // Norwegian Mapping Authority topographic cache, CC BY 4.0
+    // (kartverket.no/api-og-data/vilkar-for-bruk) — attribution "© Kartverket".
+    url: 'https://cache.kartverket.no/v1/wmts/1.0.0/topo/default/webmercator/{z}/{y}/{x}.png',
+    attribution: '&copy; <a href="https://www.kartverket.no/">Kartverket</a> (CC BY 4.0)',
+    offlinePack: true,
+    offlineAvgTileBytes: 70 * 1024, // measured 1–127 KB PNG
+    offlineMaxZoom: 18,
+    regional: true,
+  },
+  gaBase: {
+    name: 'GA Base Map (Australia)',
+    // Geoscience Australia National Base Map, CC BY 4.0
+    // (© Commonwealth of Australia (Geoscience Australia)); includes
+    // OpenStreetMap-derived data (ODbL). Tiles exist to z16.
+    url: 'https://services.ga.gov.au/gis/rest/services/NationalBaseMap/MapServer/tile/{z}/{y}/{x}',
+    attribution:
+      '&copy; Commonwealth of Australia (<a href="https://www.ga.gov.au/">Geoscience Australia</a>) CC BY 4.0, &copy; OpenStreetMap contributors',
+    offlinePack: true,
+    offlineAvgTileBytes: 45 * 1024, // measured 2–114 KB PNG
+    offlineMaxZoom: 16,
+    maxNativeZoom: 16, // the service 404s past z16 — Leaflet scales z16 up
+    regional: true,
+  },
+  ...(customStyle ? { [CUSTOM_STYLE_ID]: customStyle } : {}),
   natgeo: {
     name: 'Nat Geo',
     url: 'https://services.arcgisonline.com/ArcGIS/rest/services/NatGeo_World_Map/MapServer/tile/{z}/{y}/{x}',
