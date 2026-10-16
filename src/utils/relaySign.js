@@ -114,20 +114,76 @@ export function hmacSha256Fallback(keyBytes, msgBytes) {
   return sha256(outer);
 }
 
-/** HMAC-SHA256(key hex, text) → lowercase hex. */
-export async function hmacHex(keyHex, text) {
-  const keyBytes = fromHex(keyHex);
-  const msg = new TextEncoder().encode(text);
+/** HMAC-SHA256 over bytes → bytes (Web Crypto when available). */
+async function hmacBytes(keyBytes, msg) {
   const subtle = globalThis.crypto?.subtle;
   if (subtle) {
     try {
       const k = await subtle.importKey('raw', keyBytes, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
-      return toHex(new Uint8Array(await subtle.sign('HMAC', k, msg)));
+      return new Uint8Array(await subtle.sign('HMAC', k, msg));
     } catch {
       /* fall through to the pure-JS version */
     }
   }
-  return toHex(hmacSha256Fallback(keyBytes, msg));
+  return hmacSha256Fallback(keyBytes, msg);
+}
+
+/** HMAC-SHA256(key hex, text) → lowercase hex. */
+export async function hmacHex(keyHex, text) {
+  return toHex(await hmacBytes(fromHex(keyHex), new TextEncoder().encode(text)));
+}
+
+/**
+ * The relay read token: HKDF-SHA256 (RFC 5869, no salt) of the command key
+ * with info "ohc-relay-read-v1\n" + session, 32 bytes, as hex. Rig Bridge
+ * registers its hash with the server; this browser presents the token.
+ */
+export async function deriveReadToken(keyHex, session) {
+  if (!KEY_RE.test(keyHex || '')) return '';
+  const prk = await hmacBytes(new Uint8Array(32), fromHex(keyHex));
+  const info = new TextEncoder().encode(`ohc-relay-read-v1\n${session}`);
+  const msg = new Uint8Array(info.length + 1);
+  msg.set(info);
+  msg[info.length] = 1;
+  return toHex(await hmacBytes(prk, msg));
+}
+
+const readTokenCache = new Map(); // `${key}|${session}` → Promise<token>
+
+/** Headers proving this browser may read the relay session ({} without a key). */
+export async function relayReadHeaders(session) {
+  const key = getCommandKey();
+  if (!key || !session) return {};
+  const id = `${key}|${session}`;
+  if (!readTokenCache.has(id)) readTokenCache.set(id, deriveReadToken(key, session));
+  const token = await readTokenCache.get(id);
+  return token ? { 'X-Relay-Read': token } : {};
+}
+
+/**
+ * URL for the relay's live stream. With a command key, first buys a one-time
+ * ticket with the read token (so no secret ever goes in a URL); without one,
+ * the plain session URL (accepted only for unpaired sessions, until the grace
+ * date).
+ * @returns {Promise<{ url: string|null, error?: string, status?: number }>}
+ */
+export async function relayStreamUrl(session) {
+  const base = `/api/rig-bridge/relay/stream?session=${encodeURIComponent(session)}`;
+  const headers = await relayReadHeaders(session);
+  if (!headers['X-Relay-Read']) return { url: base };
+  try {
+    const res = await fetch(`/api/rig-bridge/relay/stream-ticket?session=${encodeURIComponent(session)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...headers },
+      body: '{}',
+    });
+    if (res.status === 404) return { url: base }; // older server without tickets
+    if (!res.ok) return { url: null, status: res.status, error: 'refused' };
+    const { ticket } = await res.json();
+    return { url: `${base}&ticket=${encodeURIComponent(ticket)}` };
+  } catch {
+    return { url: null, error: 'unreachable' };
+  }
 }
 
 function randomHex(nBytes) {

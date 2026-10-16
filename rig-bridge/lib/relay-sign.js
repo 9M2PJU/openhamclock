@@ -18,6 +18,17 @@
  * Replays are refused: ts must be within ±MAX_SKEW_MS of this computer's
  * clock and each nonce is accepted once.
  *
+ * Reading the relay (state, decodes, APRS, the live stream) is protected
+ * with a read token derived from the same key:
+ *
+ *   readToken = HKDF-SHA256(ikm = key, salt = none, info = "ohc-relay-read-v1\n" + session, 32 bytes)
+ *
+ * The bridge registers sha256(readToken) with the server (in its
+ * authenticated state pushes and command polls); the paired browser derives
+ * the same token and presents it in an X-Relay-Read header, and the server
+ * compares hashes. A separate HKDF label keeps the read token useless for
+ * signing commands, and the server only ever holds its hash.
+ *
  * The browser side is src/utils/relaySign.js; a test checks they agree.
  */
 
@@ -48,6 +59,18 @@ function isValidKey(key) {
 /** HMAC-SHA256(key, text) as lowercase hex. key = 64 hex chars. */
 function hmacHex(key, text) {
   return crypto.createHmac('sha256', Buffer.from(key, 'hex')).update(text, 'utf8').digest('hex');
+}
+
+/** The relay read token for a key + session (64 hex). '' without a valid key. */
+function deriveReadToken(key, session) {
+  if (!isValidKey(key)) return '';
+  const info = Buffer.from(`ohc-relay-read-v1\n${session}`, 'utf8');
+  return Buffer.from(crypto.hkdfSync('sha256', Buffer.from(key, 'hex'), Buffer.alloc(0), info, 32)).toString('hex');
+}
+
+/** What the server stores and compares: sha256 of the token's bytes (64 hex). */
+function readTokenHash(token) {
+  return crypto.createHash('sha256').update(Buffer.from(token, 'hex')).digest('hex');
 }
 
 /** Sign a command (used by tests and tools; browsers use src/utils/relaySign.js). */
@@ -115,4 +138,6 @@ module.exports = {
   hmacHex,
   signCommand,
   createCommandVerifier,
+  deriveReadToken,
+  readTokenHash,
 };

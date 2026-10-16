@@ -957,6 +957,7 @@ export default function ClassicLayout(props) {
             onToggleSatellites={toggleSatellites}
             hoveredSpot={hoveredSpot}
             hideOverlays={true}
+            controlsBottomInset={56}
             callsign={config.callsign}
             lowMemoryMode={config.lowMemoryMode}
             allUnits={config.allUnits}
@@ -1476,6 +1477,7 @@ export default function ClassicLayout(props) {
             onToggleSatellites={toggleSatellites}
             hoveredSpot={hoveredSpot}
             hideOverlays={true}
+            controlsBottomInset={66}
             callsign={config.callsign}
             lowMemoryMode={config.lowMemoryMode}
             allUnits={config.allUnits}

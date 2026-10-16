@@ -389,8 +389,20 @@ export default function WinlinkReachView({
             defaultValue: '{{power}} W · {{antenna}} · SSN {{ssn}}',
             power: parseFloat(propConfig?.power) || 100,
             antenna: antennaName,
-            ssn: Math.round(ssn ?? 100),
+            ssn: Math.round(reach.ssnUsed ?? ssn ?? 100),
           })}
+          {reach.ssnSource === 'solar-cycle' && (
+            <span
+              data-testid="ssn-month"
+              title={t('winlinkReach.ssnMonthTitle', {
+                defaultValue:
+                  'Display time is in another month: predictions use that month’s smoothed sunspot number from the NOAA SWPC solar-cycle data.',
+              })}
+            >
+              {' '}
+              {t('winlinkReach.ssnMonth', { defaultValue: '(month)' })}
+            </span>
+          )}
         </span>
       </div>
 

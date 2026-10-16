@@ -129,9 +129,15 @@ export function classifyStatus(reliability, snrMargin = null, thresholds = DEFAU
  *           VARA HF (2300), PACTOR 3, ARDOP and WINMOR; page 4 (500 Hz modes,
  *           WGN): VARA 500, PACTOR 2, ARDOP 500 and WINMOR 500 all still pass
  *           data at −5 dB. −5 dB was the LOWEST SNR TESTED, so these are
- *           conservative floors (the true floor may be lower). The revised
- *           "Take Three" edition (2 Nov 2020, simulator re-calibrated with SCS)
- *           tested 30 → 0 dB and all modes still operated at 0 dB.
+ *           conservative floors (the true floor may be lower). The "Take Two"
+ *           edition (5 Jul 2020, noise tracking and multipath corrected with
+ *           SCS's input) again ran 20 → −5 dB: "All modes were able to
+ *           operate over this range". "Take Three" (2 Nov 2020, further
+ *           re-calibrated) tested 30 → 0 dB; all modes still operated at 0 dB.
+ *   [RPR]   Wavecom "Robust Packet Radio (RPR)" protocol sheet (decoder
+ *           vendor documenting SCS's mode): "Signal-to-noise ratio typ. 7 to
+ *           10 dB with AWGN-channel (3 Khz bandwidth)". The lower end, +7 dB,
+ *           is used.
  *   [ARDOP] R. Muething KN6KB, M. Pitts N8OHU, J. Wiseman GM8BPQ, "ARDOP",
  *           ARRL/TAPR DCC 2015, Fig. 3 p.101: ARQ still passes data at −5 dB
  *           S:N (3 kHz) for 200 Hz and 2000 Hz bandwidth.
@@ -145,10 +151,10 @@ export function classifyStatus(reliability, snrMargin = null, thresholds = DEFAU
  *           is full speed (5629 bps) at "S/N 14.5 dB @ 4 kHz"
  *           (rosmodem.wordpress.com, 2017-09-03) — a ceiling, not a floor.
  *
- * Still estimates (no published or measured figure found): VARA 2750 (not
- * in the IONOS tests — scored like VARA 2300), PACTOR 1-only operation
- * (code 12 gateways also speak P2, which was measured), Robust Packet, and
- * HF AX.25 (300 bd AFSK, no FEC, assumed +5 dB).
+ * Still estimates (no published or measured figure found, searched again
+ * 2026-10-15): VARA 2750 (in none of the three IONOS editions — scored like
+ * VARA 2300), PACTOR 1-only operation (code 12 gateways also speak P2,
+ * which was measured), and HF AX.25 (300 bd AFSK, no FEC, assumed +5 dB).
  *
  * `basis`: 'measured' (independent simulator measurement), 'vendor'
  * (manufacturer's specification) or 'estimate'.
@@ -156,7 +162,7 @@ export function classifyStatus(reliability, snrMargin = null, thresholds = DEFAU
 export const PACTOR4_FLOOR_DB = -19; // [P4]
 const PACTOR4_CODES = new Set([17, 18, 19]);
 
-const SRC_IONOS = 'Winlink IONOS simulator comparison, N5TW, May 2020 (lowest SNR tested)';
+const SRC_IONOS = 'Winlink IONOS simulator comparison, N5TW, May & Jul 2020 (lowest SNR tested)';
 const SRC_ARDOP = 'ARDOP, TAPR DCC 2015 Fig. 3; Winlink IONOS comparison, May 2020';
 const SRC_P4 = 'SCS P4dragon DR-7800 manual §3.3';
 const HF_PACKET = { floorDb: 5, basis: 'estimate', source: 'HF AX.25 300 bd AFSK, no FEC — assumed' };
@@ -180,7 +186,7 @@ export const WINLINK_MODE_SNR = Object.freeze({
   // WINMOR (retired) — measured at 1600 and 500 Hz
   22: { floorDb: -5, basis: 'measured', source: `WINMOR: ${SRC_IONOS}` },
   // Robust Packet — no figure
-  30: { floorDb: -5, basis: 'estimate', source: 'Robust Packet: no published floor — set like ARDOP' },
+  30: { floorDb: 7, basis: 'vendor', source: 'Robust Packet: Wavecom RPR sheet, typ. 7–10 dB AWGN in 3 kHz' },
   // ARDOP
   41: { floorDb: -5, basis: 'measured', source: SRC_ARDOP },
   42: { floorDb: -5, basis: 'measured', source: SRC_ARDOP },

@@ -127,7 +127,12 @@ describe('mode SNR table', () => {
   });
 
   it('keeps untested modes flagged as estimates', () => {
-    for (const code of [54, 30, 0]) expect(modeSnrInfo(code)).toMatchObject({ basis: 'estimate', estimated: true });
+    for (const code of [54, 0]) expect(modeSnrInfo(code)).toMatchObject({ basis: 'estimate', estimated: true });
+  });
+
+  it('uses the documented Robust Packet figure (Wavecom RPR sheet, +7 dB in 3 kHz)', () => {
+    expect(modeSnrInfo(30)).toMatchObject({ floorDb: 7, basis: 'vendor', estimated: false });
+    expect(modeSnrInfo(30).source).toMatch(/Wavecom/);
   });
 
   it('applies the SCS PACTOR-4 floor only when the operator has a P4 modem', () => {
