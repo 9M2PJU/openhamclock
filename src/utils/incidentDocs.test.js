@@ -48,7 +48,7 @@ describe('incidentDocs (ICS drafts)', () => {
 
   it('shape-fixes received drafts', () => {
     join();
-    receive([{ id: 'ics-drafts', data: { header: { incidentName: 'Flood' } }, updatedAt: 2 }]);
+    receive([{ id: 'ics-drafts', data: { header: { incidentName: 'Flood' } }, docRev: 1 }]);
     const d = loadDoc('ics-drafts');
     expect(d.header.incidentName).toBe('Flood');
     expect(Array.isArray(d.ics214.rows)).toBe(true);
@@ -62,11 +62,11 @@ describe('incidentDocs (ICS drafts)', () => {
     saveDoc('ics-drafts', d);
     saveDoc('ics-drafts', d); // unchanged → not republished
     expect(published.filter((p) => p.id === 'ics-drafts')).toHaveLength(1);
-    receive([{ id: 'ics-drafts', data: d, updatedAt: Date.now() + 1 }]); // echo
+    receive([{ id: 'ics-drafts', data: d, docRev: 1 }]); // echo
     expect(notes).toEqual([]);
-    receive([{ id: 'ics-drafts', data: { header: { incidentName: 'B' } }, updatedAt: Date.now() + 2 }]);
+    receive([{ id: 'ics-drafts', data: { header: { incidentName: 'B' } }, docRev: 2 }]);
     expect(notes).toEqual(['ics-drafts:remote']);
-    receive([{ id: 'ics-drafts', data: { header: { incidentName: 'Old' } }, updatedAt: 1 }]); // older
+    receive([{ id: 'ics-drafts', data: { header: { incidentName: 'Old' } }, docRev: 1, updatedAt: 9e12 }]); // older on the server, however fast its clock
     expect(loadDoc('ics-drafts').header.incidentName).toBe('B');
     detach();
     expect(notes.at(-1)).toBe('ics-drafts:mode');

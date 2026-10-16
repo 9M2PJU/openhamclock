@@ -314,4 +314,72 @@ describe('NetControlPanel', () => {
     expect(getNetControlRoster()).toMatchObject({ region: 'R2', offset: '' });
     unmount();
   });
+
+  it('shared incident: "your change" chip after another site won; Apply mine puts it back', async () => {
+    // The running net as another site left it: W1AW flagged M there…
+    const net = {
+      id: 'net-1',
+      name: 'County ARES',
+      ncs: 'K0CJH',
+      frequency: '',
+      startTime: 1,
+      rev: 3,
+      stations: [
+        {
+          id: 's1',
+          call: 'W1AW',
+          flags: ['mobile'],
+          note: '',
+          name: '',
+          location: '',
+          checkinTime: 2,
+          checkoutTime: null,
+          recheckCount: 0,
+        },
+      ],
+    };
+    localStorage.setItem(NET_CONTROL_KEY, JSON.stringify(net));
+    // …while here we had flagged it T (kept by the incident bridge after the conflict).
+    localStorage.setItem(
+      'openhamclock_netControlConflicts',
+      JSON.stringify({
+        netId: 'net-1',
+        calls: { W1AW: { mine: { ...net.stations[0], flags: ['traffic'] }, site: 'EOC South', at: 5 } },
+        fields: {},
+      }),
+    );
+    render();
+    const chip = container.querySelector('[data-testid="net-conflict-W1AW"]');
+    expect(chip).not.toBeNull();
+    expect(chip.textContent).toContain('EOC South');
+    expect(chip.textContent).toContain('TFC');
+    await act(async () => [...chip.querySelectorAll('button')].find((b) => b.textContent === 'Apply mine').click());
+    const stored = JSON.parse(localStorage.getItem(NET_CONTROL_KEY));
+    expect(stored.stations.find((x) => x.call === 'W1AW').flags).toEqual(['traffic']);
+    expect(container.querySelector('[data-testid="net-conflict-W1AW"]')).toBeNull();
+    expect(localStorage.getItem('openhamclock_netControlConflicts')).toBeNull();
+    unmount();
+  });
+
+  it('shared incident: the chip can be dismissed, and belongs to its own net only', () => {
+    const net = { id: 'net-2', name: 'Other', ncs: 'K0CJH', startTime: 1, rev: 1, stations: [] };
+    localStorage.setItem(NET_CONTROL_KEY, JSON.stringify(net));
+    localStorage.setItem(
+      'openhamclock_netControlConflicts',
+      JSON.stringify({ netId: 'net-1', calls: { W1AW: { mine: null, site: 'X', at: 1 } }, fields: {} }),
+    );
+    render();
+    expect(container.querySelector('[data-testid="net-conflict-W1AW"]')).toBeNull(); // another net's entry
+    unmount();
+    localStorage.setItem(
+      'openhamclock_netControlConflicts',
+      JSON.stringify({ netId: 'net-2', calls: {}, fields: { frequency: { mine: '147.00', site: 'X', at: 1 } } }),
+    );
+    render();
+    const bar = container.querySelector('[data-testid="net-conflict-field-frequency"]');
+    expect(bar.textContent).toContain('147.00');
+    act(() => bar.querySelector('button[aria-label="Keep theirs"]').click());
+    expect(container.querySelector('[data-testid="net-conflict-field-frequency"]')).toBeNull();
+    unmount();
+  });
 });

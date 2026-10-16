@@ -25,6 +25,7 @@
  */
 import { loadDrafts, saveDrafts, defaultDrafts, mergeDrafts } from './icsForms.js';
 import * as netBridge from './incidentNetBridge.js';
+import { newerDoc } from './incidentSync.js';
 
 /** Stay under the hosted server's 64 KB per-document cap. */
 export const DOC_MAX_BYTES = 60 * 1024;
@@ -131,7 +132,7 @@ export function receive(docs) {
     }
     if (!DOC_SPECS[doc.id]) continue;
     const cur = state.docs[doc.id];
-    if (cur && (cur.updatedAt || 0) > (doc.updatedAt || 0)) continue;
+    if (!newerDoc(cur, doc)) continue;
     const json = JSON.stringify(doc.data ?? null);
     state.docs[doc.id] = doc;
     if (state.known[doc.id] === json) continue; // our own echo, or no change

@@ -52,12 +52,14 @@ import {
   makeClientId,
 } from '../utils/incidentSync.js';
 import * as incidentDocs from '../utils/incidentDocs.js';
+import { withOutboxLock } from '../utils/outboxLock.js';
 
 const OUTBOX_ID_KEY = 'openhamclock_incidentOutboxId';
 // Set when the join key was changed under this browser: other tabs show the
 // same "join again" prompt.
 const REJOIN_KEY = 'openhamclock_incidentRejoin';
 const FLUSH_DEBOUNCE_MS = 1000;
+const FLUSH_BUSY_MS = 3000; // another tab is sending the outbox: check back
 const RETRY_MS = [2000, 5000, 10000, 30000, 60000];
 const POLL_FALLBACK_MS = 10000;
 const CACHE_WRITE_MS = 2000;
@@ -141,6 +143,8 @@ export function useSharedIncident({
   const [docsReady, setDocsReady] = useState(false);
 
   const clientId = useMemo(getClientId, []);
+  // This tab (clientId is per browser, shared by its tabs).
+  const tabId = useMemo(makeClientId, []);
   const outboxRef = useRef(readJson(OUTBOX_KEY, null) || emptyOutbox());
   const outboxIdRef = useRef(readJson(OUTBOX_ID_KEY, null));
   const stateRef = useRef(state);
@@ -176,14 +180,28 @@ export function useSharedIncident({
     }, delay);
   }, []);
 
+  /**
+   * The outbox is shared by every tab of this browser (localStorage), so it
+   * is always read fresh before a change; this tab's copy is only the
+   * fallback when storage is unavailable.
+   */
+  const readSharedOutbox = useCallback(() => {
+    try {
+      const raw = localStorage.getItem(OUTBOX_KEY);
+      return raw ? JSON.parse(raw) : emptyOutbox();
+    } catch {
+      return outboxRef.current;
+    }
+  }, []);
+
   const enqueue = useCallback(
     (items) => {
       outboxIdRef.current = sessionRef.current?.id || outboxIdRef.current;
-      outboxRef.current = queueOutbox(outboxRef.current, items);
+      outboxRef.current = queueOutbox(readSharedOutbox(), items);
       saveOutbox();
       scheduleFlush();
     },
-    [saveOutbox, scheduleFlush],
+    [saveOutbox, scheduleFlush, readSharedOutbox],
   );
 
   const markGone = useCallback((message) => {
@@ -220,36 +238,55 @@ export function useSharedIncident({
     setSession(next);
   }, []);
 
+  /** One send of the shared outbox. Runs only while this tab holds the outbox lock. */
+  const flushOnce = async (s) => {
+    // Another tab may have sent (and acked) part of it already.
+    outboxRef.current = readSharedOutbox();
+    const batch = outboxBatch(outboxRef.current);
+    if (!batch) return;
+    const res = await api(`/${encodeURIComponent(s.id)}/sync`, {
+      method: 'POST',
+      key: s.key,
+      body: { clientId, call: callsignRef.current, site: s.site || '', ...batch },
+    });
+    if (sessionRef.current?.id !== s.id) return; // left or switched while in flight
+    if (res.ok) {
+      // Re-read: this or another tab may have queued more while we were sending.
+      outboxRef.current = ackOutbox(readSharedOutbox(), batch);
+      saveOutbox();
+      retryAttemptRef.current = 0;
+      if (outboxSize(outboxRef.current)) scheduleFlush();
+    } else if (res.status === 413) {
+      // A shared document is too large for this server: keep everything else.
+      outboxRef.current = dropOutboxDocs(readSharedOutbox());
+      saveOutbox();
+      setError(res.data?.error || 'A shared document is too large for this server and was not shared');
+      scheduleFlush();
+    } else if (res.status === 403 && s.role !== 'admin' && s.keyGen != null) {
+      suspendForRekey();
+    } else if (res.status === 403 || res.status === 404) {
+      markGone(goneMessage(res.status));
+    } else {
+      throw new Error(res.data?.error || `HTTP ${res.status}`);
+    }
+  };
+
   flushRef.current = async () => {
     const s = sessionRef.current;
     if (!s || inFlightRef.current || goneRef.current) return;
-    const batch = outboxBatch(outboxRef.current);
-    if (!batch) return;
     inFlightRef.current = true;
     try {
-      const res = await api(`/${encodeURIComponent(s.id)}/sync`, {
-        method: 'POST',
-        key: s.key,
-        body: { clientId, call: callsignRef.current, site: s.site || '', ...batch },
+      // One tab sends at a time (Web Locks, or a localStorage lease where
+      // that API is missing). When another tab holds it, it is sending the
+      // same outbox; look again shortly in case it stops.
+      const ran = await withOutboxLock(() => flushOnce(s), {
+        locks: typeof navigator !== 'undefined' ? navigator.locks : undefined,
+        storage: typeof localStorage !== 'undefined' ? localStorage : null,
+        owner: tabId,
       });
-      if (sessionRef.current?.id !== s.id) return; // left or switched while in flight
-      if (res.ok) {
-        outboxRef.current = ackOutbox(outboxRef.current, batch);
-        saveOutbox();
-        retryAttemptRef.current = 0;
-        if (outboxSize(outboxRef.current)) scheduleFlush();
-      } else if (res.status === 413) {
-        // A shared document is too large for this server: keep everything else.
-        outboxRef.current = dropOutboxDocs(outboxRef.current);
-        saveOutbox();
-        setError(res.data?.error || 'A shared document is too large for this server and was not shared');
-        scheduleFlush();
-      } else if (res.status === 403 && s.role !== 'admin' && s.keyGen != null) {
-        suspendForRekey();
-      } else if (res.status === 403 || res.status === 404) {
-        markGone(goneMessage(res.status));
-      } else {
-        throw new Error(res.data?.error || `HTTP ${res.status}`);
+      if (!ran) {
+        clearTimeout(retryTimerRef.current);
+        retryTimerRef.current = setTimeout(() => flushRef.current?.(), FLUSH_BUSY_MS);
       }
     } catch {
       // Offline or server busy: keep everything, try again with backoff.

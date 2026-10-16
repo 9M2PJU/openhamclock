@@ -38,9 +38,20 @@ export const sameNetContent = (a, b) => sameValue(content(a), content(b));
 const stationOf = (net, call) => (net?.stations || []).find((s) => s.call === call) || null;
 
 /**
+ * The order of a merged net's stations, the same at every site: newest
+ * check-in first (as Net Control lists them), then callsign. Two sites that
+ * merge the same changes therefore hold identical nets at once.
+ */
+export function orderStations(stations) {
+  return [...(stations || [])].sort(
+    (a, b) => (b.checkinTime ?? 0) - (a.checkinTime ?? 0) || String(a.call).localeCompare(String(b.call)),
+  );
+}
+
+/**
  * Apply `mine`'s changes since `base` on top of `theirs`: changed net fields
- * take mine's value; changed station lines are replaced, added (at mine's
- * position) or removed.
+ * take mine's value; changed station lines are replaced, added or removed.
+ * The result is in orderStations() order.
  */
 export function mergeNets(base, mine, theirs) {
   const out = { ...theirs };
@@ -51,17 +62,57 @@ export function mergeNets(base, mine, theirs) {
     const at = list.findIndex((s) => s.call === call);
     if (m) {
       if (at >= 0) list[at] = m;
-      else {
-        const pos = (mine.stations || []).findIndex((s) => s.call === call);
-        list.splice(Math.min(Math.max(pos, 0), list.length), 0, m);
-      }
+      else list.push(m);
     } else if (at >= 0) {
       list.splice(at, 1);
     }
   }
-  out.stations = list;
+  out.stations = orderStations(list);
   return out;
 }
+
+// ── "Your change" after a conflict ─────────────────────────────────────────
+//
+// When the other site's version of a station (or net field) wins, our
+// version is kept beside the net so the operator can put it back with one
+// click instead of retyping it. A record belongs to one net (netId); a
+// station that we had removed is kept as `mine: null`.
+
+/** Our side of a conflict: { netId, calls: { CALL: { mine, site, at } }, fields: { f: { mine, site, at } } }. */
+export function conflictRecord(local, { calls = [], fields = [] }, site = '', at = Date.now()) {
+  const rec = { netId: local?.id || '', calls: {}, fields: {} };
+  for (const call of calls) rec.calls[call] = { mine: stationOf(local, call), site, at };
+  for (const f of fields) rec.fields[f] = { mine: local?.[f] ?? null, site, at };
+  return rec;
+}
+
+/** Add a new conflict to what is pending (a different net starts over). */
+export function mergeConflictRecords(prev, next) {
+  if (!prev || prev.netId !== next.netId) return next;
+  return { netId: next.netId, calls: { ...prev.calls, ...next.calls }, fields: { ...prev.fields, ...next.fields } };
+}
+
+/** Drop one pending entry ('call' | 'field'). → the record, or null when nothing is left. */
+export function removeConflictEntry(rec, kind, key) {
+  if (!rec) return null;
+  const out = { ...rec, calls: { ...rec.calls }, fields: { ...rec.fields } };
+  delete out[kind === 'field' ? 'fields' : 'calls'][key];
+  return Object.keys(out.calls).length || Object.keys(out.fields).length ? out : null;
+}
+
+/** Net Control operation: put our version of one station line back (null = remove it). */
+export function applyMineStation(net, call, mine) {
+  if (!net) return net;
+  const rest = (net.stations || []).filter((s) => s.call !== call);
+  if (!mine) return { ...net, stations: rest };
+  const at = (net.stations || []).findIndex((s) => s.call === call);
+  const stations = [...rest];
+  stations.splice(at >= 0 ? at : 0, 0, mine);
+  return { ...net, stations };
+}
+
+/** Net Control operation: put our value of one net field back. */
+export const applyMineField = (net, field, value) => (net ? { ...net, [field]: value } : net);
 
 /**
  * Decide what to do with a net state from another site.

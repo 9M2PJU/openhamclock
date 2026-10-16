@@ -34,6 +34,17 @@ export function emptyIncidentState() {
   return { seq: 0, board: null, participants: 0, role: null, roster: {}, events: {}, reports: {}, docs: {} };
 }
 
+/**
+ * Shared documents are ordered by the server (`docRev`, assigned on receipt),
+ * never by client clocks. A local optimistic copy (no docRev yet) gives way
+ * to any server copy; between two server copies the higher docRev wins.
+ */
+export function newerDoc(cur, incoming) {
+  if (!cur) return true;
+  if (!Number.isFinite(incoming?.docRev)) return !Number.isFinite(cur.docRev); // local over local only
+  return !Number.isFinite(cur.docRev) || incoming.docRev > cur.docRev;
+}
+
 /** Keep an incoming record when it is new, or an admin edit (higher rev) of one we have. */
 const newerRecord = (cur, rec) => !cur || (rec.rev || 0) > (cur.rev || 0);
 
@@ -100,7 +111,7 @@ export function applyIncidentDelta(state, delta) {
     for (const d of delta.docs) {
       if (!d?.id) continue;
       const cur = docs[d.id];
-      if (cur && (cur.updatedAt || 0) > (d.updatedAt || 0)) continue;
+      if (!newerDoc(cur, d)) continue;
       docs[d.id] = d;
     }
     next.docs = docs;
@@ -519,11 +530,14 @@ export function ackOutbox(outbox, sent) {
     reports: { ...outbox.reports },
     docs: { ...(outbox.docs || {}) },
   };
-  for (const r of sent.roster || []) if (next.roster[r.call] === r) delete next.roster[r.call];
-  for (const d of sent.docs || []) if (next.docs[d.id] === d) delete next.docs[d.id];
+  // By value, not identity: the outbox is re-read from localStorage (shared
+  // by every tab), so what was sent and what is stored are different objects.
+  const same = (a, b) => a === b || JSON.stringify(a) === JSON.stringify(b);
+  for (const r of sent.roster || []) if (same(next.roster[r.call], r)) delete next.roster[r.call];
+  for (const d of sent.docs || []) if (same(next.docs[d.id], d)) delete next.docs[d.id];
   for (const e of sent.events || []) delete next.events[e.id];
   for (const r of sent.reports || []) delete next.reports[r.id];
-  next.board = outbox.board && outbox.board !== sent.board ? outbox.board : null;
+  next.board = outbox.board && !same(outbox.board, sent.board) ? outbox.board : null;
   return next;
 }
 

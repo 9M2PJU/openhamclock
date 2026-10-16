@@ -10,6 +10,8 @@ import {
   NET_DOC_MAX_BYTES,
   STASH_KEY,
   _resetForTests,
+  loadNetConflicts,
+  dismissNetConflict,
 } from './incidentNetBridge.js';
 import {
   serializeNetState,
@@ -203,6 +205,12 @@ describe('incidentNetBridge', () => {
         expect(receiveNet(theirs)).toBe(true);
         expect(loadRunningNet().stations.find((s) => s.call === 'W1AW').flags).toEqual(['M']);
         expect(heard).toEqual([{ calls: ['W1AW'], fields: [], site: 'South' }]);
+        // our losing version is kept for "apply mine"
+        const pending = loadNetConflicts(loadRunningNet().id);
+        expect(pending.calls.W1AW).toMatchObject({ mine: { call: 'W1AW', flags: ['T'] }, site: 'South' });
+        dismissNetConflict('call', 'W1AW');
+        expect(loadNetConflicts()).toBeNull();
+        expect(loadNetConflicts('another-net')).toBeNull();
       } finally {
         window.removeEventListener('ohc-net-control-remote-conflict', onConflict);
       }

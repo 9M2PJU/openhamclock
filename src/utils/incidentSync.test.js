@@ -135,13 +135,20 @@ describe('edits, deletions, full snapshots and documents', () => {
     expect(s.participants).toBe(3);
   });
 
-  it('keeps the newest shared document and takes the role', () => {
+  it('orders shared documents by the server’s docRev, not client clocks, and takes the role', () => {
     let s = applyIncidentDelta(emptyIncidentState(), {
       role: 'operator',
-      docs: [{ id: 'net-running', data: { name: 'B' }, updatedAt: 2 }],
+      docs: [{ id: 'net-running', data: { name: 'B' }, docRev: 2, updatedAt: 1 }],
     });
-    s = applyIncidentDelta(s, { docs: [{ id: 'net-running', data: { name: 'A' }, updatedAt: 1 }] });
+    // an older server copy with a fast client clock does not win
+    s = applyIncidentDelta(s, { docs: [{ id: 'net-running', data: { name: 'A' }, docRev: 1, updatedAt: 9e12 }] });
     expect(s.docs['net-running'].data.name).toBe('B');
+    // a newer server copy wins although its client clock is behind
+    s = applyIncidentDelta(s, { docs: [{ id: 'net-running', data: { name: 'C' }, docRev: 3, updatedAt: 0 }] });
+    expect(s.docs['net-running'].data.name).toBe('C');
+    // our optimistic copy (no docRev) gives way to the server's
+    s = applyIncidentDelta(s, { docs: [{ id: 'net-running', data: { name: 'mine' }, updatedAt: 5 }] });
+    expect(s.docs['net-running'].data.name).toBe('C');
     expect(s.role).toBe('operator');
   });
 });

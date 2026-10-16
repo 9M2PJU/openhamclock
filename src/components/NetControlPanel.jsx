@@ -88,7 +88,15 @@ import {
 import { loadNetSchedule, sortByNextOccurrence } from '../utils/netSchedule.js';
 import { formatMemoryFreq } from '../utils/freqMemories.js';
 import { recordEvent } from '../utils/emcommEventLog.js';
-import { NET_REMOTE_CONFLICT_EVENT } from '../utils/incidentNetBridge.js';
+import {
+  NET_REMOTE_CONFLICT_EVENT,
+  NET_CONFLICTS_CHANGED_EVENT,
+  CONFLICTS_KEY,
+  loadNetConflicts,
+  dismissNetConflict,
+} from '../utils/incidentNetBridge.js';
+import { applyMineStation, applyMineField } from '../utils/incidentNetMerge.js';
+import { StationConflictChip, NetConflictBar } from './NetConflictChip.jsx';
 import { apiFetch } from '../utils/apiFetch.js';
 import { callbookAuthHeaders } from '../utils/callbookAuth.js';
 import { spellPhonetic } from '../utils/phonetics.js';
@@ -321,6 +329,22 @@ export default function NetControlPanel({ callsign = '', embedded = false, timeZ
     [broadcast, showFlash, t],
   );
 
+  // Shared incident: our version of lines another site changed at the same
+  // moment ("your change" chips), for one-click "Apply mine".
+  const [conflicts, setConflicts] = useState(() => loadNetConflicts());
+  useEffect(() => {
+    const refresh = () => setConflicts(loadNetConflicts());
+    const onStorage = (e) => {
+      if (e.key === CONFLICTS_KEY || e.key === null) refresh();
+    };
+    window.addEventListener(NET_CONFLICTS_CHANGED_EVENT, refresh);
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.removeEventListener(NET_CONFLICTS_CHANGED_EVENT, refresh);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, []);
+
   // Shared incident: the same station was changed at another site at the
   // same moment. Their version was kept; say so, naming the site.
   useEffect(() => {
@@ -344,6 +368,18 @@ export default function NetControlPanel({ callsign = '', embedded = false, timeZ
     window.addEventListener(NET_REMOTE_CONFLICT_EVENT, onConflict);
     return () => window.removeEventListener(NET_REMOTE_CONFLICT_EVENT, onConflict);
   }, [showFlash, t]);
+
+  // "Your change" entries for the running net, and putting one back through
+  // the normal commit path (so it rebases and syncs like any other edit).
+  const pendingConflicts = conflicts && net && conflicts.netId === net.id ? conflicts : null;
+  const applyMine = (kind, key) => {
+    const entry = pendingConflicts?.[kind === 'field' ? 'fields' : 'calls']?.[key];
+    if (!entry) return;
+    const res = commit((n) =>
+      kind === 'field' ? applyMineField(n, key, entry.mine) : applyMineStation(n, key, entry.mine),
+    );
+    if (res.ok) dismissNetConflict(kind, key);
+  };
 
   /** Pick up a newer running net written elsewhere. */
   const syncFromStorage = useCallback(() => {
@@ -1257,6 +1293,14 @@ export default function NetControlPanel({ callsign = '', embedded = false, timeZ
         </div>
       )}
 
+      {/* Shared incident: net fields / unlisted stations another site overrode */}
+      <NetConflictBar
+        pending={pendingConflicts}
+        presentCalls={new Set(net.stations.map((s) => s.call))}
+        onApply={applyMine}
+        onDismiss={dismissNetConflict}
+      />
+
       {/* Roster */}
       <div style={{ overflowY: 'auto', ...grow, maxHeight: embedded ? '360px' : undefined }}>
         {net.stations.length === 0 ? (
@@ -1336,6 +1380,14 @@ export default function NetControlPanel({ callsign = '', embedded = false, timeZ
                     >
                       {[s.name, s.location, s.note].filter(Boolean).join(' · ')}
                     </div>
+                  )}
+                  {pendingConflicts?.calls?.[s.call] && (
+                    <StationConflictChip
+                      call={s.call}
+                      entry={pendingConflicts.calls[s.call]}
+                      onApply={() => applyMine('call', s.call)}
+                      onDismiss={() => dismissNetConflict('call', s.call)}
+                    />
                   )}
                 </div>
                 <div style={{ display: 'flex', gap: '3px' }}>

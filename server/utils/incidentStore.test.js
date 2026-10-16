@@ -482,7 +482,7 @@ describe('incidentStore', () => {
   });
 
   describe('shared documents', () => {
-    it('stores known docs, newest updatedAt wins, unknown ids ignored', () => {
+    it('stores known docs, ignores unknown ids and no-op rewrites', () => {
       const { incident } = make();
       const a = store.apply(incident.id, {
         docs: [
@@ -491,14 +491,28 @@ describe('incidentStore', () => {
         ],
       });
       expect(a.changes.docs).toEqual([
-        expect.objectContaining({ id: 'net-running', by: 'W1AW', data: { name: 'ARES', stations: [] } }),
+        expect.objectContaining({ id: 'net-running', by: 'W1AW', docRev: 1, receivedAt: clock }),
       ]);
       expect(
-        store.apply(incident.id, { docs: [{ id: 'net-running', data: null, updatedAt: clock - 1 }] }).changed,
+        store.apply(incident.id, { docs: [{ id: 'net-running', data: { name: 'ARES', stations: [] } }] }).changed,
       ).toBe(false);
       const closed = store.apply(incident.id, { docs: [{ id: 'net-running', data: null, updatedAt: clock + 1 }] });
-      expect(closed.changes.docs[0].data).toBeNull();
+      expect(closed.changes.docs[0]).toMatchObject({ data: null, docRev: 2 });
       expect(store.snapshot(incident.id).docs).toHaveLength(1);
+    });
+
+    it('orders documents by when the server receives them, whatever the client clocks say', () => {
+      const { incident } = make();
+      // Site A's clock runs an hour fast, site B's ten minutes slow.
+      store.apply(incident.id, { docs: [{ id: 'ics-drafts', data: { v: 'A' }, updatedAt: clock + 3600e3 }] });
+      clock += 1000;
+      const b = store.apply(incident.id, { docs: [{ id: 'ics-drafts', data: { v: 'B' }, updatedAt: clock - 600e3 }] });
+      expect(b.changed).toBe(true); // the later arrival wins although its clock says it is older
+      const doc = store.snapshot(incident.id).docs[0];
+      expect(doc).toMatchObject({ data: { v: 'B' }, docRev: 2, receivedAt: clock, updatedAt: clock - 600e3 });
+      const restored = createIncidentStore({ now });
+      restored.hydrate(JSON.parse(JSON.stringify(store.serialise())));
+      expect(restored.snapshot(incident.id).docs[0]).toMatchObject({ docRev: 2, receivedAt: clock });
     });
 
     it('refuses an oversized document with 413', () => {

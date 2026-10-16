@@ -14,7 +14,8 @@
  *   reports  keyed by id
  *   board    whole-object, newest `updatedAt` wins (admin only)
  *   docs     shared working documents (ICS form drafts, the running voice
- *            net, net history) — whole-object, newest `updatedAt` wins
+ *            net, net history) — whole-object, the last one the server
+ *            receives wins (server-assigned `docRev`; client clocks only shown)
  *
  * Two keys open an incident. The join key admits an operator: append roster
  * entries, events and reports, check stations out, edit the shared documents.
@@ -564,8 +565,11 @@ function createIncidentStore(opts = {}) {
       const doc = sanitiseDoc(raw, t, limits.maxDocBytes);
       if (!doc) continue;
       const existing = inc.docs.get(doc.id);
-      if (existing && doc.updatedAt <= existing.updatedAt) continue;
-      const rec = { ...doc, seq: ++inc.seq };
+      // Ordered by when the server receives them, never by client clocks
+      // (a site whose clock runs slow must still be able to save). The
+      // client's updatedAt is kept for display only.
+      if (existing && JSON.stringify(existing.data) === JSON.stringify(doc.data)) continue;
+      const rec = { ...doc, docRev: (existing?.docRev || 0) + 1, receivedAt: t, seq: ++inc.seq };
       inc.docs.set(doc.id, rec);
       changes.docs.push(rec);
     }
@@ -762,7 +766,14 @@ function createIncidentStore(opts = {}) {
       for (const r of Array.isArray(raw.docs) ? raw.docs : []) {
         try {
           const d = sanitiseDoc(r, t, limits.maxDocBytes);
-          if (d) inc.docs.set(d.id, { ...d, seq: r.seq || 0 });
+          if (d) {
+            inc.docs.set(d.id, {
+              ...d,
+              docRev: Number.isFinite(r.docRev) ? r.docRev : 1,
+              receivedAt: cleanTs(r.receivedAt, t),
+              seq: r.seq || 0,
+            });
+          }
         } catch {
           /* over the (possibly lowered) size cap — drop it */
         }
