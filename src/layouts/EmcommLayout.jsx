@@ -486,6 +486,9 @@ export default function EmcommLayout(props) {
   const [historyTarget, setHistoryTarget] = useState(null);
   const [historyMsgs, setHistoryMsgs] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+  // Opened on purpose (HIST, a map popup's Messages link) rather than by
+  // hovering a roster row: then it is pinned in view like the composer (#1242).
+  const [historyPinned, setHistoryPinned] = useState(false);
   const historyHoverRef = useRef(null);
   // Map filter (#1215): only recognised EmComm symbols and Net Roster
   // stations. Remembered per browser.
@@ -1228,10 +1231,12 @@ export default function EmcommLayout(props) {
   // report) into view: always pans, zooms to 10, pulses the target (#1182).
   // Rows without a position (roster ops never heard on APRS) are a no-op.
   const openHistory = useCallback(
-    async (call) => {
+    async (call, { reveal = false } = {}) => {
       const key = String(call || '').trim();
       if (!key) return;
       setHistoryTarget(key);
+      // A hover never unpins a list someone opened on purpose
+      if (reveal) setHistoryPinned(true);
       setHistoryLoading(true);
       try {
         const res = await apiFetch(`/api/aprs/messages/history?call=${encodeURIComponent(key)}`, {
@@ -1346,7 +1351,7 @@ export default function EmcommLayout(props) {
   // initialization" and crashed the whole EmComm layout (#1223).
   useEffect(() => {
     const onReq = (e) => {
-      if (e?.detail?.call) openHistory(e.detail.call);
+      if (e?.detail?.call) openHistory(e.detail.call, { reveal: true });
     };
     window.addEventListener(APRS_HISTORY_EVENT, onReq);
     return () => window.removeEventListener(APRS_HISTORY_EVENT, onReq);
@@ -2088,7 +2093,7 @@ export default function EmcommLayout(props) {
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
-                            openHistory(s.ssid || s.call);
+                            openHistory(s.ssid || s.call, { reveal: true });
                           }}
                           title="Messages exchanged with this station, newest first"
                           style={{
@@ -2423,7 +2428,7 @@ export default function EmcommLayout(props) {
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
-                              openHistory(op.call);
+                              openHistory(op.call, { reveal: true });
                             }}
                             title="Messages exchanged with this station, newest first"
                             style={{
@@ -2622,180 +2627,217 @@ export default function EmcommLayout(props) {
             </div>
           </PanelSection>
 
-          {/* Message Compose */}
-          {historyTarget && (
-            <div
-              style={{
-                background: '#111620',
-                border: '1px solid #2a3040',
-                borderRadius: '6px',
-                padding: '10px',
-                marginTop: '8px',
-              }}
-            >
+          {/* Message history + composer, pinned together at the bottom of the
+              visible rail when opened on purpose so neither opens below
+              every panel (#1242). A hover-opened history stays in place. */}
+          <div
+            data-testid="message-dock"
+            style={
+              messageTarget || (historyTarget && historyPinned)
+                ? {
+                    position: 'sticky',
+                    bottom: 0,
+                    zIndex: 5,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    background: '#111',
+                    boxShadow: '0 -6px 16px rgba(0,0,0,0.6)',
+                    flexShrink: 0,
+                  }
+                : { flexShrink: 0 }
+            }
+          >
+            {historyTarget && (
               <div
-                style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}
+                data-testid="message-history"
+                style={{
+                  background: '#111620',
+                  border: '1px solid #2a3040',
+                  borderRadius: '6px',
+                  padding: '10px',
+                  marginTop: '8px',
+                }}
               >
-                <span style={{ color: '#22d3ee', fontWeight: 600, fontSize: '12px' }}>
-                  Messages with {historyTarget}
-                  {!historyLoading && (
-                    <span style={{ color: '#888', fontWeight: 400, marginLeft: '6px', fontSize: '10px' }}>
-                      {historyMsgs.length} · newest first
-                    </span>
-                  )}
-                </span>
-                <span style={{ display: 'flex', gap: '6px' }}>
-                  <button
-                    onClick={() => setMessageTarget(historyTarget)}
-                    title="Reply to this station"
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    marginBottom: '6px',
+                  }}
+                >
+                  <span style={{ color: '#22d3ee', fontWeight: 600, fontSize: '12px' }}>
+                    Messages with {historyTarget}
+                    {!historyLoading && (
+                      <span style={{ color: '#888', fontWeight: 400, marginLeft: '6px', fontSize: '10px' }}>
+                        {historyMsgs.length} · newest first
+                      </span>
+                    )}
+                  </span>
+                  <span style={{ display: 'flex', gap: '6px' }}>
+                    <button
+                      onClick={() => setMessageTarget(historyTarget)}
+                      title="Reply to this station"
+                      style={{
+                        background: 'none',
+                        border: '1px solid #333',
+                        borderRadius: '3px',
+                        color: '#888',
+                        fontSize: '9px',
+                        padding: '1px 4px',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      MSG
+                    </button>
+                    <button
+                      onClick={() => {
+                        setHistoryTarget(null);
+                        setHistoryPinned(false);
+                      }}
+                      style={{ background: 'none', border: 'none', color: '#888', cursor: 'pointer', fontSize: '14px' }}
+                    >
+                      ✕
+                    </button>
+                  </span>
+                </div>
+                {historyLoading ? (
+                  <div style={{ color: '#888', fontSize: '10px' }}>Loading…</div>
+                ) : historyMsgs.length === 0 ? (
+                  <div style={{ color: '#888', fontSize: '10px' }}>
+                    No messages with this station since the server started.
+                  </div>
+                ) : (
+                  <div
                     style={{
-                      background: 'none',
-                      border: '1px solid #333',
-                      borderRadius: '3px',
-                      color: '#888',
-                      fontSize: '9px',
-                      padding: '1px 4px',
-                      cursor: 'pointer',
+                      maxHeight: '220px',
+                      overflow: 'auto',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '4px',
                     }}
                   >
-                    MSG
-                  </button>
+                    {historyMsgs.map((m, i) => {
+                      const sent = m.direction === 'sent';
+                      const when = m.timestamp
+                        ? new Date(m.timestamp).toISOString().slice(5, 16).replace('T', ' ')
+                        : '';
+                      return (
+                        <div
+                          key={`${m.timestamp}-${i}`}
+                          style={{
+                            display: 'grid',
+                            gridTemplateColumns: '64px 14px 1fr',
+                            gap: '6px',
+                            fontSize: '10px',
+                            alignItems: 'baseline',
+                            borderLeft: `2px solid ${sent ? '#22d3ee' : '#22c55e'}`,
+                            paddingLeft: '6px',
+                          }}
+                          title={`${sent ? 'Sent to' : 'Received from'} ${sent ? m.to : m.from}${m.msgId ? ` · id ${m.msgId}` : ''}`}
+                        >
+                          <span style={{ color: '#888', fontFamily: 'var(--font-mono)' }}>{when}Z</span>
+                          <span style={{ color: sent ? '#22d3ee' : '#22c55e' }}>{sent ? '→' : '←'}</span>
+                          <span style={{ color: '#ddd', wordBreak: 'break-word' }}>
+                            <span style={{ color: '#aaa', marginRight: '4px' }}>{sent ? m.to : m.from}</span>
+                            {m.text}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+            {messageTarget && (
+              <div
+                ref={messageBoxRef}
+                data-testid="aprs-composer"
+                style={{
+                  background: '#111620',
+                  border: '1px solid #22d3ee',
+                  borderRadius: '6px',
+                  padding: '10px',
+                  marginTop: '8px',
+                }}
+              >
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    marginBottom: '6px',
+                  }}
+                >
+                  <span style={{ color: '#22d3ee', fontWeight: 600, fontSize: '12px' }}>
+                    Message to {messageTarget}
+                  </span>
                   <button
-                    onClick={() => setHistoryTarget(null)}
+                    onClick={() => {
+                      setMessageTarget(null);
+                      setMessageText('');
+                    }}
                     style={{ background: 'none', border: 'none', color: '#888', cursor: 'pointer', fontSize: '14px' }}
                   >
                     ✕
                   </button>
-                </span>
-              </div>
-              {historyLoading ? (
-                <div style={{ color: '#888', fontSize: '10px' }}>Loading…</div>
-              ) : historyMsgs.length === 0 ? (
-                <div style={{ color: '#888', fontSize: '10px' }}>
-                  No messages with this station since the server started.
                 </div>
-              ) : (
-                <div
-                  style={{ maxHeight: '220px', overflow: 'auto', display: 'flex', flexDirection: 'column', gap: '4px' }}
-                >
-                  {historyMsgs.map((m, i) => {
-                    const sent = m.direction === 'sent';
-                    const when = m.timestamp ? new Date(m.timestamp).toISOString().slice(5, 16).replace('T', ' ') : '';
-                    return (
-                      <div
-                        key={`${m.timestamp}-${i}`}
-                        style={{
-                          display: 'grid',
-                          gridTemplateColumns: '64px 14px 1fr',
-                          gap: '6px',
-                          fontSize: '10px',
-                          alignItems: 'baseline',
-                          borderLeft: `2px solid ${sent ? '#22d3ee' : '#22c55e'}`,
-                          paddingLeft: '6px',
-                        }}
-                        title={`${sent ? 'Sent to' : 'Received from'} ${sent ? m.to : m.from}${m.msgId ? ` · id ${m.msgId}` : ''}`}
-                      >
-                        <span style={{ color: '#888', fontFamily: 'var(--font-mono)' }}>{when}Z</span>
-                        <span style={{ color: sent ? '#22d3ee' : '#22c55e' }}>{sent ? '→' : '←'}</span>
-                        <span style={{ color: '#ddd', wordBreak: 'break-word' }}>
-                          <span style={{ color: '#aaa', marginRight: '4px' }}>{sent ? m.to : m.from}</span>
-                          {m.text}
-                        </span>
-                      </div>
-                    );
-                  })}
+                <div style={{ display: 'flex', gap: '6px' }}>
+                  <input
+                    ref={messageInputRef}
+                    type="text"
+                    aria-label={`Message to ${messageTarget}`}
+                    value={messageText}
+                    onChange={(e) => setMessageText(e.target.value.slice(0, 67))}
+                    placeholder="Type message (67 char max)"
+                    maxLength={67}
+                    style={{
+                      flex: 1,
+                      padding: '6px 8px',
+                      background: '#0a0e14',
+                      border: '1px solid #2a3040',
+                      borderRadius: '4px',
+                      color: '#c4c9d4',
+                      fontSize: '12px',
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') sendMessageToTarget();
+                      if (e.key === 'Escape') {
+                        setMessageTarget(null);
+                        setMessageText('');
+                      }
+                    }}
+                  />
+                  <button
+                    onClick={sendMessageToTarget}
+                    disabled={messageSending || !messageText.trim()}
+                    style={{
+                      opacity: messageSending || !messageText.trim() ? 0.5 : 1,
+                      padding: '6px 12px',
+                      background: '#22d3ee',
+                      border: 'none',
+                      borderRadius: '4px',
+                      color: '#000',
+                      fontWeight: 600,
+                      fontSize: '11px',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {messageSending ? 'Sending…' : 'Send'}
+                  </button>
                 </div>
-              )}
-            </div>
-          )}
-          {messageTarget && (
-            <div
-              ref={messageBoxRef}
-              data-testid="aprs-composer"
-              style={{
-                background: '#111620',
-                border: '1px solid #22d3ee',
-                borderRadius: '6px',
-                padding: '10px',
-                marginTop: '8px',
-                // Pinned to the bottom of the visible rail: it is the rail's
-                // last child, below every panel, so it used to open off-screen
-                // (#1242).
-                position: 'sticky',
-                bottom: 0,
-                zIndex: 5,
-                boxShadow: '0 -6px 16px rgba(0,0,0,0.6)',
-              }}
-            >
-              <div
-                style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}
-              >
-                <span style={{ color: '#22d3ee', fontWeight: 600, fontSize: '12px' }}>Message to {messageTarget}</span>
-                <button
-                  onClick={() => {
-                    setMessageTarget(null);
-                    setMessageText('');
-                  }}
-                  style={{ background: 'none', border: 'none', color: '#888', cursor: 'pointer', fontSize: '14px' }}
-                >
-                  ✕
-                </button>
-              </div>
-              <div style={{ display: 'flex', gap: '6px' }}>
-                <input
-                  ref={messageInputRef}
-                  type="text"
-                  aria-label={`Message to ${messageTarget}`}
-                  value={messageText}
-                  onChange={(e) => setMessageText(e.target.value.slice(0, 67))}
-                  placeholder="Type message (67 char max)"
-                  maxLength={67}
-                  style={{
-                    flex: 1,
-                    padding: '6px 8px',
-                    background: '#0a0e14',
-                    border: '1px solid #2a3040',
-                    borderRadius: '4px',
-                    color: '#c4c9d4',
-                    fontSize: '12px',
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') sendMessageToTarget();
-                    if (e.key === 'Escape') {
-                      setMessageTarget(null);
-                      setMessageText('');
-                    }
-                  }}
-                />
-                <button
-                  onClick={sendMessageToTarget}
-                  disabled={messageSending || !messageText.trim()}
-                  style={{
-                    opacity: messageSending || !messageText.trim() ? 0.5 : 1,
-                    padding: '6px 12px',
-                    background: '#22d3ee',
-                    border: 'none',
-                    borderRadius: '4px',
-                    color: '#000',
-                    fontWeight: 600,
-                    fontSize: '11px',
-                    cursor: 'pointer',
-                  }}
-                >
-                  {messageSending ? 'Sending…' : 'Send'}
-                </button>
-              </div>
-              {messageError && (
-                <div role="alert" style={{ fontSize: '10px', color: '#ef4444', marginTop: '4px' }}>
-                  Not sent: {messageError}
+                {messageError && (
+                  <div role="alert" style={{ fontSize: '10px', color: '#ef4444', marginTop: '4px' }}>
+                    Not sent: {messageError}
+                  </div>
+                )}
+                <div style={{ fontSize: '9px', color: '#888', marginTop: '4px' }}>
+                  {messageText.length}/67 chars — sent via APRS{' '}
+                  {rigDirectUrl ? `through Rig Bridge at ${rigDirectUrl}` : '(requires local TNC)'}
                 </div>
-              )}
-              <div style={{ fontSize: '9px', color: '#888', marginTop: '4px' }}>
-                {messageText.length}/67 chars — sent via APRS{' '}
-                {rigDirectUrl ? `through Rig Bridge at ${rigDirectUrl}` : '(requires local TNC)'}
               </div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       </div>
       {icsForm && (
