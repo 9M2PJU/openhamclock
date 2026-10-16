@@ -15,6 +15,8 @@ const {
   verifyJoinKey,
   isValidCallsign,
   makeTicket,
+  sealJoinKey,
+  openJoinKey,
 } = require('./incidentAuth.js');
 
 describe('incidentAuth', () => {
@@ -81,5 +83,18 @@ describe('incidentAuth', () => {
     const a = makeTicket();
     expect(a).toMatch(/^[A-Za-z0-9_-]{32}$/);
     expect(makeTicket()).not.toBe(a);
+  });
+
+  it('seals the join key so only the admin key opens it', () => {
+    const join = makeJoinKey();
+    const admin = makeJoinKey();
+    const sealed = sealJoinKey(join, admin);
+    expect(JSON.stringify(sealed)).not.toContain(join);
+    expect(openJoinKey(sealed, admin)).toBe(join);
+    expect(openJoinKey(sealed, admin.toLowerCase())).toBe(join);
+    expect(openJoinKey(sealed, join)).toBeNull();
+    expect(openJoinKey({ ...sealed, ct: sealed.ct.replace(/^./, (c) => (c === 'a' ? 'b' : 'a')) }, admin)).toBeNull();
+    expect(openJoinKey(null, admin)).toBeNull();
+    expect(sealJoinKey(join, admin).ct).not.toBe(sealed.ct); // fresh salt and iv each time
   });
 });

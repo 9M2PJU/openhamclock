@@ -357,6 +357,46 @@ describe('incident routes', () => {
     expect(JSON.stringify(list)).not.toContain(adminKey);
   });
 
+  it('gives an admin the join key on join, read, stream and after rotation — never an operator', () => {
+    const { id, joinKey, adminKey } = create();
+    const j = call(h, 'POST /api/incident/:id/join', { params: { id }, headers: keyHeader(adminKey), body: {} }).res
+      .body;
+    expect(j.joinKey).toBe(joinKey);
+    expect(call(h, 'GET /api/incident/:id', { params: { id }, headers: keyHeader(adminKey) }).res.body.joinKey).toBe(
+      joinKey,
+    );
+    const op = call(h, 'GET /api/incident/:id', { params: { id }, headers: keyHeader(joinKey) }).res.body;
+    expect('joinKey' in op).toBe(false);
+    const ad = openStream(id, adminKey, 'ad');
+    expect(sseEvents(ad.res)[0].data.joinKey).toBe(joinKey);
+    const os = openStream(id, joinKey, 'op');
+    expect('joinKey' in sseEvents(os.res)[0].data).toBe(false);
+    os.req.emit('close');
+    const rot = call(h, 'POST /api/incident/:id/rotate', { params: { id }, headers: keyHeader(adminKey) }).res.body;
+    expect(call(h, 'GET /api/incident/:id', { params: { id }, headers: keyHeader(adminKey) }).res.body.joinKey).toBe(
+      rot.joinKey,
+    );
+    ad.req.emit('close');
+  });
+
+  it('a deleted record stays deleted across a server restart', () => {
+    const first = mount();
+    const { id, joinKey, adminKey } = create();
+    sync(id, joinKey, { events: [{ id: 'e1', type: 'incident_note', summary: 'mistake' }] });
+    call(h, 'POST /api/incident/:id/admin', {
+      params: { id },
+      headers: keyHeader(adminKey),
+      body: { delete: { events: ['e1'] } },
+    });
+    first.flushIncidents();
+    mount(); // restart
+    const again = sync(id, joinKey, { events: [{ id: 'e1', type: 'incident_note', summary: 'mistake' }] });
+    expect(again.body.accepted.events).toBe(0);
+    expect(call(h, 'GET /api/incident/:id', { params: { id }, headers: keyHeader(joinKey) }).res.body.events).toEqual(
+      [],
+    );
+  });
+
   it('reloads a persisted incident with both keys still valid', () => {
     const first = mount();
     const { id, joinKey, adminKey } = create();

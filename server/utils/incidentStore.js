@@ -41,6 +41,8 @@ const {
   verifyJoinKey,
   normaliseToken,
   isValidCallsign,
+  sealJoinKey,
+  openJoinKey,
 } = require('./incidentAuth');
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -427,6 +429,8 @@ function createIncidentStore(opts = {}) {
       seq: 1,
       auth: hashJoinKey(joinKey),
       adminAuth: hashJoinKey(adminKey),
+      // The join key, readable only with the admin key (see sealJoinKey).
+      joinSeal: sealJoinKey(joinKey, adminKey),
       board: { ...board, updatedAt: t, seq: 1 },
     });
     incidents.set(id, inc);
@@ -437,7 +441,9 @@ function createIncidentStore(opts = {}) {
   /**
    * Check a key against both hashes (always both, so timing does not say
    * which one matched or whether the id exists).
-   * @returns {{ incident: object, role: 'admin'|'operator', keyGen: number } | null}
+   * An admin also gets the current join key, unsealed with their admin key
+   * (null for incidents created before join keys were sealed).
+   * @returns {{ incident: object, role: 'admin'|'operator', keyGen: number, joinKey?: string|null } | null}
    */
   function verify(id, key) {
     const inc = incidents.get(normaliseToken(id));
@@ -446,14 +452,19 @@ function createIncidentStore(opts = {}) {
     const isAdmin = verifyJoinKey(key, adminAuth.salt, adminAuth.hash);
     const isOperator = verifyJoinKey(key, auth.salt, auth.hash);
     if (!inc || (!isAdmin && !isOperator)) return null;
-    return { incident: inc, role: isAdmin ? 'admin' : 'operator', keyGen: inc.keyGen };
+    if (isAdmin) return { incident: inc, role: 'admin', keyGen: inc.keyGen, joinKey: openJoinKey(inc.joinSeal, key) };
+    return { incident: inc, role: 'operator', keyGen: inc.keyGen };
   }
 
-  /** Replace the join key; everyone holding the old one must rejoin. → the new key */
-  function rotateJoinKey(id) {
+  /**
+   * Replace the join key; everyone holding the old one must rejoin. With the
+   * admin key the new join key is sealed for later admin reads. → the new key
+   */
+  function rotateJoinKey(id, adminKey = null) {
     const inc = mustGet(id);
     const joinKey = makeJoinKey();
     inc.auth = hashJoinKey(joinKey);
+    inc.joinSeal = adminKey ? sealJoinKey(joinKey, adminKey) : null;
     inc.keyGen += 1;
     touch(inc);
     return { joinKey, keyGen: inc.keyGen };
@@ -666,7 +677,11 @@ function createIncidentStore(opts = {}) {
 
   const remove = (id) => incidents.delete(normaliseToken(id));
 
-  /** Plain JSON for the persistence file (participants and tombstones are ephemeral). */
+  /**
+   * Plain JSON for the persistence file. Participants and tickets are
+   * ephemeral; tombstones are kept (bounded) so a restart cannot bring a
+   * deleted record back.
+   */
   function serialise() {
     return [...incidents.values()].map((inc) => ({
       id: inc.id,
@@ -677,6 +692,9 @@ function createIncidentStore(opts = {}) {
       keyGen: inc.keyGen,
       auth: inc.auth,
       adminAuth: inc.adminAuth || null,
+      joinSeal: inc.joinSeal || null,
+      tombstones: inc.tombstones,
+      tombFloor: inc.tombFloor,
       board: inc.board,
       roster: [...inc.roster.values()],
       events: [...inc.events.values()],
@@ -707,8 +725,21 @@ function createIncidentStore(opts = {}) {
         creatorCall: normCall(raw.creatorCall),
         seq,
         keyGen: Number.isFinite(raw.keyGen) ? raw.keyGen : 1,
-        // Deletions before the restart are not replayed: every client resyncs fully.
-        tombFloor: seq,
+        // Older files had no tombstones: every client resyncs fully once.
+        tombFloor: Array.isArray(raw.tombstones) && Number.isFinite(raw.tombFloor) ? raw.tombFloor : seq,
+        tombstones: (Array.isArray(raw.tombstones) ? raw.tombstones : [])
+          .filter((x) => x && (x.kind === 'event' || x.kind === 'report') && typeof x.id === 'string')
+          .slice(-MAX_TOMBSTONES)
+          .map((x) => ({ kind: x.kind, id: cleanStr(x.id, ID_MAX), seq: Number(x.seq) || 0, deleted: true })),
+        joinSeal:
+          raw.joinSeal && typeof raw.joinSeal === 'object'
+            ? {
+                salt: String(raw.joinSeal.salt || ''),
+                iv: String(raw.joinSeal.iv || ''),
+                ct: String(raw.joinSeal.ct || ''),
+                tag: String(raw.joinSeal.tag || ''),
+              }
+            : null,
         auth: { salt: String(raw.auth.salt), hash: String(raw.auth.hash) },
         adminAuth:
           raw.adminAuth?.salt && raw.adminAuth?.hash
