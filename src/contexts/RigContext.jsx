@@ -4,7 +4,7 @@ import { getModeFromFreq, mapModeToRig } from '../utils/bandPlan.js';
 import { canTransmit, getLicenseClass, normalizeLicenseClass } from '../utils/privileges.js';
 import { showToast } from '../utils/toast.js';
 import { isRelayConfigured, setRelayConfigured, setRelaySessionId } from '../utils/relaySession.js';
-import { sendRelayCommand } from '../utils/relaySign';
+import { sendRelayCommand, relayReadHeaders, relayStreamUrl } from '../utils/relaySign';
 import { setTunedSpot } from '../services/logbookStore.js';
 
 // Default config
@@ -196,9 +196,19 @@ export const RigProvider = ({ children, rigConfig }) => {
         setError(data.relayActive ? null : 'not-reachable');
       };
 
-      const connectSSE = () => {
+      const connectSSE = async () => {
         if (!active) return;
-        eventSource = new EventSource(`/api/rig-bridge/relay/stream?session=${encodeURIComponent(cloudRelaySession)}`);
+        // A paired browser buys a one-time stream ticket with its relay read
+        // token (utils/relaySign); the stream URL never carries a secret.
+        const { url, status } = await relayStreamUrl(cloudRelaySession);
+        if (!active) return;
+        if (!url) {
+          if (status === 401) setError('relay-read-refused');
+          retryTimeout = setTimeout(connectSSE, retryDelay);
+          retryDelay = Math.min(retryDelay * 2, MAX_RETRY_DELAY);
+          return;
+        }
+        eventSource = new EventSource(url);
 
         eventSource.onmessage = (event) => {
           try {
@@ -236,7 +246,12 @@ export const RigProvider = ({ children, rigConfig }) => {
             fallbackInterval = setInterval(async () => {
               if (!active) return;
               try {
-                const res = await fetch(`/api/rig-bridge/relay/state?session=${encodeURIComponent(cloudRelaySession)}`);
+                const res = await fetch(
+                  `/api/rig-bridge/relay/state?session=${encodeURIComponent(cloudRelaySession)}`,
+                  {
+                    headers: await relayReadHeaders(cloudRelaySession),
+                  },
+                );
                 if (res.ok) {
                   fallbackFailures = 0;
                   applyRelayState({ relayActive: true, ...(await res.json()) });

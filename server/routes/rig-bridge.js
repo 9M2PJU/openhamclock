@@ -85,7 +85,15 @@ module.exports = function (app, ctx) {
     for (const [k, v] of Object.entries(obj)) {
       // Migrate old plain-string format — treat as freshly used so it isn't immediately pruned
       if (typeof v === 'string') relayIssuedTokens.set(k, { token: v, lastUsed: now });
-      else if (v?.token) relayIssuedTokens.set(k, { token: v.token, lastUsed: v.lastUsed ?? now });
+      else if (v?.token) {
+        relayIssuedTokens.set(k, {
+          token: v.token,
+          lastUsed: v.lastUsed ?? now,
+          ...(typeof v.readTokenHash === 'string' && /^[0-9a-f]{64}$/.test(v.readTokenHash)
+            ? { readTokenHash: v.readTokenHash }
+            : {}),
+        });
+      }
     }
     logInfo(`[RigBridge] Loaded ${relayIssuedTokens.size} relay token(s) from ${RELAY_TOKENS_FILE}`);
   } catch {
@@ -272,7 +280,92 @@ module.exports = function (app, ctx) {
       });
     }
     entry.lastUsed = Date.now();
+    // A paired bridge registers the hash of its relay read token on every
+    // authenticated request (header) or state push (body); keep it, persisted,
+    // so this session's reads stay protected across server restarts.
+    const h = req.headers['x-relay-read-hash'] || req.body?.readTokenHash;
+    if (typeof h === 'string' && /^[0-9a-f]{64}$/.test(h) && entry.readTokenHash !== h) {
+      entry.readTokenHash = h;
+      saveRelayTokens();
+    }
     next();
+  }
+
+  // ─── Relay reads (state, decodes, APRS, live stream) ──────────────────
+  // Once the bridge has registered a read-token hash, reading a session needs
+  // the read token (X-Relay-Read header; the stream takes a one-time ticket
+  // bought with it) — the session id alone is no longer enough. Sessions
+  // whose bridge has no command key keep the old open reads until the grace
+  // date, with an hourly warning, then are refused.
+  const READ_GRACE_UNTIL = (() => {
+    const t = Date.parse(process.env.RELAY_UNSIGNED_GRACE_UNTIL || '2027-01-31');
+    return Number.isFinite(t) ? t : Date.parse('2027-01-31');
+  })();
+  const readWarnLastLogged = new Map(); // sessionId → timestamp
+
+  function sha256Hex(hex) {
+    return crypto.createHash('sha256').update(Buffer.from(hex, 'hex')).digest('hex');
+  }
+
+  /** → 'ok' | 'legacy' | 'denied' | 'unpaired-expired' */
+  function checkRelayRead(sessionId, token) {
+    const entry = typeof sessionId === 'string' ? relayIssuedTokens.get(sessionId) : null;
+    if (!entry) return 'ok'; // unknown session: nothing to read
+    if (entry.readTokenHash) {
+      if (typeof token !== 'string' || !/^[0-9a-f]{64}$/.test(token)) return 'denied';
+      const a = Buffer.from(sha256Hex(token), 'hex');
+      const b = Buffer.from(entry.readTokenHash, 'hex');
+      return a.length === b.length && crypto.timingSafeEqual(a, b) ? 'ok' : 'denied';
+    }
+    if (Date.now() >= READ_GRACE_UNTIL) return 'unpaired-expired';
+    const now = Date.now();
+    const key = sessionId.slice(0, 8);
+    if (now - (readWarnLastLogged.get(key) ?? 0) >= 3600000) {
+      readWarnLastLogged.set(key, now);
+      logWarn(
+        `[RigBridge] relay session ${key}… is read without a read token (bridge has no command key) — ` +
+          `allowed until ${new Date(READ_GRACE_UNTIL).toISOString().slice(0, 10)}; re-run Connect Cloud Relay`,
+      );
+    }
+    return 'legacy';
+  }
+
+  function refuseRead(res, verdict) {
+    return res.status(401).json({
+      error:
+        verdict === 'unpaired-expired'
+          ? 'This relay session has no command key — re-run Connect Cloud Relay in Settings → Rig Bridge'
+          : 'Relay read token missing or wrong — re-run Connect Cloud Relay in Settings → Rig Bridge on this browser',
+      relayActive: false,
+    });
+  }
+
+  function requireRelayRead(req, res, next) {
+    const sessionId = req.query.session || req.body?.session;
+    const verdict = checkRelayRead(sessionId, req.headers['x-relay-read']);
+    if (verdict === 'ok' || verdict === 'legacy') return next();
+    return refuseRead(res, verdict);
+  }
+
+  // One-time stream tickets: the read token goes in a header to POST
+  // /relay/stream-ticket, only the short-lived ticket goes in the stream URL.
+  const STREAM_TICKET_TTL_MS = 60000;
+  const streamTickets = new Map(); // ticket → { sessionId, exp }
+  function issueStreamTicket(sessionId) {
+    const now = Date.now();
+    if (streamTickets.size > 2000) {
+      for (const [t, v] of streamTickets) if (v.exp <= now) streamTickets.delete(t);
+      if (streamTickets.size > 2000) streamTickets.delete(streamTickets.keys().next().value);
+    }
+    const ticket = crypto.randomBytes(16).toString('hex');
+    streamTickets.set(ticket, { sessionId, exp: now + STREAM_TICKET_TTL_MS });
+    return ticket;
+  }
+  function redeemStreamTicket(ticket, sessionId) {
+    const grant = typeof ticket === 'string' ? streamTickets.get(ticket) : null;
+    if (!grant) return false;
+    streamTickets.delete(ticket); // single use, whatever the outcome
+    return grant.sessionId === sessionId && grant.exp > Date.now();
   }
 
   // ─── Cloud Relay: Credentials (browser fetches to configure rig-bridge) ─
@@ -281,7 +374,17 @@ module.exports = function (app, ctx) {
       if (!RIG_BRIDGE_RELAY_KEY) {
         return res.json({ error: 'Cloud relay not configured', configured: false });
       }
-      const sessionId = req.query.session || crypto.randomBytes(8).toString('hex');
+      const requested = typeof req.query.session === 'string' ? req.query.session : '';
+      if (requested && !/^[a-z0-9]{8,32}$/.test(requested)) {
+        return res.status(400).json({ error: 'Invalid session id', configured: false });
+      }
+      // Never re-issue credentials for an existing session: whoever knew the
+      // session id could otherwise take it over (replace the bridge's token,
+      // drop its read protection).
+      if (requested && relayIssuedTokens.has(requested)) {
+        return res.status(409).json({ error: 'Session already exists', configured: false });
+      }
+      const sessionId = requested || crypto.randomBytes(8).toString('hex');
       const token = crypto.randomBytes(32).toString('hex');
       relayIssuedTokens.set(sessionId, { token, lastUsed: Date.now() });
       saveRelayTokens();
@@ -438,7 +541,7 @@ module.exports = function (app, ctx) {
   });
 
   // ─── Cloud Relay: State Poll (browser → server) ───────────────────────
-  app.get('/api/rig-bridge/relay/state', (req, res) => {
+  app.get('/api/rig-bridge/relay/state', requireRelayRead, (req, res) => {
     try {
       const sessionId = req.query.session;
       if (!sessionId || !relaySessions.has(sessionId)) {
@@ -456,11 +559,24 @@ module.exports = function (app, ctx) {
   // ─── Cloud Relay: SSE Stream (browser → server, live state push) ──────
   // Browser connects here instead of polling. State updates are pushed as
   // soon as rig-bridge delivers them via POST /relay/state.
+  app.post('/api/rig-bridge/relay/stream-ticket', requireRelayRead, (req, res) => {
+    const sessionId = req.query.session || req.body?.session;
+    if (typeof sessionId !== 'string' || !sessionId) return res.status(400).json({ error: 'Missing session ID' });
+    res.json({ ticket: issueStreamTicket(sessionId), ttlMs: STREAM_TICKET_TTL_MS });
+  });
+
   app.get('/api/rig-bridge/relay/stream', (req, res) => {
     try {
       const sessionId = req.query.session;
-      if (!sessionId) {
+      if (!sessionId || typeof sessionId !== 'string') {
         return res.json({ error: 'Missing session ID', relayActive: false });
+      }
+      // A protected session's stream needs a one-time ticket (POST
+      // /relay/stream-ticket with the read token); the URL carries no secret.
+      const verdict = checkRelayRead(sessionId, null);
+      if (verdict === 'unpaired-expired') return refuseRead(res, verdict);
+      if (verdict === 'denied' && !redeemStreamTicket(req.query.ticket, sessionId)) {
+        return refuseRead(res, verdict);
       }
 
       res.setHeader('Content-Type', 'text/event-stream');
@@ -525,7 +641,7 @@ module.exports = function (app, ctx) {
   });
 
   // ─── Cloud Relay: Decodes Poll (browser → server) ─────────────────────
-  app.get('/api/rig-bridge/relay/decodes', (req, res) => {
+  app.get('/api/rig-bridge/relay/decodes', requireRelayRead, (req, res) => {
     try {
       const sessionId = req.query.session;
       const since = parseInt(req.query.since) || 0;
@@ -542,7 +658,7 @@ module.exports = function (app, ctx) {
   });
 
   // ─── Cloud Relay: APRS Packets Poll (browser → server) ─────────────────
-  app.get('/api/rig-bridge/relay/aprs', (req, res) => {
+  app.get('/api/rig-bridge/relay/aprs', requireRelayRead, (req, res) => {
     try {
       const sessionId = req.query.session;
       const since = parseInt(req.query.since) || 0;

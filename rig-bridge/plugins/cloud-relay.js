@@ -47,7 +47,7 @@
 const http = require('http');
 const https = require('https');
 const { URL } = require('url');
-const { createCommandVerifier, isValidKey } = require('../lib/relay-sign');
+const { createCommandVerifier, isValidKey, deriveReadToken, readTokenHash } = require('../lib/relay-sign');
 
 // Unsigned commands a bridge that has not been re-paired still accepts during
 // the grace period: they tune, they never transmit.
@@ -88,6 +88,15 @@ const descriptor = {
       const t = Date.parse(cfg.unsignedGraceUntil || DEFAULT_UNSIGNED_GRACE_UNTIL);
       return Number.isFinite(t) ? t : Date.parse(DEFAULT_UNSIGNED_GRACE_UNTIL);
     })();
+    // sha256 of the relay read token (lib/relay-sign deriveReadToken); '' unpaired
+    let readHashCache = { key: null, hash: '' };
+    function readHash() {
+      const k = commandKey();
+      if (readHashCache.key !== k) {
+        readHashCache = { key: k, hash: isValidKey(k) ? readTokenHash(deriveReadToken(k, session)) : '' };
+      }
+      return readHashCache.hash;
+    }
     const warnedAt = new Map(); // reason → last log time
     let refusedCommands = 0;
 
@@ -175,6 +184,10 @@ const descriptor = {
         Authorization: `Bearer ${apiKey}`,
         'X-Relay-Session': session,
       };
+      // Register the read-token hash on every authenticated request, so the
+      // server protects this session's reads even right after it restarts.
+      const rh = readHash();
+      if (rh) headers['X-Relay-Read-Hash'] = rh;
 
       const options = {
         hostname: parsed.hostname,
@@ -268,6 +281,7 @@ const descriptor = {
         ...currentState,
         session,
         commandAuth: isValidKey(commandKey()) ? 'hmac-sha256' : 'none',
+        ...(readHash() ? { readTokenHash: readHash() } : {}),
       };
       if (hasDecodes) {
         payload.decodes = pendingDecodes.splice(0, 50);
