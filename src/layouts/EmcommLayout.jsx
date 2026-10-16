@@ -68,6 +68,8 @@ const PANEL_TOOL_BTN = {
 import { winlinkModeLabel, winlinkModeColor } from '../utils/winlinkModes.js';
 import { stationAgeMinutes, formatStationAge } from '../utils/aprsStationAge.js';
 import { requestMapFocus } from '../utils/mapFocus.js';
+import { sendAprsMessage as sendAprs, directRigUrl } from '../utils/aprsMessageSend.js';
+import { useRigOptional } from '../contexts/RigContext.jsx';
 import {
   recordEvent,
   getEvents,
@@ -287,6 +289,13 @@ export default function EmcommLayout(props) {
     });
   }, []);
   const [messageText, setMessageText] = useState('');
+  // Composer state (#1242, #1243): sending in flight, and the last failure
+  const [messageSending, setMessageSending] = useState(false);
+  const [messageError, setMessageError] = useState('');
+  const messageInputRef = useRef(null);
+  const messageBoxRef = useRef(null);
+  const rig = useRigOptional();
+  const rigDirectUrl = directRigUrl(rig);
   // Nearby Winlink gateways
   const [winlinkRows, setWinlinkRows] = useState([]);
   const [winlinkServerHasKey, setWinlinkServerHasKey] = useState(true);
@@ -924,14 +933,20 @@ export default function EmcommLayout(props) {
 
   // Send an APRS message to the current target (shared by Enter key + button)
   // and record it in the event log.
-  const sendAprsMessage = useCallback(() => {
+  // Goes straight to this browser's Rig Bridge when it has one (the server
+  // only knows localhost:5555), and waits for the answer (#1243): a failed
+  // send used to be logged as sent and the composer closed.
+  const sendAprsMessage = useCallback(async () => {
     const text = messageText.trim();
-    if (!text || !messageTarget) return;
-    fetch('/api/aprs/message', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ to: messageTarget, message: text }),
-    }).catch(() => {});
+    if (!text || !messageTarget || messageSending) return;
+    setMessageSending(true);
+    setMessageError('');
+    const r = await sendAprs({ to: messageTarget, message: text, rigUrl: rigDirectUrl });
+    setMessageSending(false);
+    if (!r.ok) {
+      setMessageError(r.error || 'Not sent');
+      return;
+    }
     recordEvent('aprs_msg_sent', {
       callsign: config.callsign || 'N0CALL',
       summary: `Message to ${messageTarget}`,
@@ -939,7 +954,18 @@ export default function EmcommLayout(props) {
     });
     setMessageText('');
     setMessageTarget(null);
-  }, [messageText, messageTarget, config.callsign]);
+  }, [messageText, messageTarget, messageSending, rigDirectUrl, config.callsign]);
+  // Opening the composer (any MSG button) brings it into view and puts the
+  // cursor in the message line (#1242).
+  useEffect(() => {
+    setMessageError('');
+    if (!messageTarget) return;
+    const id = requestAnimationFrame(() => {
+      messageBoxRef.current?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
+      messageInputRef.current?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(id);
+  }, [messageTarget]);
 
   // ── Event log export handlers ─────────────────────────────────────────────
   const exportEventLogCsv = useCallback(() => {
@@ -1920,12 +1946,21 @@ export default function EmcommLayout(props) {
           )}
           {messageTarget && (
             <div
+              ref={messageBoxRef}
+              data-testid="aprs-composer"
               style={{
                 background: '#111620',
-                border: '1px solid #2a3040',
+                border: '1px solid #22d3ee',
                 borderRadius: '6px',
                 padding: '10px',
                 marginTop: '8px',
+                // Pinned to the bottom of the visible rail: it is the rail's
+                // last child, below every panel, so it used to open off-screen
+                // (#1242).
+                position: 'sticky',
+                bottom: 0,
+                zIndex: 5,
+                boxShadow: '0 -6px 16px rgba(0,0,0,0.6)',
               }}
             >
               <div
@@ -1944,7 +1979,9 @@ export default function EmcommLayout(props) {
               </div>
               <div style={{ display: 'flex', gap: '6px' }}>
                 <input
+                  ref={messageInputRef}
                   type="text"
+                  aria-label={`Message to ${messageTarget}`}
                   value={messageText}
                   onChange={(e) => setMessageText(e.target.value.slice(0, 67))}
                   placeholder="Type message (67 char max)"
@@ -1960,11 +1997,17 @@ export default function EmcommLayout(props) {
                   }}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') sendAprsMessage();
+                    if (e.key === 'Escape') {
+                      setMessageTarget(null);
+                      setMessageText('');
+                    }
                   }}
                 />
                 <button
                   onClick={sendAprsMessage}
+                  disabled={messageSending || !messageText.trim()}
                   style={{
+                    opacity: messageSending || !messageText.trim() ? 0.5 : 1,
                     padding: '6px 12px',
                     background: '#22d3ee',
                     border: 'none',
@@ -1975,11 +2018,17 @@ export default function EmcommLayout(props) {
                     cursor: 'pointer',
                   }}
                 >
-                  Send
+                  {messageSending ? 'Sending…' : 'Send'}
                 </button>
               </div>
+              {messageError && (
+                <div role="alert" style={{ fontSize: '10px', color: '#ef4444', marginTop: '4px' }}>
+                  Not sent: {messageError}
+                </div>
+              )}
               <div style={{ fontSize: '9px', color: '#888', marginTop: '4px' }}>
-                {messageText.length}/67 chars — sent via APRS (requires local TNC)
+                {messageText.length}/67 chars — sent via APRS{' '}
+                {rigDirectUrl ? `through Rig Bridge at ${rigDirectUrl}` : '(requires local TNC)'}
               </div>
             </div>
           )}
