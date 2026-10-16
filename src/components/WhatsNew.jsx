@@ -29,6 +29,24 @@ const ANNOUNCEMENT = {
 
 const CHANGELOG = [
   {
+    version: '26.10.5',
+    date: '2026-10-16',
+    heading:
+      'Hotfix: APRS messages sent from OpenHamClock now reach the Rig Bridge you set up. Before, they only went out if that Rig Bridge was on the same computer as the OpenHamClock server, at port 5555, and a message that never left was still shown as sent. Also: cleaner shelter beacons.',
+    features: [
+      {
+        icon: '📨',
+        title: 'FIX: APRS Messages Go Out Through Your Rig Bridge',
+        desc: 'The MSG box in the EmComm layout handed each message to the OpenHamClock server, which always looked for Rig Bridge on its own computer at port 5555. A Rig Bridge on another port or another computer (a Pi next to the radio, say) never got the message, while incoming APRS kept working, because your browser reads Rig Bridge directly. Messages now go straight to the Rig Bridge set in Settings → Rig Bridge (through the server only over Cloud Relay or with rig control off). A message that does not go out now stays in the box with the reason, such as "TNC not connected", instead of being logged as sent. And every MSG button opens the box in view at the bottom of the sidebar with the cursor in it (#1242). Reported by Michael, KE8PLM (#1243).',
+      },
+      {
+        icon: '🏠',
+        title: 'FIX: Altitude No Longer Shows in Shelter Reports',
+        desc: 'A shelter beacon from the aprs.fi app that included altitude showed as "/A=000921OPEN": the altitude was read but left in the text. Altitude and course/speed are position data and now come out of the comment once read, so the report shows OPEN with its Beds and Water badges. Reported by Michael, KE8PLM (#1235).',
+      },
+    ],
+  },
+  {
     version: '26.10.4',
     date: '2026-10-16',
     heading:
