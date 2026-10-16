@@ -71,9 +71,9 @@ jobs:
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
 
-      # Fetches the P.533 WASM bundle; exits 0 with a warning if unavailable
-      # (the runtime then uses the REST fallback), exactly as in the Dockerfile.
-      - name: Fetch P.533 WASM
+      # Fetches the P.533 and FT8 WASM bundles; exits 0 with a warning per missing
+      # package (P.533 → REST fallback, FT8 → tab says not installed), as in the Dockerfile.
+      - name: Fetch WASM (P.533, FT8)
         run: node scripts/fetch-wasm.js
 
       - name: Production build

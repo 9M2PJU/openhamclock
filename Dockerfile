@@ -25,7 +25,7 @@ RUN mkdir -p /app/public
 # bash — without this apk add, RUN bash ... fails with "bash: not found".
 RUN apk add --no-cache bash curl && bash scripts/vendor-download.sh || true
 
-# Fetch P.533 WASM from the wasm-latest GitHub Release (public, no auth).
+# Fetch the P.533 and FT8 WASM from the wasm-latest GitHub Release (public, no auth).
 # On failure (e.g. release doesn't exist yet), runtime
 # falls back to /api/bands (proppy) then the built-in heuristic.
 RUN node scripts/fetch-wasm.js
