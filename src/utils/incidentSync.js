@@ -34,6 +34,17 @@ export function emptyIncidentState() {
   return { seq: 0, board: null, participants: 0, role: null, roster: {}, events: {}, reports: {}, docs: {} };
 }
 
+/**
+ * Shared documents are ordered by the server (`docRev`, assigned on receipt),
+ * never by client clocks. A local optimistic copy (no docRev yet) gives way
+ * to any server copy; between two server copies the higher docRev wins.
+ */
+export function newerDoc(cur, incoming) {
+  if (!cur) return true;
+  if (!Number.isFinite(incoming?.docRev)) return !Number.isFinite(cur.docRev); // local over local only
+  return !Number.isFinite(cur.docRev) || incoming.docRev > cur.docRev;
+}
+
 /** Keep an incoming record when it is new, or an admin edit (higher rev) of one we have. */
 const newerRecord = (cur, rec) => !cur || (rec.rev || 0) > (cur.rev || 0);
 
@@ -100,7 +111,7 @@ export function applyIncidentDelta(state, delta) {
     for (const d of delta.docs) {
       if (!d?.id) continue;
       const cur = docs[d.id];
-      if (cur && (cur.updatedAt || 0) > (d.updatedAt || 0)) continue;
+      if (!newerDoc(cur, d)) continue;
       docs[d.id] = d;
     }
     next.docs = docs;
