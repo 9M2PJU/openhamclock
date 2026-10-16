@@ -185,6 +185,7 @@ describe('incidentNetBridge', () => {
     });
 
     it('the same station changed at both sites: theirs is kept and the operator is told where', () => {
+      const LATER = Date.now() + 60_000;
       const shared = startShared();
       const heard = [];
       const onConflict = (e) => heard.push(e.detail);
@@ -196,9 +197,9 @@ describe('incidentNetBridge', () => {
             ...shared.net,
             stations: shared.net.stations.map((s) => (s.call === 'W1AW' ? { ...s, flags: ['M'] } : s)),
             rev: 6,
-            updatedAt: 7,
+            updatedAt: LATER, // South's change is the later one
           }),
-          tag: '6:7',
+          tag: `6:${LATER}`,
           parentTag: '5:1',
           origin: { site: 'South', call: 'W1AW' },
         };
@@ -214,6 +215,64 @@ describe('incidentNetBridge', () => {
       } finally {
         window.removeEventListener('ohc-net-control-remote-conflict', onConflict);
       }
+    });
+
+    it('the same station changed at both sites, ours later: ours stays and is published on top of theirs', () => {
+      const shared = startShared();
+      localEdit((n) => ({
+        ...n,
+        stations: n.stations.map((s) => (s.call === 'W1AW' ? { ...s, flags: ['traffic'] } : s)),
+      }));
+      published = [];
+      const theirs = {
+        ...serializeNetState({
+          ...shared.net,
+          stations: shared.net.stations.map((s) => (s.call === 'W1AW' ? { ...s, flags: ['mobile'] } : s)),
+          rev: 6,
+          updatedAt: 7, // an earlier change than ours
+        }),
+        tag: '6:7',
+        parentTag: '5:1',
+        origin: { site: 'South', call: 'W1AW' },
+      };
+      expect(receiveNet(theirs)).toBe(false);
+      expect(loadRunningNet().stations.find((s) => s.call === 'W1AW').flags).toEqual(['traffic']);
+      expect(loadNetConflicts()).toBeNull(); // no chip at the site whose change stands
+      const again = published.at(-1).data;
+      expect(again.parentTag).toBe('6:7');
+      expect(again.overrode).toEqual({ tag: '6:7', calls: ['W1AW'], fields: [] });
+      expect(again.net.stations.find((s) => s.call === 'W1AW').flags).toEqual(['traffic']);
+    });
+
+    it('after Apply mine, a late re-announcement of the state we already took does not undo it', () => {
+      const shared = startShared();
+      localEdit((n) => ({
+        ...n,
+        stations: n.stations.map((s) => (s.call === 'W1AW' ? { ...s, flags: ['traffic'] } : s)),
+      }));
+      const LATER = Date.now() + 60_000;
+      const theirsNet = {
+        ...shared.net,
+        stations: shared.net.stations.map((s) => (s.call === 'W1AW' ? { ...s, flags: ['mobile'] } : s)),
+        rev: 6,
+        updatedAt: LATER,
+      };
+      const theirs = {
+        ...serializeNetState(theirsNet),
+        tag: `6:${LATER}`,
+        parentTag: '5:1',
+        origin: { site: 'South' },
+      };
+      receiveNet(theirs); // conflict: theirs (later) taken here
+      // Apply mine: our flag back on top of theirs
+      localEdit((n) => ({
+        ...n,
+        stations: n.stations.map((s) => (s.call === 'W1AW' ? { ...s, flags: ['traffic'] } : s)),
+      }));
+      // South's re-announcement of the same state (made when it kept its change) arrives late
+      const again = { ...theirs, parentTag: published[0].data.tag };
+      expect(receiveNet(again)).toBe(false);
+      expect(loadRunningNet().stations.find((s) => s.call === 'W1AW').flags).toEqual(['traffic']);
     });
 
     it('our own state echoed back is ignored', () => {
