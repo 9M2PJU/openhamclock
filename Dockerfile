@@ -48,6 +48,11 @@ WORKDIR /app
 # Create /data directory for persistent stats (Railway volume mount point)
 RUN mkdir -p /data
 
+# openssl CLI so HTTPS_PORT can generate its self-signed LAN certificate
+# (server/utils/lanHttps.js). ~0.8 MB installed: the libcrypto3/libssl3 it
+# needs are already in the base image (apk-tools uses them).
+RUN apk add --no-cache openssl
+
 # Copy package files and install production deps only
 COPY package*.json ./
 RUN npm install --omit=dev

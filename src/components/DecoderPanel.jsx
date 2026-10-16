@@ -23,7 +23,7 @@ import { findCallsigns, tokenizeCallsigns } from '../utils/cwDecoder.js';
 import { kiwiTuneRequest, KIWI_CW_PITCH_HZ } from '../utils/kiwiAudioClient.js';
 import { createFt8Client } from '../services/ft8/client.js';
 import { sendRelayCommand } from '../utils/relaySign.js';
-import { FT8_DIALS } from '../utils/ft8Dsp.js';
+import { FT8_DIALS, ReceiverDelayTracker } from '../utils/ft8Dsp.js';
 import {
   MY_DECODES_EVENT,
   addMyDecode,
@@ -165,6 +165,7 @@ export default function DecoderPanel({ onSetDX, dxLocked = false, onSpotClick, a
 
   const engineRef = useRef(null);
   const ft8Ref = useRef(null);
+  const delayRef = useRef(null);
   const copyRef = useRef(null);
   const noteTimer = useRef(null);
   const settingsRef = useRef(settings);
@@ -273,8 +274,13 @@ export default function DecoderPanel({ onSetDX, dxLocked = false, onSpotClick, a
   );
 
   const onFt8Slot = useCallback((r) => {
-    setFt8State((s) => ({ ...s, lastDecodeMs: r.decodeMs, message: r.error || '' }));
-    setFt8Slots((prev) => [{ slotStartMs: r.slotStartMs, decodes: r.decodes || [] }, ...prev].slice(0, FT8_SLOTS_KEPT));
+    const decodes = r.decodes || [];
+    const trk = delayRef.current;
+    // KiwiSDR: learn the receive-path delay from the decodes; the audio is
+    // re-timed by it (see onPcm below) so DT reads true and slots line up.
+    if (trk) trk.add(decodes.map((d) => d.dt));
+    setFt8State((s) => ({ ...s, lastDecodeMs: r.decodeMs, message: r.error || '', delayS: trk ? trk.delayS : 0 }));
+    setFt8Slots((prev) => [{ slotStartMs: r.slotStartMs, decodes }, ...prev].slice(0, FT8_SLOTS_KEPT));
   }, []);
 
   const start = useCallback(async () => {
@@ -283,14 +289,17 @@ export default function DecoderPanel({ onSetDX, dxLocked = false, onSpotClick, a
     const s = settingsRef.current;
     const ft8 = s.mode === 'ft8';
     if (ft8) {
+      delayRef.current = s.source === 'kiwi' ? new ReceiverDelayTracker() : null;
       ft8Ref.current = createFt8Client({
+        emitAtSec: s.source === 'kiwi' ? 15.4 : undefined,
         onSlot: onFt8Slot,
         onStatus: (st, message) => setFt8State((prev) => ({ ...prev, status: st, message: message || '' })),
       });
     }
     const eng = new DecoderAudioEngine({
       onUpdate,
-      onPcm: (samples, rate, endTimeMs) => ft8Ref.current?.push(samples, rate, endTimeMs),
+      onPcm: (samples, rate, endTimeMs) =>
+        ft8Ref.current?.push(samples, rate, endTimeMs - (delayRef.current?.delayS || 0) * 1000),
       onStatus: setStatus,
       onError: (err) => {
         setError(err?.message || String(err));
@@ -643,6 +652,12 @@ export default function DecoderPanel({ onSetDX, dxLocked = false, onSpotClick, a
               : ft8State.status === 'ready' && ft8State.lastDecodeMs
                 ? t('decoder.ft8.decodeTime', { defaultValue: 'decoded in {{ms}} ms', ms: ft8State.lastDecodeMs })
                 : ''}
+            {ft8State.delayS
+              ? ` · ${t('decoder.ft8.delay', {
+                  defaultValue: 'receiver delay {{s}} s corrected',
+                  s: ft8State.delayS.toFixed(1),
+                })}`
+              : ''}
           </span>
         </div>
       ) : (

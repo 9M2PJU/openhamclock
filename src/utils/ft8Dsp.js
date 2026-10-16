@@ -233,3 +233,45 @@ export function slotLabel(slotStartMs) {
   const p = (n) => String(n).padStart(2, '0');
   return `${p(d.getUTCHours())}${p(d.getUTCMinutes())}${p(d.getUTCSeconds())}`;
 }
+
+// ── Receive-path delay (remote receivers) ─────────────────────────────────
+
+/**
+ * Learns the constant delay of a remote receive path from the decodes.
+ * Audio from a KiwiSDR reaches the browser hundreds of ms late (Kiwi
+ * buffering and two network hops), so every station looks late by the same
+ * amount — and worse, the end of each transmission spills past the 15 s slot
+ * the decoder is given. Most FT8 stations keep their clocks within a few
+ * tenths of a second, so the median DT is the delay.
+ *
+ * Use: shift the audio's timestamps earlier by `delayS` (so slots are cut
+ * where the transmissions really are) and feed each slot's DTs to `add()`.
+ * Once `minSamples` DTs are in and their median is beyond `deadbandS`, the
+ * median is added to the delay and collection starts over — it converges in
+ * one or two steps and then tracks slow drift.
+ */
+export class ReceiverDelayTracker {
+  constructor({ minSamples = 8, deadbandS = 0.15, maxS = 4 } = {}) {
+    this.minSamples = minSamples;
+    this.deadbandS = deadbandS;
+    this.maxS = maxS;
+    this.reset();
+  }
+
+  reset() {
+    this.delayS = 0;
+    this.pending = [];
+  }
+
+  /** Feed the DTs of one slot; returns true when the delay estimate changed. */
+  add(dts) {
+    for (const d of dts) if (Number.isFinite(d) && Math.abs(d) < 5) this.pending.push(d);
+    if (this.pending.length < this.minSamples) return false;
+    const s = [...this.pending].sort((a, b) => a - b);
+    const m = s.length % 2 ? s[s.length >> 1] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2;
+    this.pending = [];
+    if (Math.abs(m) <= this.deadbandS) return false;
+    this.delayS = Math.max(0, Math.min(this.maxS, Math.round((this.delayS + m) * 10) / 10));
+    return true;
+  }
+}

@@ -18,14 +18,16 @@ export class Ft8Engine {
    *           onLevel?: (s: { fill: number, slotStartMs: number|null }) => void,
    *           now?: () => number }} opts
    */
-  constructor({ decoder, onSlot, onLevel, now = () => Date.now() }) {
+  constructor({ decoder, onSlot, onLevel, now = () => Date.now(), emitAtSec }) {
     this.decoder = decoder;
     this.onSlot = onSlot;
     this.onLevel = onLevel || (() => {});
     this.now = now;
     this.resampler = null;
     this.inRate = 0;
-    this.collector = new SlotCollector();
+    // emitAtSec: a remote receiver (KiwiSDR) waits a little longer so a
+    // transmission that arrives late is not cut off at the slot end
+    this.collector = new SlotCollector(emitAtSec ? { emitAtSec } : {});
   }
 
   /** samples at `sampleRate`; endTimeMs = wall time just after the last sample. */

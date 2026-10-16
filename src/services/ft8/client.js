@@ -9,7 +9,7 @@ const DEFAULT_WASM_URL = import.meta.env?.VITE_FT8_WASM_URL || '/wasm/ft8.mjs';
  * @param {{ onSlot?: Function, onStatus?: (s: 'loading'|'ready'|'unavailable', message?: string) => void,
  *           onLevel?: Function, wasmUrl?: string, WorkerImpl?: typeof Worker }} opts
  */
-export function createFt8Client({ onSlot, onStatus, onLevel, wasmUrl = DEFAULT_WASM_URL, WorkerImpl } = {}) {
+export function createFt8Client({ onSlot, onStatus, onLevel, wasmUrl = DEFAULT_WASM_URL, WorkerImpl, emitAtSec } = {}) {
   // Keep the literal `new Worker(new URL(...))` form: that is what Vite
   // recognises to bundle worker.js (and its imports) into its own chunk.
   const worker = WorkerImpl
@@ -27,7 +27,7 @@ export function createFt8Client({ onSlot, onStatus, onLevel, wasmUrl = DEFAULT_W
     else if (m.type === 'level') onLevel?.(m);
   };
   worker.onerror = (e) => onStatus?.('unavailable', e?.message || 'FT8 worker failed');
-  worker.postMessage({ type: 'init', wasmUrl });
+  worker.postMessage({ type: 'init', wasmUrl, ...(emitAtSec ? { emitAtSec } : {}) });
   return {
     get ready() {
       return ready;

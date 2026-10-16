@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { Resampler, SlotCollector, parseFt8Message, slotLabel } from './ft8Dsp.js';
+import { ReceiverDelayTracker, Resampler, SlotCollector, parseFt8Message, slotLabel } from './ft8Dsp.js';
 import { goertzelPower } from './cwDecoder.js';
 
 const tone = (rate, hz, seconds, amp = 0.5) => {
@@ -115,5 +115,28 @@ describe('parseFt8Message', () => {
     expect(parseFt8Message('<...> RY8CAA R-10')).toMatchObject({ to: null, de: 'RY8CAA' });
     expect(parseFt8Message('GI7KMC F8IJV/P 73')).toMatchObject({ de: 'F8IJV/P', ack: '73' });
     expect(parseFt8Message('<PJ4/K1ABC> W9XYZ -05').to).toBe('PJ4/K1ABC');
+  });
+});
+
+describe('ReceiverDelayTracker', () => {
+  it('learns a constant remote-receiver delay from the median DT', () => {
+    const t = new ReceiverDelayTracker();
+    // ten stations, clocks within ±0.3 s, all heard 0.8 s late
+    const late = [0.9, 0.6, 0.8, 1.1, 0.7, 0.8, 0.5, 0.9, 0.8, 0.8];
+    expect(t.add(late.slice(0, 5))).toBe(false); // not enough yet
+    expect(t.add(late.slice(5))).toBe(true);
+    expect(t.delayS).toBe(0.8);
+    // with the audio shifted by 0.8 s the next slots read ≈ 0: no change
+    expect(t.add(late.map((d) => Math.round((d - 0.8) * 10) / 10))).toBe(false);
+    expect(t.delayS).toBe(0.8);
+  });
+
+  it('ignores small offsets, refuses to go negative and caps the delay', () => {
+    const t = new ReceiverDelayTracker();
+    expect(t.add([0.1, 0.0, 0.2, 0.1, -0.1, 0.1, 0.0, 0.1])).toBe(false);
+    t.add(Array(8).fill(-1));
+    expect(t.delayS).toBe(0);
+    t.add(Array(8).fill(4.9));
+    expect(t.delayS).toBe(4);
   });
 });

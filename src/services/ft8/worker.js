@@ -2,7 +2,7 @@
 // scripts/fetch-wasm.js) and runs the receive chain (engine.js) off the main
 // thread. Spawned by client.js.
 //
-// main → worker:  { type: 'init', wasmUrl }
+// main → worker:  { type: 'init', wasmUrl, emitAtSec? }
 //                 { type: 'audio', samples: Float32Array, sampleRate, endTimeMs }
 //                 { type: 'reset' }
 // worker → main:  { type: 'ready' }
@@ -16,7 +16,7 @@ let engine = null;
 let loading = null;
 let lastLevel = 0;
 
-async function init(wasmUrl) {
+async function init(wasmUrl, emitAtSec) {
   if (loading) return loading;
   loading = (async () => {
     try {
@@ -27,6 +27,7 @@ async function init(wasmUrl) {
       const mod = await createFt8Module();
       engine = new Ft8Engine({
         decoder: createFt8Decoder(mod),
+        emitAtSec,
         onSlot: (r) => self.postMessage({ type: 'slot', ...r }),
         onLevel: (l) => {
           const now = Date.now();
@@ -46,7 +47,7 @@ async function init(wasmUrl) {
 
 self.onmessage = (e) => {
   const msg = e.data || {};
-  if (msg.type === 'init') init(msg.wasmUrl);
+  if (msg.type === 'init') init(msg.wasmUrl, msg.emitAtSec);
   else if (msg.type === 'audio' && engine) engine.push(msg.samples, msg.sampleRate, msg.endTimeMs);
   else if (msg.type === 'reset' && engine) engine.reset();
 };

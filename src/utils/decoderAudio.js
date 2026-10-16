@@ -90,7 +90,11 @@ export class DecoderAudioEngine {
         this.node.port.onmessage = (e) => {
           const { samples, endTime } = e.data || {};
           if (!samples || this.ctx !== ctx) return;
-          const endTimeMs = Date.now() - (ctx.currentTime - endTime) * 1000;
+          // KiwiSDR audio is played into the graph `kiwiLeadMs` after it arrived
+          // (jitter buffer): date the samples by their arrival instead. The
+          // rest of the path (Kiwi → bridge → browser) is corrected from the
+          // decodes themselves (ft8Dsp DtCalibrator).
+          const endTimeMs = Date.now() - (ctx.currentTime - endTime) * 1000 - (this.kiwiLeadMs || 0);
           this.onPcm(samples, ctx.sampleRate, endTimeMs);
         };
       } else {
@@ -203,6 +207,11 @@ export class DecoderAudioEngine {
           const buf = ctx.createBuffer(1, samples.length, rate);
           buf.copyToChannel(samples, 0);
           const at = sched.next(ctx.currentTime, buf.duration);
+          if (at !== null) {
+            // smoothed jitter-buffer delay between arrival and playback into the graph
+            const lead = (at - ctx.currentTime) * 1000;
+            this.kiwiLeadMs = this.kiwiLeadMs == null ? lead : this.kiwiLeadMs + (lead - this.kiwiLeadMs) * 0.05;
+          }
           if (at === null) continue;
           const src = ctx.createBufferSource();
           src.buffer = buf;
