@@ -105,7 +105,7 @@ export function subscribeDocs(fn) {
  * The incident side (useSharedIncident). `docs` is the incident's documents
  * ({ id: { data, updatedAt } }); `publish(id, data)` sends one.
  */
-export function attach({ docs = {}, publish }) {
+export function attach({ docs = {}, publish, origin = null }) {
   state.attached = true;
   state.publish = publish;
   state.docs = {};
@@ -116,7 +116,7 @@ export function attach({ docs = {}, publish }) {
     state.known[id] = JSON.stringify(doc.data ?? null);
   }
   for (const id of DOC_IDS) notify(id, 'mode');
-  netBridge.attach({ docs: docs || {}, publish });
+  netBridge.attach({ docs: docs || {}, publish, origin });
 }
 
 /** Documents from the server (snapshot or change). Notifies only real changes. */

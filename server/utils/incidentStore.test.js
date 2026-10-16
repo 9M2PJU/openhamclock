@@ -573,6 +573,62 @@ describe('incidentStore', () => {
     });
   });
 
+  describe('join key for the admin', () => {
+    it('an admin verify returns the current join key, an operator verify does not', () => {
+      const { incident, joinKey, adminKey } = make();
+      expect(store.verify(incident.id, adminKey).joinKey).toBe(joinKey);
+      expect(store.verify(incident.id, joinKey).joinKey).toBeUndefined();
+      expect(JSON.stringify(store.serialise())).not.toContain(joinKey);
+    });
+
+    it('rotation with the admin key reseals the new key; survives a restart', () => {
+      const { incident, adminKey } = make();
+      const { joinKey: fresh } = store.rotateJoinKey(incident.id, adminKey);
+      expect(store.verify(incident.id, adminKey).joinKey).toBe(fresh);
+      const restored = createIncidentStore({ now });
+      restored.hydrate(JSON.parse(JSON.stringify(store.serialise())));
+      expect(restored.verify(incident.id, adminKey).joinKey).toBe(fresh);
+    });
+  });
+
+  describe('tombstones on disk', () => {
+    it('a restart does not let a deleted record come back', () => {
+      const { incident } = make();
+      store.apply(incident.id, {
+        events: [{ id: 'e1', type: 'incident_note', summary: 'gone' }],
+        reports: [{ id: 'f1', kind: 'field', callsign: 'W1AW', text: 'gone' }],
+      });
+      store.adminChange(incident.id, { delete: { events: ['e1'], reports: ['f1'] } });
+      const seqAfterDelete = store.snapshot(incident.id).seq;
+      const restored = createIncidentStore({ now });
+      restored.hydrate(JSON.parse(JSON.stringify(store.serialise())));
+      const replay = restored.apply(incident.id, {
+        events: [{ id: 'e1', type: 'incident_note', summary: 'gone' }],
+        reports: [{ id: 'f1', kind: 'field', callsign: 'W1AW', text: 'gone' }],
+      });
+      expect(replay.changed).toBe(false);
+      expect(restored.snapshot(incident.id).events).toEqual([]);
+      // a client that was up to date before the restart still gets a delta, tombstones intact
+      const delta = restored.snapshot(incident.id, seqAfterDelete - 2);
+      expect(delta.full).toBe(false);
+      expect(delta.deleted.map((d) => d.id).sort()).toEqual(['e1', 'f1']);
+    });
+
+    it('tombstones go when the incident expires, and stay bounded', () => {
+      const s = createIncidentStore({ now, idleMs: 1000 });
+      const { incident } = s.create({});
+      const evs = Array.from({ length: 1100 }, (_, i) => ({ id: `x${i}`, type: 'incident_note', summary: `${i}` }));
+      for (let i = 0; i < evs.length; i += 200) s.apply(incident.id, { events: evs.slice(i, i + 200) });
+      for (let i = 0; i < evs.length; i += 200) {
+        s.adminChange(incident.id, { delete: { events: evs.slice(i, i + 200).map((e) => e.id) } });
+      }
+      expect(s.serialise()[0].tombstones.length).toBeLessThanOrEqual(1000);
+      clock += 2000;
+      s.expire();
+      expect(s.serialise()).toEqual([]);
+    });
+  });
+
   describe('persistence of roles, docs and edits', () => {
     it('round-trips the admin key, docs, edit revs and creator', () => {
       const { incident, adminKey } = store.create({ name: 'X' }, { call: 'W1AW' });
@@ -588,8 +644,13 @@ describe('incidentStore', () => {
       expect(snap.events[0]).toMatchObject({ summary: 'b', rev: 1 });
       expect(snap.docs[0]).toMatchObject({ id: 'ics-drafts', data: { header: { incidentName: 'X' } } });
       expect(restored.get(incident.id).creatorCall).toBe('W1AW');
-      // after a restart every cursor resyncs fully (tombstones are not persisted)
-      expect(restored.snapshot(incident.id, 2).full).toBe(true);
+      // tombstones are persisted, so a cursor from before the restart still gets a delta
+      expect(restored.snapshot(incident.id, 2).full).toBe(false);
+      // a file from before tombstones were persisted forces one full resync
+      const legacy = JSON.parse(JSON.stringify(store.serialise())).map(({ tombstones: _t, tombFloor: _f, ...r }) => r);
+      const old = createIncidentStore({ now });
+      old.hydrate(legacy);
+      expect(old.snapshot(incident.id, 2).full).toBe(true);
     });
   });
 });

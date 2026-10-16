@@ -221,7 +221,7 @@ module.exports = function (app, ctx) {
       res.status(403).json({ error: 'This needs the incident’s admin key' });
       return null;
     }
-    return { id, role: v.role, keyGen: v.keyGen };
+    return { id, role: v.role, keyGen: v.keyGen, joinKey: v.joinKey ?? null };
   }
 
   function sendError(res, err) {
@@ -256,7 +256,14 @@ module.exports = function (app, ctx) {
       if (tickets.size >= MAX_TICKETS) tickets.delete(tickets.keys().next().value);
     }
     const ticket = makeTicket();
-    tickets.set(ticket, { id: auth.id, clientId, role: auth.role, keyGen: auth.keyGen, exp: now + TICKET_TTL_MS });
+    tickets.set(ticket, {
+      id: auth.id,
+      clientId,
+      role: auth.role,
+      keyGen: auth.keyGen,
+      joinKey: auth.role === 'admin' ? auth.joinKey : null, // memory only, for the admin's snapshot
+      exp: now + TICKET_TTL_MS,
+    });
     return ticket;
   }
   /** Consume a ticket. → its grant, or null when unknown, used, expired, or for another incident/client/key. */
@@ -342,7 +349,14 @@ module.exports = function (app, ctx) {
     try {
       store.touchParticipant(auth.id, clientIdOf(req), req.body?.call);
       broadcastPresence(auth.id);
-      res.json({ ok: true, id: auth.id, role: auth.role, incident: store.snapshot(auth.id, 0) });
+      res.json({
+        ok: true,
+        id: auth.id,
+        role: auth.role,
+        // Admins get the current join key back (unsealed with their key) so Invite works on any device.
+        ...(auth.role === 'admin' ? { joinKey: auth.joinKey } : {}),
+        incident: store.snapshot(auth.id, 0),
+      });
     } catch (err) {
       sendError(res, err);
     }
@@ -365,7 +379,11 @@ module.exports = function (app, ctx) {
       const cid = clientIdOf(req);
       if (cid) store.touchParticipant(auth.id, cid, req.query?.call);
       const since = Math.max(0, parseInt(req.query.since, 10) || 0);
-      res.json({ ...store.snapshot(auth.id, since), role: auth.role });
+      res.json({
+        ...store.snapshot(auth.id, since),
+        role: auth.role,
+        ...(auth.role === 'admin' ? { joinKey: auth.joinKey } : {}),
+      });
     } catch (err) {
       sendError(res, err);
     }
@@ -436,7 +454,7 @@ module.exports = function (app, ctx) {
     const auth = authIncident(req, res, { admin: true });
     if (!auth) return;
     try {
-      const { joinKey, keyGen } = store.rotateJoinKey(auth.id);
+      const { joinKey, keyGen } = store.rotateJoinKey(auth.id, extractKey(req));
       for (const [t, grant] of tickets) if (grant.id === auth.id && grant.role !== 'admin') tickets.delete(t);
       let disconnected = 0;
       for (const s of [...(streams.get(auth.id) || [])]) {
@@ -506,7 +524,12 @@ module.exports = function (app, ctx) {
 
     if (clientId) store.touchParticipant(id, clientId, req.query?.call);
     const snap = store.snapshot(id, since);
-    writeEvent(res, 'snapshot', { ...snap, role: grant.role }, snap.seq);
+    writeEvent(
+      res,
+      'snapshot',
+      { ...snap, role: grant.role, ...(grant.role === 'admin' ? { joinKey: grant.joinKey } : {}) },
+      snap.seq,
+    );
     broadcastPresence(id, true);
 
     const keepalive = setInterval(() => {
