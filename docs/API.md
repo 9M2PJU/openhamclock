@@ -378,7 +378,7 @@ nothing:
 | `roster`   | `call`               | `netName, status, checkinTime, lastHeard, lat, lon, tokens[], source, site, checkedOut, updatedAt`                                                 | Newest `updatedAt` wins. A check-out is `checkedOut: true`, never a delete, so late joiners see it                    |
 | `events`   | `id` (+ `dedupeKey`) | `ts, type, callsign, summary, details, site, dedupeKey, ref, msgNo` · `type` is one of the Event Log types or `incident_note`; `rev` after an edit | First write wins. A second event with the same `type` + `dedupeKey` is ignored. An admin edit replaces (higher `rev`) |
 | `reports`  | `id`                 | `kind` (`field` \| `shelter`), `callsign, formType, text, lat, lon, timestamp, tokens[], extra{}, site`; `rev` after an edit                       | First write wins; an admin edit replaces                                                                              |
-| `docs`     | `id`                 | `ics-drafts`, `net-running`, `net-history` → `{ id, data, updatedAt, by }`; `data` up to 256 KB (64 KB hosted)                                     | Newest `updatedAt` wins (`413` when too large)                                                                        |
+| `docs`     | `id`                 | `ics-drafts`, `net-running`, `net-history` → `{ id, data, docRev, receivedAt, updatedAt, by }`; `data` up to 256 KB (64 KB hosted)                 | The last one the server receives wins (server `docRev`); `413` when too large                                         |
 | `board`    | —                    | `name, ic, netFreq, notes, updatedAt`                                                                                                              | Newest `updatedAt` wins; admin only                                                                                   |
 
 A deleted event or report leaves a tombstone, `{kind, id, seq, deleted: true}`.
@@ -399,10 +399,18 @@ common ancestor, using Net Control's `rebaseCheck`:
 
 - If the two changes touched different station lines and different net
   fields, both changes are kept. The merged state is published with the
-  other site's state as its parent.
+  other site's state as its parent. Its stations are listed newest check-in
+  first, then by callsign, so every site holds the same net at once.
 - If the same station line or field was changed at both sites, the other
   site's version is kept and Net Control shows which call changed, and at
-  which site.
+  which site. Our version is kept in the browser (`openhamclock_netControlConflicts`)
+  and shown as a "your change" chip with **Apply mine**.
+
+**Document order.** The server orders documents by when it receives them,
+never by client clocks. Each accepted copy gets `docRev` (rising per
+document) and `receivedAt`; a copy identical to the stored one is ignored.
+Clients compare `docRev`. The client's own `updatedAt` is kept only for
+display, so a site whose clock is wrong can still save.
 
 **Withdrawals.** A `net_withdrawn` event names the entry it withdraws in
 `ref`. Clients hide withdrawn entries from the merged log, so a withdrawal
