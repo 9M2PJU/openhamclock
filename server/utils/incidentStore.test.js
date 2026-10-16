@@ -501,6 +501,32 @@ describe('incidentStore', () => {
       expect(store.snapshot(incident.id).docs).toHaveLength(1);
     });
 
+    it('refuses a draft made from an older revision (an hour-old offline edit), keeping the newer one', () => {
+      const { incident } = make();
+      // North and South both start from revision 1.
+      store.apply(incident.id, { docs: [{ id: 'ics-drafts', data: { v: 'start' } }] });
+      // South keeps working online: revisions 2 and 3.
+      store.apply(incident.id, { docs: [{ id: 'ics-drafts', data: { v: 'south-1' }, baseRev: 1 }] });
+      store.apply(incident.id, { docs: [{ id: 'ics-drafts', data: { v: 'south-2' }, baseRev: 2 }] });
+      // North comes back an hour later and flushes the draft it made from revision 1.
+      clock += 3600e3;
+      const late = store.apply(incident.id, {
+        docs: [{ id: 'ics-drafts', data: { v: 'north-offline' }, baseRev: 1 }],
+        events: [{ id: 'n-e1', type: 'incident_note', summary: 'still applied' }],
+      });
+      expect(late.docConflicts).toEqual([
+        { id: 'ics-drafts', baseRev: 1, current: expect.objectContaining({ data: { v: 'south-2' }, docRev: 3 }) },
+      ]);
+      expect(late.changes.events.map((e) => e.id)).toEqual(['n-e1']); // the rest of the batch went through
+      expect(store.snapshot(incident.id).docs[0].data).toEqual({ v: 'south-2' });
+      // Made from the current revision ("apply mine" after seeing theirs): accepted.
+      const mine = store.apply(incident.id, { docs: [{ id: 'ics-drafts', data: { v: 'north-offline' }, baseRev: 3 }] });
+      expect(mine.docConflicts).toEqual([]);
+      expect(mine.changes.docs[0]).toMatchObject({ docRev: 4 });
+      // No baseRev: unconditional, as before.
+      expect(store.apply(incident.id, { docs: [{ id: 'ics-drafts', data: { v: 'x' } }] }).changes.docs).toHaveLength(1);
+    });
+
     it('orders documents by when the server receives them, whatever the client clocks say', () => {
       const { incident } = make();
       // Site A's clock runs an hour fast, site B's ten minutes slow.

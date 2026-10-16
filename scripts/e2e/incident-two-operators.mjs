@@ -37,8 +37,29 @@ function check(cond, msg) {
 }
 
 /** A fresh station: its own storage, callsign and layout. */
-async function station(browser, { call, layout = 'emcomm', viewport = { width: 1440, height: 900 } }) {
+async function station(
+  browser,
+  { call, layout = 'emcomm', viewport = { width: 1440, height: 900 }, clockSkew = false },
+) {
   const context = await browser.newContext({ viewport });
+  if (clockSkew) {
+    // Lets a step make this station's computer clock wrong: Date reads
+    // globalThis.__clockSkewMs (0 until a step sets it); timers run normally.
+    await context.addInitScript(() => {
+      const RealDate = Date;
+      const skew = () => globalThis.__clockSkewMs || 0;
+      class SkewedDate extends RealDate {
+        constructor(...args) {
+          if (args.length === 0) super(RealDate.now() + skew());
+          else super(...args);
+        }
+        static now() {
+          return RealDate.now() + skew();
+        }
+      }
+      globalThis.Date = SkewedDate;
+    });
+  }
   await context.addInitScript(
     ({ call, layout, version }) => {
       if (sessionStorage.getItem('e2e-seeded')) return;
@@ -96,7 +117,8 @@ async function railShot(page, file) {
 
 async function main() {
   const browser = await chromium.launch();
-  const a = await station(browser, { call: 'K0CJH' });
+  // A's clock can be made wrong for one step (the net conflict, decided by the server's order).
+  const a = await station(browser, { call: 'K0CJH', clockSkew: true });
   // B starts in another layout: the invite link must switch it to EmComm.
   const b = await station(browser, { call: 'W1AW', layout: 'modern' });
   try {
@@ -250,6 +272,97 @@ async function main() {
       (await a.page.getByText(/Also open in another tab or panel/).count()) === 0,
       'the incident bridge is not counted as another Net Control panel',
     );
+
+    log('Both change W9NET while offline; A (clock +10 min) reaches the server first: the server’s order decides');
+    const ncRow = (page) => page.locator('[data-testid="nc-station"][data-call="W9NET"]');
+    await ncRow(b.page).waitFor({ timeout: T });
+    const debugLog = [];
+    if (process.env.E2E_DEBUG) {
+      for (const [who, page] of [
+        ['A', a.page],
+        ['B', b.page],
+      ]) {
+        page.on('requestfinished', async (r) => {
+          if (!/\/api\/incident\//.test(r.url())) return;
+          const body = r.postData() || '';
+          const docs = body.includes('net-running') ? 'net-running' : '';
+          debugLog.push(
+            `${who} ${r.method()} ${r.url().replace(BASE, '').split('?')[0]} ${docs} ${(await r.response())?.status()}`,
+          );
+        });
+        page.on(
+          'requestfailed',
+          (r) =>
+            /\/api\/incident\//.test(r.url()) &&
+            debugLog.push(`${who} FAILED ${r.url().replace(BASE, '').split('?')[0]}`),
+        );
+      }
+    }
+    // From here A's clock runs 10 minutes fast.
+    await a.page.evaluate(() => (globalThis.__clockSkewMs = 10 * 60 * 1000));
+    // Offline, so neither sees the other's change before making its own.
+    await a.context.setOffline(true);
+    await b.context.setOffline(true);
+    await ncRow(a.page).getByTitle('Traffic', { exact: true }).click();
+    await b.page.waitForTimeout(50); // B's change is the later one
+    await ncRow(b.page).getByTitle('Mobile', { exact: true }).click();
+    // A's change reaches the server first, B's second. A's clock says A's is
+    // ten minutes later — the server's order must win anyway.
+    await a.context.setOffline(false);
+    for (let waited = 0; ; waited += 250) {
+      const r = await fetch(`${BASE}/api/incident/${id}`, { headers: { 'X-Incident-Key': joinKey } });
+      const net = (await r.json()).docs?.find((d) => d.id === 'net-running');
+      const w9 = net?.data?.net?.stations?.find((x) => x.call === 'W9NET');
+      if (w9?.flags?.includes('traffic')) break;
+      if (waited > 30_000) throw new Error('FAILED: A’s change never reached the server');
+      await a.page.waitForTimeout(250);
+    }
+    await b.context.setOffline(false);
+    const pressed = async (page, title) =>
+      (await ncRow(page).getByTitle(title, { exact: true }).getAttribute('aria-pressed')) === 'true';
+    const flags = async (page) => [await pressed(page, 'Traffic'), await pressed(page, 'Mobile')].join(',');
+    const chipA = a.page.getByTestId('net-conflict-W9NET');
+    const chipB = b.page.getByTestId('net-conflict-W9NET');
+    for (let waited = 0; (await chipA.count()) + (await chipB.count()) === 0; waited += 500) {
+      if (waited > 60_000) {
+        const r = await fetch(`${BASE}/api/incident/${id}`, { headers: { 'X-Incident-Key': joinKey } });
+        const net = (await r.json()).docs?.find((d) => d.id === 'net-running');
+        const w9 = net?.data?.net?.stations?.find((x) => x.call === 'W9NET');
+        if (debugLog.length) console.log(debugLog.join('\n'));
+        throw new Error(
+          `FAILED: no "your change" chip at either site (A: ${await flags(a.page)}, B: ${await flags(b.page)}; ` +
+            `server: ${JSON.stringify(w9?.flags)} tag ${net?.data?.tag} from ${net?.data?.origin?.site} rev ${net?.docRev})`,
+        );
+      }
+      await a.page.waitForTimeout(500);
+    }
+    await a.page.waitForTimeout(3000); // let both sides settle
+    const [onA, onB] = [await chipA.count(), await chipB.count()];
+    check(onA + onB === 1, `exactly one site shows the chip (A: ${onA}, B: ${onB})`);
+    check(
+      (await flags(a.page)) === (await flags(b.page)),
+      `both sites show the same W9NET flags (${await flags(a.page)})`,
+    );
+    check(
+      onA === 1 && (await flags(a.page)) === 'false,true',
+      'B’s change, received second by the server, stands although A’s clock is 10 min ahead; A is offered its own',
+    );
+    check((await chipA.textContent()).includes('EOC South'), 'the chip names the other site');
+
+    log('A applies its change from the chip');
+    await chipA.getByRole('button', { name: 'Apply mine', exact: true }).click();
+    for (let waited = 0; (await flags(b.page)) !== 'true,false'; waited += 500) {
+      if (waited > 30_000) {
+        throw new Error(
+          `FAILED: Apply mine did not reach B (A: ${await flags(a.page)}, chip ${await chipA.count()}; B: ${await flags(b.page)})`,
+        );
+      }
+      await b.page.waitForTimeout(500);
+    }
+    check((await flags(a.page)) === 'true,false', 'A’s change is back at A');
+    check((await flags(b.page)) === 'true,false', 'and reached B');
+    check((await chipA.count()) === 0, 'the chip is gone');
+    await a.page.evaluate(() => (globalThis.__clockSkewMs = 0)); // A's clock right again
 
     log('B goes offline, checks in; the update waits and flushes on reconnect');
     await b.context.setOffline(true);

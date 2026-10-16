@@ -21,7 +21,8 @@
  * Pure math and manifest logic are in offlineTiles.js and
  * offlinePackManifest.js; this file is the thin I/O layer around them.
  */
-import { OFFLINE_PACK_CACHE } from './swPolicy.js';
+import { OFFLINE_PACK_CACHE, tileUrlPrefixes } from './swPolicy.js';
+import { resolveUsState } from './usState.js';
 import { enumerateTiles, countTiles, buildTileUrl } from './offlineTiles.js';
 import {
   createPackManifest,
@@ -29,8 +30,10 @@ import {
   upsertPack,
   removePackById,
   pickPackForLocation,
-  tileSharedWithOtherPacks,
   chooseOfflineSource,
+  tileSharedWithOtherPacks,
+  newPackId,
+  SNAPSHOT_KINDS,
   SNAPSHOT_REPEATER_RADIUS_KM,
   DEFAULT_BUDGET_MB,
   BUDGET_OPTIONS_MB,
@@ -47,6 +50,7 @@ const BUDGET_KEY = 'openhamclock_offlinePackBudgetMB';
 export const DOWNLOAD_CONCURRENCY = 3;
 export const DOWNLOAD_DELAY_MS = 120;
 const BACKOFF_MS = 10000;
+const CHECKPOINT_EVERY = 100;
 const MAX_CONSECUTIVE_FAILURES = 25;
 
 /** Cache API needs a secure context (https or localhost). */
@@ -86,6 +90,40 @@ function announceChange() {
   } catch {
     /* non-browser */
   }
+  // The worker re-reads pack manifests (over-zoom) and tile-source routing.
+  try {
+    navigator.serviceWorker?.controller?.postMessage({ type: 'OHC_PACKS_CHANGED' });
+  } catch {
+    /* no worker */
+  }
+}
+
+/** True for the storage-full errors the Cache API throws in each engine. */
+export function isQuotaError(err) {
+  if (!err) return false;
+  const name = String(err.name || '');
+  return (
+    name === 'QuotaExceededError' || name === 'NS_ERROR_DOM_QUOTA_REACHED' || /quota/i.test(String(err.message || ''))
+  );
+}
+
+export const SOURCES_URL = '/__ohc-offline-packs/sources.json';
+
+/**
+ * Tell the service worker which operator-supplied tile source to route
+ * through the pack cache (stored in the cache so it survives worker
+ * restarts). Pass the source's URL template (and subdomains, for {s}), or
+ * null to clear.
+ */
+export async function registerTileSource(template, { cachesImpl, subdomains } = {}) {
+  if (!cachesImpl && !offlinePacksSupported()) return;
+  try {
+    const cache = await openCache(cachesImpl);
+    await cache.put(SOURCES_URL, jsonResponse({ prefixes: template ? tileUrlPrefixes(template, subdomains) : [] }));
+  } catch {
+    /* best-effort */
+  }
+  announceChange();
 }
 
 export async function listPacks({ cachesImpl } = {}) {
@@ -134,11 +172,13 @@ export async function requestPersistence() {
 
 /** Endpoints snapshotted with a pack — the same ones the EmComm layout and
  *  Repeaters panel poll, so the URLs (and the SW API cache) line up. */
-export function snapshotRequests(lat, lon) {
+export function snapshotRequests(lat, lon, usState = null) {
   return {
     alerts: `/api/emcomm/alerts?lat=${lat}&lon=${lon}`,
     shelters: `/api/emcomm/shelters?lat=${lat}&lon=${lon}&radius=200`,
     repeaters: `/api/repeaters?lat=${lat}&lon=${lon}&radius=${SNAPSHOT_REPEATER_RADIUS_KM}&limit=200`,
+    // FEMA declarations are per US state, resolved from DE while online.
+    ...(usState ? { disasters: `/api/emcomm/disasters?state=${encodeURIComponent(usState)}` } : {}),
   };
 }
 
@@ -157,11 +197,13 @@ const countOf = (kind, data) =>
  * A response the service worker served from its cache (X-OHC-Stale) keeps
  * its original Date as fetchedAt rather than pretending to be fresh.
  */
-export async function snapshotPackData(packId, center, { fetchImpl = fetch, cachesImpl } = {}) {
+export async function snapshotPackData(packId, center, { fetchImpl = fetch, cachesImpl, resolveState } = {}) {
   const summary = {};
   if (!center) return summary;
   const cache = await openCache(cachesImpl);
-  const reqs = snapshotRequests(center.lat, center.lon);
+  const lookup = resolveState || ((la, lo) => resolveUsState(la, lo, fetchImpl));
+  const usState = await lookup(center.lat, center.lon);
+  const reqs = snapshotRequests(center.lat, center.lon, usState);
   for (const [kind, url] of Object.entries(reqs)) {
     try {
       const res = await fetchImpl(url, { cache: 'no-store' });
@@ -172,9 +214,10 @@ export async function snapshotPackData(packId, center, { fetchImpl = fetch, cach
         const d = Date.parse(res.headers.get('date') || '');
         if (Number.isFinite(d)) fetchedAt = d;
       }
-      await cache.put(dataUrl(packId, kind), jsonResponse({ fetchedAt, center, data }));
-      summary[kind] = { fetchedAt, count: countOf(kind, data) };
-    } catch {
+      await cache.put(dataUrl(packId, kind), jsonResponse({ fetchedAt, center, data, usState }));
+      summary[kind] = { fetchedAt, count: countOf(kind, data), ...(kind === 'disasters' ? { state: usState } : {}) };
+    } catch (err) {
+      if (isQuotaError(err)) break; // storage full: keep what we have
       /* this kind stays without a snapshot */
     }
   }
@@ -187,7 +230,7 @@ export async function refreshPackData(packId) {
   const list = await listPacks();
   const pack = list.find((m) => m.id === packId);
   if (!pack) return null;
-  const data = await snapshotPackData(packId, pack.center);
+  const data = await snapshotPackData(packId, pack.dataCenter || pack.center);
   const updated = { ...pack, data: { ...pack.data, ...data } };
   await savePacks(cache, upsertPack(list, updated));
   announceChange();
@@ -271,7 +314,7 @@ export async function deletePack(packId, { cachesImpl } = {}) {
   // Manifest first: if the tab closes mid-delete the pack is already gone
   // from the list; orphaned tiles are harmless and swept on the next delete.
   await savePacks(cache, remaining);
-  for (const kind of ['alerts', 'shelters', 'repeaters']) {
+  for (const kind of SNAPSHOT_KINDS) {
     await cache.delete(dataUrl(packId, kind)).catch(() => {});
   }
   for (const tile of enumerateTiles(pack.bbox, pack.minZoom, pack.maxZoom)) {
@@ -351,15 +394,19 @@ const sizeOf = async (res) => {
 
 /**
  * Download every tile of an area into the pack cache, then snapshot the
- * EmComm data and save the manifest. Resolves to the manifest, or null when
- * cancelled (tiles fetched for a cancelled pack are removed again unless
- * another pack uses them). Dependencies are injectable for tests.
+ * EmComm data. The manifest is written at the start (marked incomplete)
+ * and checkpointed as tiles arrive, so a cancel, a full disk, a dead tile
+ * server, or a closed tab leaves a resumable area rather than orphaned
+ * tiles. Passing the `id` of an incomplete area resumes it: tiles already
+ * in the cache are skipped. Dependencies are injectable for tests.
  *
  * @param {object} o
- *   name, styleId, styleName, urlTemplate, subdomains, lang, retina,
- *   bbox, minZoom, maxZoom, center, radiusKm, dataCenter
+ *   id?, createdAt?, name, styleId, styleName, urlTemplate, subdomains,
+ *   lang, retina, bbox, minZoom, maxZoom, center, radiusKm, dataCenter
  *   onProgress({ done, total, bytes, failed, skipped })
- *   signal (AbortSignal), fetchImpl, cachesImpl, concurrency, delayMs
+ *   signal (AbortSignal), fetchImpl, cachesImpl, concurrency, delayMs,
+ *   resolveState (test hook for the US-state lookup)
+ * @returns {Promise<{ manifest, status: 'done'|'cancelled'|'error', error?: 'quota'|'network' }>}
  */
 export async function runPackDownload(o) {
   const {
@@ -371,11 +418,9 @@ export async function runPackDownload(o) {
     onProgress = () => {},
   } = o;
   const cache = await openCache(cachesImpl);
-  const existing = await listPacks({ cachesImpl });
   const total = countTiles(o.bbox, o.minZoom, o.maxZoom);
   const urlOpts = { subdomains: o.subdomains, lang: o.lang, retina: o.retina };
   const iter = enumerateTiles(o.bbox, o.minZoom, o.maxZoom);
-  const fetched = [];
   let done = 0;
   let bytes = 0;
   let failed = 0;
@@ -383,7 +428,40 @@ export async function runPackDownload(o) {
   let consecutiveFailures = 0;
   let fatal = null;
 
-  const report = () => onProgress({ done, total, bytes, failed, skipped });
+  const base = {
+    id: o.id || newPackId(),
+    name: o.name,
+    styleId: o.styleId,
+    styleName: o.styleName,
+    urlTemplate: o.urlTemplate,
+    subdomains: o.subdomains,
+    retina: !!o.retina,
+    bbox: o.bbox,
+    minZoom: o.minZoom,
+    maxZoom: o.maxZoom,
+    center: o.center,
+    dataCenter: o.dataCenter || o.center,
+    radiusKm: o.radiusKm,
+    createdAt: o.createdAt,
+    totalTiles: total,
+  };
+  const snapshot = (extra) =>
+    createPackManifest({ ...base, tileCount: done - failed, failedCount: failed, bytes, ...extra });
+
+  // Serialized manifest writes (workers checkpoint concurrently).
+  let saving = Promise.resolve();
+  const save = (m) => {
+    saving = saving.then(async () => {
+      try {
+        await savePacks(cache, upsertPack(await listPacks({ cachesImpl }), m));
+      } catch (err) {
+        if (isQuotaError(err)) fatal = fatal || 'quota';
+      }
+    });
+    return saving;
+  };
+
+  const report = () => onProgress({ done, total, bytes, failed, skipped, packId: base.id });
 
   const fetchTile = async (url) => {
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -416,7 +494,6 @@ export async function runPackDownload(o) {
           const res = await fetchTile(url);
           if (res) {
             await cache.put(url, res.clone());
-            fetched.push({ url, tile: next.value });
             const size = await sizeOf(res);
             bytes += size;
             consecutiveFailures = 0;
@@ -427,7 +504,7 @@ export async function runPackDownload(o) {
         }
       } catch (err) {
         if (signal?.aborted) return;
-        if (err?.name === 'QuotaExceededError') {
+        if (isQuotaError(err)) {
           fatal = 'quota';
           return;
         }
@@ -440,67 +517,85 @@ export async function runPackDownload(o) {
         await sleep(delayMs * 4, signal);
       }
       done++;
+      if (done % CHECKPOINT_EVERY === 0) save(snapshot({ complete: false }));
       report();
     }
   };
 
-  report();
-  await Promise.all(Array.from({ length: Math.max(1, concurrency) }, worker));
+  // A resumed area keeps its earlier data snapshot until a new one is taken.
+  const prior = o.id ? (await listPacks({ cachesImpl })).find((m) => m.id === o.id) : null;
+  if (prior?.data) base.data = prior.data;
+  await save(snapshot({ complete: false }));
+  if (!fatal) {
+    report();
+    await Promise.all(Array.from({ length: Math.max(1, concurrency) }, worker));
+  }
+  await saving;
 
   if (signal?.aborted || fatal) {
-    // Roll back: drop tiles this run fetched that no saved pack covers.
-    const partial = { id: '__partial__', urlTemplate: o.urlTemplate };
-    for (const { url, tile } of fetched) {
-      if (!tileSharedWithOtherPacks(tile, partial, existing)) await cache.delete(url).catch(() => {});
-    }
-    if (fatal) {
-      const err = new Error(fatal === 'quota' ? 'Storage is full' : 'Tile server not responding');
-      err.code = fatal;
-      throw err;
-    }
-    return null;
+    const manifest = snapshot({ complete: false });
+    await save(manifest);
+    return { manifest, status: fatal ? 'error' : 'cancelled', ...(fatal ? { error: fatal } : {}) };
   }
 
-  const manifest = createPackManifest({
-    name: o.name,
-    styleId: o.styleId,
-    styleName: o.styleName,
-    urlTemplate: o.urlTemplate,
-    subdomains: o.subdomains,
-    bbox: o.bbox,
-    minZoom: o.minZoom,
-    maxZoom: o.maxZoom,
-    center: o.center,
-    radiusKm: o.radiusKm,
-    tileCount: total - failed,
-    failedCount: failed,
-    bytes,
+  const data = await snapshotPackData(base.id, base.dataCenter, {
+    fetchImpl,
+    cachesImpl,
+    resolveState: o.resolveState,
   });
-  manifest.data = await snapshotPackData(manifest.id, o.dataCenter || manifest.center, { fetchImpl, cachesImpl });
-  await savePacks(cache, upsertPack(await listPacks({ cachesImpl }), manifest));
-  return manifest;
+  const manifest = snapshot({ complete: true, data: { ...(base.data || {}), ...data } });
+  await save(manifest);
+  return { manifest, status: fatal ? 'error' : 'done', ...(fatal ? { error: fatal } : {}) };
 }
 
-/** Start a download through the shared manager (one at a time). */
-export async function startPackDownload(opts) {
+async function runManaged(opts) {
   if (state.status === 'running') return null;
   controller = new AbortController();
-  setState({ ...IDLE, status: 'running', name: opts.name, total: countTiles(opts.bbox, opts.minZoom, opts.maxZoom) });
-  await requestPersistence();
+  setState({
+    ...IDLE,
+    status: 'running',
+    name: opts.name,
+    packId: opts.id || null,
+    total: countTiles(opts.bbox, opts.minZoom, opts.maxZoom),
+  });
+  const persisted = await requestPersistence();
   try {
-    const manifest = await runPackDownload({
-      ...opts,
-      signal: controller.signal,
-      onProgress: (p) => setState(p),
-    });
-    setState({ status: manifest ? 'done' : 'cancelled' });
+    const r = await runPackDownload({ ...opts, signal: controller.signal, onProgress: (p) => setState(p) });
+    setState({ status: r.status, error: r.error || null, packId: r.manifest.id, persisted });
     announceChange();
-    return manifest;
+    return r.manifest;
   } catch (err) {
-    setState({ status: 'error', error: err?.code || 'error' });
+    setState({ status: 'error', error: isQuotaError(err) ? 'quota' : 'error' });
     announceChange();
     return null;
   } finally {
     controller = null;
   }
+}
+
+/** Start a download through the shared manager (one at a time). */
+export function startPackDownload(opts) {
+  return runManaged(opts);
+}
+
+/** Continue an incomplete area where it stopped. */
+export async function resumePackDownload(packId) {
+  const pack = (await listPacks()).find((m) => m.id === packId);
+  if (!pack) return null;
+  return runManaged({
+    id: pack.id,
+    createdAt: pack.createdAt,
+    name: pack.name,
+    styleId: pack.styleId,
+    styleName: pack.styleName,
+    urlTemplate: pack.urlTemplate,
+    subdomains: pack.subdomains,
+    retina: pack.retina,
+    bbox: pack.bbox,
+    minZoom: pack.minZoom,
+    maxZoom: pack.maxZoom,
+    center: pack.center,
+    dataCenter: pack.dataCenter,
+    radiusKm: pack.radiusKm,
+  });
 }

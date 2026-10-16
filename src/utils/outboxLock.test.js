@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { tryLease, releaseLease, withOutboxLock, LEASE_KEY, LEASE_MS } from './outboxLock.js';
 
 describe('outbox lock', () => {
@@ -54,5 +54,33 @@ describe('outbox lock', () => {
     expect(await withOutboxLock(async () => {}, { locks })).toBe(false);
     release();
     expect(await a).toBe(true);
+  });
+
+  it('lease fallback: a send slower than the lease keeps it (heartbeat), and frees it when done or failed', async () => {
+    vi.useFakeTimers();
+    try {
+      let finish;
+      const slow = withOutboxLock(() => new Promise((r) => (finish = r)), {
+        storage: localStorage,
+        owner: 'a',
+        now: () => Date.now(),
+      });
+      // 40 s into a send: well past the 15 s lease, another tab still can't take it.
+      await vi.advanceTimersByTimeAsync(40_000);
+      expect(tryLease(localStorage, 'b', Date.now())).toBe(false);
+      finish();
+      expect(await slow).toBe(true);
+      expect(localStorage.getItem(LEASE_KEY)).toBeNull(); // released on completion
+      // a failing send releases too
+      await expect(
+        withOutboxLock(() => Promise.reject(new Error('network')), { storage: localStorage, owner: 'a' }),
+      ).rejects.toThrow('network');
+      expect(localStorage.getItem(LEASE_KEY)).toBeNull();
+      // and the heartbeat stops: nothing re-takes the lease afterwards
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(localStorage.getItem(LEASE_KEY)).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

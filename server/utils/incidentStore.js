@@ -561,6 +561,7 @@ function createIncidentStore(opts = {}) {
     }
     capMap(inc.reports, limits.maxReports, 'timestamp');
 
+    const docConflicts = [];
     for (const raw of (Array.isArray(batch.docs) ? batch.docs : []).slice(0, DOC_IDS.size)) {
       const doc = sanitiseDoc(raw, t, limits.maxDocBytes);
       if (!doc) continue;
@@ -569,6 +570,15 @@ function createIncidentStore(opts = {}) {
       // (a site whose clock runs slow must still be able to save). The
       // client's updatedAt is kept for display only.
       if (existing && JSON.stringify(existing.data) === JSON.stringify(doc.data)) continue;
+      // Conditional write: a copy made from an older revision than the one
+      // stored (an hour-old draft flushed after a long time offline) must not
+      // silently replace newer edits. It is refused, with the current copy,
+      // and the writer decides. A write without baseRev is unconditional.
+      const baseRev = Number(raw.baseRev);
+      if (existing && raw.baseRev != null && Number.isFinite(baseRev) && baseRev < (existing.docRev || 0)) {
+        docConflicts.push({ id: doc.id, baseRev, current: existing });
+        continue;
+      }
       const rec = { ...doc, docRev: (existing?.docRev || 0) + 1, receivedAt: t, seq: ++inc.seq };
       inc.docs.set(doc.id, rec);
       changes.docs.push(rec);
@@ -588,7 +598,7 @@ function createIncidentStore(opts = {}) {
     const changed =
       changes.roster.length || changes.events.length || changes.reports.length || changes.docs.length || changes.board;
     if (changed) touch(inc);
-    return { seq: inc.seq, changed: !!changed, changes, denied };
+    return { seq: inc.seq, changed: !!changed, changes, denied, docConflicts };
   }
 
   /**

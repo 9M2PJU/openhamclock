@@ -10,6 +10,8 @@ import {
   removeConflictEntry,
   applyMineStation,
   applyMineField,
+  theirsWins,
+  mergeHistory,
 } from './incidentNetMerge.js';
 
 const st = (call, extra = {}) => ({ call, flags: [], checkinTime: 1, checkoutTime: null, ...extra });
@@ -65,6 +67,22 @@ describe('reconcileNet (shared net across sites)', () => {
     expect(r).toMatchObject({ action: 'conflict', calls: ['W1AW'], net: theirs });
   });
 
+  it('in a conflict both sites keep the later change: the earlier site takes it, the later keeps its own', () => {
+    const early = { ...base, stations: [st('W1AW', { flags: ['T'] }), st('K1ABC')], rev: 11, updatedAt: 150 };
+    const late = { ...base, stations: [st('W1AW', { flags: ['M'] }), st('K1ABC')], rev: 11, updatedAt: 180 };
+    // at the early site, the late state arrives: take it (and show "your change")
+    expect(
+      reconcileNet({ head: netTag(early), history, local: early, remote: doc(late, '10:100', 11, 180) }),
+    ).toMatchObject({ action: 'conflict', calls: ['W1AW'] });
+    // at the late site, the early state arrives: keep ours (and republish it on top)
+    expect(
+      reconcileNet({ head: netTag(late), history, local: late, remote: doc(early, '10:100', 11, 150) }),
+    ).toMatchObject({
+      action: 'keep',
+      calls: ['W1AW'],
+    });
+  });
+
   it('the same field set differently at both sites is a conflict; the same value is not', () => {
     const mine = { ...base, frequency: '147.00', rev: 11, updatedAt: 150 };
     expect(
@@ -76,6 +94,17 @@ describe('reconcileNet (shared net across sites)', () => {
       reconcileNet({ head: '11:150', history, local: mine2, remote: doc({ ...sameLine, name: 'ARES 2' }, '10:100') })
         .action,
     ).toBe('merge');
+  });
+
+  it('a state made from ours that overrode our change in a conflict is our loss, not a plain update', () => {
+    const ours = { ...base, stations: [st('W1AW', { flags: ['T'] }), st('K1ABC')], rev: 11, updatedAt: 150 };
+    const theirs = { ...base, stations: [st('W1AW', { flags: ['M'] }), st('K1ABC')] };
+    const remote = { ...doc(theirs, '11:150', 11, 180), overrode: { tag: '11:150', calls: ['W1AW'], fields: [] } };
+    expect(reconcileNet({ head: '11:150', history, local: ours, remote })).toMatchObject({
+      action: 'conflict',
+      calls: ['W1AW'],
+      net: theirs,
+    });
   });
 
   it('fast-forwards when theirs was made from what we have', () => {
@@ -155,5 +184,40 @@ describe('reconcileNet (shared net across sites)', () => {
     expect(sameNetContent(mergeNets(base, base, theirs), { ...theirs, stations: orderStations(theirs.stations) })).toBe(
       true,
     );
+  });
+
+  it('server receipt order decides, not clocks; commit time only without a server sequence', () => {
+    const local = { updatedAt: 10 * 60e3 + 1000 }; // this site's clock is 10 minutes fast
+    const remote = { updatedAt: 2000, tag: '5:2000' };
+    expect(theirsWins(local, remote)).toBe(false); // clock rule: ours "later"
+    expect(theirsWins(local, remote, { local: 4, remote: 5 })).toBe(true); // server got theirs later
+    expect(theirsWins(local, remote, { local: 6, remote: 5 })).toBe(false);
+    expect(theirsWins(local, remote, { local: undefined, remote: 5 })).toBe(false); // ours not there yet: ours is later
+    const ours = { ...base, stations: [st('W1AW', { flags: ['T'] }), st('K1ABC')], rev: 11, updatedAt: 9e12 };
+    const theirs = { ...base, stations: [st('W1AW', { flags: ['M'] }), st('K1ABC')] };
+    const r = reconcileNet({
+      head: '11:9000000000000',
+      history,
+      local: ours,
+      remote: doc(theirs, '10:100'),
+      order: { local: 4, remote: 5 },
+    });
+    expect(r.action).toBe('conflict');
+  });
+
+  it('mergeHistory: both sites’ closed nets survive; a delete on our side stays deleted', () => {
+    const n = (id, endTime) => ({ id, name: id, stations: [], endTime });
+    const base = [n('a', 1), n('b', 2)];
+    const mine = [n('mine', 5), n('a', 1)]; // closed "mine", deleted "b"
+    const theirs = [n('theirs', 4), n('b', 2), n('a', 1)]; // closed "theirs"
+    expect(mergeHistory(base, mine, theirs).map((x) => x.id)).toEqual(['mine', 'theirs', 'a']);
+    expect(mergeHistory([], [n('x', 1)], [n('x', 1)]).map((x) => x.id)).toEqual(['x']); // no duplicates
+    expect(
+      mergeHistory(
+        [],
+        Array.from({ length: 60 }, (_, i) => n(`m${i}`, i)),
+        [],
+      ).length,
+    ).toBe(50);
   });
 });
