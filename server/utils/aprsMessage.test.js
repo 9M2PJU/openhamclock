@@ -24,6 +24,7 @@ describe('parseAprsMessage', () => {
         action: 'checkin',
         netName: 'TESTNET',
         status: 'AVAILABLE',
+        alias: 'EMCOMM',
       });
     }
   });
@@ -53,17 +54,35 @@ describe('parseAprsMessage', () => {
       action: 'checkin',
       netName: 'TESTNET',
       status: 'AT THE EOC',
+      alias: 'EMCOMM',
     });
     expect(parseAprsMessage(line(':EMCOMM   :cq testnet')).netCommand).toEqual({
       action: 'checkin',
       netName: 'TESTNET',
       status: '',
+      alias: 'EMCOMM',
     });
     expect(parseAprsMessage(line(':EMCOMM   :U TESTNET')).netCommand).toEqual({
       action: 'checkout',
       netName: 'TESTNET',
+      alias: 'EMCOMM',
     });
-    expect(parseAprsMessage(line(':W1AW     :CQ TESTNET')).netCommand).toBeNull();
+  });
+
+  it('records the address of a check-in sent to any net address (#1237)', () => {
+    expect(parseAprsMessage(line(':W8ROC    :CQ HAMCO at Station 1')).netCommand).toEqual({
+      action: 'checkin',
+      netName: 'HAMCO',
+      status: 'AT STATION 1',
+      alias: 'W8ROC',
+    });
+    expect(parseAprsMessage(line(':W8ROC-10 :U HAMCO')).netCommand).toMatchObject({
+      action: 'checkout',
+      alias: 'W8ROC-10',
+    });
+    // Ordinary text and bulletins are not net commands
+    expect(parseAprsMessage(line(':W1AW     :see you on the net')).netCommand).toBeNull();
+    expect(parseAprsMessage(line(':BLN1     :CQ NET tonight')).netCommand).toBeNull();
   });
 
   it('flags bulletins and skips acks, rejs and non-messages', () => {

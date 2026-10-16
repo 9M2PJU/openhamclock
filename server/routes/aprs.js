@@ -30,7 +30,13 @@ module.exports = function (app, ctx) {
   const aprsMessages = [];
   const APRS_MAX_MESSAGES = 200;
   // Net operations: operator roster keyed by callsign
-  const netRoster = new Map(); // callsign → { call, status, netName, checkinTime, lastHeard, location, resources }
+  // Keyed `${alias}|${call}`: the same station can be checked into two
+  // groups' nets at once (#1239). Each entry carries the address (`alias`)
+  // its check-in was sent to; browsers show only their own addresses.
+  const netRoster = new Map(); // key → { call, alias, status, netName, checkinTime, lastHeard, location, resources }
+  const NET_ROSTER_MAX = 500; // every check-in to any address is kept, so cap it
+  const rosterKeyOf = (alias, call) => `${String(alias || 'EMCOMM').toUpperCase()}|${String(call).toUpperCase()}`;
+  const NET_ALIAS_RE = /^[A-Z0-9-]{1,9}$/;
   // The roster lives in memory, so a restart empties it. `rosterBootId`
   // changes on every server start and `rosterGeneration` on every roster
   // change, which lets a client tell "the server restarted" (ignore the empty
@@ -183,10 +189,13 @@ module.exports = function (app, ctx) {
   function applyNetCommand(msg) {
     if (!msg?.netCommand) return;
     const { action, netName, status } = msg.netCommand;
+    const alias = String(msg.netCommand.alias || 'EMCOMM').toUpperCase();
+    const key = rosterKeyOf(alias, msg.from);
     if (action === 'checkin') {
       const station = aprsStations.get(msg.from) || aprsStations.get(msg.from.split('-')[0]) || {};
-      netRoster.set(msg.from, {
+      netRoster.set(key, {
         call: msg.from,
+        alias,
         netName,
         status: status || 'Checked in',
         checkinTime: Date.now(),
@@ -196,10 +205,22 @@ module.exports = function (app, ctx) {
         tokens: station.tokens || [],
         source: msg.source || station.source || null,
       });
-      logInfo(`[APRS Net] ${msg.from} checked into ${netName}: ${status || '(no status)'}`);
+      if (netRoster.size > NET_ROSTER_MAX) {
+        // Drop the longest-unheard entry
+        let oldestKey = null;
+        let oldest = Infinity;
+        for (const [k, v] of netRoster) {
+          if ((v.lastHeard || 0) < oldest) {
+            oldest = v.lastHeard || 0;
+            oldestKey = k;
+          }
+        }
+        if (oldestKey) netRoster.delete(oldestKey);
+      }
+      logInfo(`[APRS Net] ${msg.from} checked into ${netName} via ${alias}: ${status || '(no status)'}`);
     } else if (action === 'checkout') {
-      netRoster.delete(msg.from);
-      logInfo(`[APRS Net] ${msg.from} checked out of ${netName}`);
+      netRoster.delete(key);
+      logInfo(`[APRS Net] ${msg.from} checked out of ${netName} via ${alias}`);
     }
   }
 
@@ -411,8 +432,8 @@ module.exports = function (app, ctx) {
   app.get('/api/aprs/net', (req, res) => {
     // Update lastHeard from station cache for each roster entry
     const roster = [];
-    for (const [call, entry] of netRoster) {
-      const station = aprsStations.get(call.split('-')[0]);
+    for (const entry of netRoster.values()) {
+      const station = aprsStations.get(String(entry.call).split('-')[0]);
       if (station) {
         entry.lastHeard = station.timestamp;
         entry.lat = station.lat;
@@ -434,10 +455,13 @@ module.exports = function (app, ctx) {
   app.post('/api/aprs/net/checkin', (req, res) => {
     const { callsign, netName, status } = req.body;
     if (!callsign || !netName) return res.status(400).json({ error: 'Missing callsign or netName' });
+    const alias = String(req.body.alias || 'EMCOMM').toUpperCase();
+    if (!NET_ALIAS_RE.test(alias)) return res.status(400).json({ error: 'Invalid alias' });
 
     const station = aprsStations.get(callsign.split('-')[0].toUpperCase());
-    netRoster.set(callsign.toUpperCase(), {
+    netRoster.set(rosterKeyOf(alias, callsign), {
       call: callsign.toUpperCase(),
+      alias,
       netName,
       status: status || 'Checked in',
       checkinTime: Date.now(),
@@ -450,12 +474,22 @@ module.exports = function (app, ctx) {
     res.json({ ok: true });
   });
 
-  // REST endpoint: POST /api/aprs/net/checkout — manual check-out
+  // REST endpoint: POST /api/aprs/net/checkout — manual check-out, and the
+  // roster's remove button (#1238). With `alias`, only that net address's
+  // entry goes; without it, every entry for the callsign (the old behaviour).
   app.post('/api/aprs/net/checkout', (req, res) => {
     const { callsign } = req.body;
     if (!callsign) return res.status(400).json({ error: 'Missing callsign' });
-    netRoster.delete(callsign.toUpperCase());
-    res.json({ ok: true });
+    const call = String(callsign).toUpperCase();
+    let removed = 0;
+    if (req.body.alias) {
+      if (netRoster.delete(rosterKeyOf(req.body.alias, call))) removed++;
+    } else {
+      for (const [k, v] of [...netRoster]) {
+        if (String(v.call).toUpperCase() === call && netRoster.delete(k)) removed++;
+      }
+    }
+    res.json({ ok: true, removed });
   });
 
   // Apply channel equations (val = a*x^2 + b*x + c) to a raw sample

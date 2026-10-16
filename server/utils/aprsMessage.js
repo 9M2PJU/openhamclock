@@ -5,7 +5,7 @@
  *   SRC>DEST,PATH::ADDRESSEE:text{id
  *
  * Returns null for anything that is not a message, and for ack/rej frames.
- * EmComm net commands addressed to EMCOMM (`CQ NETNAME status`, `U NETNAME`)
+ * EmComm net commands (`CQ NETNAME status`, `U NETNAME`) to EMCOMM or any other net address
  * come back as `netCommand` so the roster can act on them.
  */
 const { parseResourceTokens } = require('./aprsParser');
@@ -59,16 +59,19 @@ function parseAprsMessage(line) {
       /\bshelter|\bevacuee|\bevacuation\s+(center|centre|site)|\brefuge\b/i.test(text) ||
       tokens.some((t) => ['Beds', 'Capacity', 'Shelter', 'Evacuees'].includes(t.key));
 
-    // Detect net check-in/check-out commands (messages to EMCOMM)
+    // Net check-in / check-out commands. Any addressee counts (#1237): a
+    // group can use its own callsign (W8ROC) or tactical alias instead of
+    // EMCOMM, and one server's roster serves every browser, so the address is
+    // recorded on the command and each browser shows only its own addresses.
     let netCommand = null;
-    if (to.toUpperCase() === 'EMCOMM' || to.toUpperCase().startsWith('EMCOMM')) {
+    if (!isBulletin && to) {
       const upper = text.toUpperCase().trim();
       const cqMatch = upper.match(/^CQ\s+(\S+)\s*(.*)/);
       const uMatch = upper.match(/^U\s+(\S+)/);
       if (cqMatch) {
-        netCommand = { action: 'checkin', netName: cqMatch[1], status: cqMatch[2] || '' };
+        netCommand = { action: 'checkin', netName: cqMatch[1], status: cqMatch[2] || '', alias: to.toUpperCase() };
       } else if (uMatch) {
-        netCommand = { action: 'checkout', netName: uMatch[1] };
+        netCommand = { action: 'checkout', netName: uMatch[1], alias: to.toUpperCase() };
       }
     }
 

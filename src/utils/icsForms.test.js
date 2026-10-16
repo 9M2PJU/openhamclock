@@ -833,6 +833,7 @@ describe('draft migration', () => {
     expect(mergeDrafts({ ics309: { types: ['aprs_msg_sent'] } }, T0).ics309.types).toEqual([
       'aprs_msg_sent',
       'net_traffic',
+      'net_removed',
     ]);
   });
   it('does not re-tick it once the draft is current (the operator unticked it on purpose)', () => {
@@ -841,15 +842,18 @@ describe('draft migration', () => {
   });
   it('survives a save/load round trip without migrating twice', () => {
     const once = mergeDrafts({ ics309: { types: ['aprs_msg_rx'] } }, T0);
-    once.ics309.types = once.ics309.types.filter((t) => t !== 'net_traffic');
+    once.ics309.types = once.ics309.types.filter((t) => t !== 'net_traffic' && t !== 'net_removed');
     saveDrafts(once);
     expect(loadDrafts(T0).ics309.types).toEqual(['aprs_msg_rx']);
   });
   it('migrateIcs309Types is pure and tolerates bad input', () => {
     const src = ['net_checkin'];
-    expect(migrateIcs309Types(src, 1)).toEqual(['net_checkin', 'net_traffic']);
+    expect(migrateIcs309Types(src, 1)).toEqual(['net_checkin', 'net_traffic', 'net_removed']);
     expect(src).toEqual(['net_checkin']);
-    expect(migrateIcs309Types(['net_traffic'], 1)).toEqual(['net_traffic']);
+    expect(migrateIcs309Types(['net_traffic'], 1)).toEqual(['net_traffic', 'net_removed']);
+    // v2 drafts only gain the roster-removal type (#1238)
+    expect(migrateIcs309Types(['aprs_msg_rx'], 2)).toEqual(['aprs_msg_rx', 'net_removed']);
+    expect(migrateIcs309Types(['aprs_msg_rx'], 3)).toEqual(['aprs_msg_rx']);
     expect(migrateIcs309Types(null, 1)).toBeNull();
     expect(defaultDrafts(T0).version).toBe(DRAFTS_VERSION);
   });

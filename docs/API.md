@@ -588,6 +588,16 @@ restart, and a client that was up to date before the restart still gets a
 delta rather than a full snapshot. Presence and tickets are not saved.
 Incidents idle for 7 days expire, together with their tombstones.
 
+**Net roster addresses.** A `CQ NETNAME status` / `U NETNAME` message to
+any addressee is a net check-in or check-out, and each `GET /api/aprs/net`
+roster entry carries `alias`, the address it was sent to (`EMCOMM`, `W8ROC`
+…). The roster holds one entry per address and callsign (at most 500), so
+a station can be in two groups' nets at once; each browser shows only the
+addresses it is set to. `POST /api/aprs/net/checkin` takes an optional
+`alias` (default `EMCOMM`; 1–9 letters, digits or `-`, otherwise 400).
+`POST /api/aprs/net/checkout` with `alias` removes that one entry, without
+it every entry for the callsign; it answers `{ ok, removed }`.
+
 **Net roster boot id.** `GET /api/aprs/net` returns `bootId` (new on every
 server start) and `generation` (bumped on every roster change). A browser
 mirroring its server's roster into an incident uses them to tell two cases

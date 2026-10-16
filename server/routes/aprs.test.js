@@ -138,3 +138,62 @@ describe('APRS net roster boot id and generation', () => {
     expect(a).not.toBe(b);
   });
 });
+
+describe('APRS net roster addresses (#1237, #1238, #1239)', () => {
+  let app;
+  beforeAll(() => {
+    vi.useFakeTimers();
+    app = makeApp();
+    const noop = () => {};
+    mountAprs(app, {
+      CONFIG: {},
+      APP_VERSION: 'test',
+      logDebug: noop,
+      logInfo: noop,
+      logWarn: noop,
+      logErrorOnce: noop,
+    });
+  });
+  afterAll(() => vi.useRealTimers());
+
+  const rf = (source, info) => call(app.routes['POST /api/aprs/local'], { body: { packets: [{ source, info }] } });
+  const roster = () => call(app.routes['GET /api/aprs/net']).payload.roster;
+
+  it('records the address each check-in went to, one entry per address', () => {
+    rf('KE8PLM-9', ':EMCOMM   :CQ OHNET at home{01');
+    rf('KE8PLM-9', ':W8ROC    :CQ HAMCO at station 1{02');
+    rf('N8TAG-7', ':W8ROC    :CQ HAMCO{03');
+    const r = roster();
+    expect(r.map((op) => `${op.alias}|${op.call}|${op.netName}`).sort()).toEqual([
+      'EMCOMM|KE8PLM-9|OHNET',
+      'W8ROC|KE8PLM-9|HAMCO',
+      'W8ROC|N8TAG-7|HAMCO',
+    ]);
+  });
+
+  it('a check-out to one address leaves the other', () => {
+    rf('KE8PLM-9', ':W8ROC    :U HAMCO{04');
+    expect(
+      roster()
+        .filter((op) => op.call === 'KE8PLM-9')
+        .map((op) => op.alias),
+    ).toEqual(['EMCOMM']);
+  });
+
+  it('removing by address takes only that entry; without one, every entry for the call', () => {
+    const out = app.routes['POST /api/aprs/net/checkout'];
+    rf('KE8PLM-9', ':W8ROC    :CQ HAMCO{05');
+    expect(call(out, { body: { callsign: 'ke8plm-9', alias: 'w8roc' } }).payload).toEqual({ ok: true, removed: 1 });
+    expect(roster().some((op) => op.call === 'KE8PLM-9' && op.alias === 'W8ROC')).toBe(false);
+    rf('KE8PLM-9', ':W8ROC    :CQ HAMCO{06');
+    expect(call(out, { body: { callsign: 'KE8PLM-9' } }).payload.removed).toBe(2);
+    expect(roster().some((op) => op.call === 'KE8PLM-9')).toBe(false);
+  });
+
+  it('manual check-ins default to EMCOMM and reject a bad address', () => {
+    const inn = app.routes['POST /api/aprs/net/checkin'];
+    call(inn, { body: { callsign: 'w1aw', netName: 'ARES' } });
+    expect(roster().find((op) => op.call === 'W1AW').alias).toBe('EMCOMM');
+    expect(call(inn, { body: { callsign: 'W1AW', netName: 'ARES', alias: 'not valid!' } }).statusCode).toBe(400);
+  });
+});

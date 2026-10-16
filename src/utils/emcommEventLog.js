@@ -42,6 +42,9 @@ export const EVENT_TYPE_META = {
   // already logged. `ref` names the event it withdraws (withdrawing a
   // withdrawal reinstates the original). Never a form row of its own.
   net_withdrawn: { label: 'Net Entry Withdrawn', color: '#6b7280', internal: true },
+  // Net control removed a roster entry (wrong net name etc., #1238). Kept as
+  // a row of its own: the check-in it corrects stays on the record.
+  net_removed: { label: 'Removed from Roster', color: '#ef4444' },
   aprs_msg_sent: { label: 'APRS Msg Sent', color: '#22d3ee' },
   aprs_msg_rx: { label: 'APRS Msg Rcvd', color: '#3b82f6' },
   nws_alert: { label: 'NWS Alert', color: '#dc2626' },

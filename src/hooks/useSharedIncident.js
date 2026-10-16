@@ -793,8 +793,9 @@ export function useSharedIncident({
     [enqueue],
   );
 
+  // `log: false` when the caller records its own event (a roster removal, #1238)
   const checkOut = useCallback(
-    (call, known) => {
+    (call, known, { log = true } = {}) => {
       const c = String(call || '')
         .trim()
         .toUpperCase();
@@ -808,6 +809,7 @@ export function useSharedIncident({
       };
       setState((s) => applyIncidentDelta(s, { roster: [entry] }));
       enqueue({ roster: [entry] });
+      if (!log) return;
       recordEvent('net_checkout', {
         callsign: c,
         summary: 'Checked out of net',

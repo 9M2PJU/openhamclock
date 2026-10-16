@@ -8,6 +8,7 @@
  * card only while it is on screen or next to it. Every other layout, and the
  * Mobile layout with the card switched off, makes no EmComm requests at all.
  */
+import { filterRosterByAliases, getAliases } from '../utils/netAliases.js';
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useEmcommData } from '../hooks/useEmcommData.js';
@@ -84,7 +85,8 @@ export default function MobileEmcommCard({ location, allUnits }) {
         const res = await fetch('/api/aprs/net');
         if (res.ok && alive) {
           const data = await res.json();
-          setRoster(Array.isArray(data?.roster) ? data.roster : []);
+          // Only check-ins to this station's net addresses (#1237)
+          setRoster(filterRosterByAliases(Array.isArray(data?.roster) ? data.roster : [], getAliases()));
         }
       } catch {
         /* offline — keep the last roster */

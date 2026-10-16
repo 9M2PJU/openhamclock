@@ -194,13 +194,14 @@ export function mergeDisplayedRoster(localRoster, incidentState, now = Date.now(
 }
 
 const rosterFingerprint = (op) =>
-  JSON.stringify([op.netName || '', op.status || '', op.lat ?? null, op.lon ?? null, op.tokens || []]);
+  JSON.stringify([op.netName || '', op.alias || '', op.status || '', op.lat ?? null, op.lon ?? null, op.tokens || []]);
 
 /** Incident roster record from a local /api/aprs/net entry. */
 export function rosterEntryForPush(op, updatedAt) {
   return {
     call: String(op.call).toUpperCase(),
     netName: op.netName || '',
+    alias: op.alias || '',
     status: op.status || 'Checked in',
     checkinTime: op.checkinTime || updatedAt,
     lastHeard: op.lastHeard || updatedAt,

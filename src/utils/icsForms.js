@@ -109,14 +109,16 @@ export function newRowId() {
  * mergeDrafts():
  *   v1 → v2  tick `net_traffic` in the 309's event types (it became a default
  *            after drafts had already saved their own type list).
+ *   v2 → v3  tick `net_removed` (roster removals, #1238) the same way.
  */
-export const DRAFTS_VERSION = 2;
+export const DRAFTS_VERSION = 3;
 
 /** One-time upgrades of a stored draft's 309 type list. Pure; returns a new array. */
 export function migrateIcs309Types(types, fromVersion) {
   const list = Array.isArray(types) ? [...types] : null;
   if (!list) return list;
   if (fromVersion < 2 && !list.includes('net_traffic')) list.push('net_traffic');
+  if (fromVersion < 3 && !list.includes('net_removed')) list.push('net_removed');
   return list;
 }
 
@@ -262,6 +264,8 @@ const L = (tr, key, def, vars = {}) => (tr || defaultTr)(`icsForms.print.${key}`
 export const ICS309_DEFAULT_TYPES = [
   'net_checkin',
   'net_checkout',
+  // A removal stays on the log so the record shows the correction (#1238)
+  'net_removed',
   'net_traffic',
   'aprs_msg_sent',
   'aprs_msg_rx',

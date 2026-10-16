@@ -190,6 +190,11 @@ const CHANGELOG = [
         desc: 'The panel used to compare the model\'s "best continent" against a count of spots, which told you nothing about the path you were working. It now runs one P.533 prediction for the DE → DX circuit (re-run the moment you change DX), counts spots between your continent and the DX continent, folds in measured beacons near DX when the KiwiSDR monitor is running, and gives each band a plain status: OPEN · confirmed, OPEN · no spots yet, OPEN · model said closed, MARGINAL or CLOSED — with a one-line explanation per row and a "What am I looking at?" block. A race that could leave the old panel on its loading text for ten minutes is gone. History Playback also behaves now: scrubbing into the past hides the live DX paths so only the replayed spots show, and the control tells you when you have scrubbed past the start of the recording.',
       },
       {
+        icon: '📇',
+        title: 'Net Roster: Your Own Net Address, Several at Once, Remove an Entry',
+        desc: "Check-ins no longer have to go to the one worldwide EMCOMM address that every group in range shares. Addresses → Edit at the top of the Net Roster sets the addresses your station takes check-ins from — your group's club callsign (W8ROC, W8ROC-10) or an alias of up to 9 characters, several at once if you want to follow a neighbouring net too (#1237, #1239). Group the roster by address or net name, or show one address's roster at a time (#1240). The red ✕ removes a check-in, for example one sent with the wrong net name; the Event Log and the ICS 309 record the removal, your call and the reason (#1238). The Event Log also stops logging messages between two other stations. All asked for by Michael, KE8PLM.",
+      },
+      {
         icon: '🖥️',
         title: 'EmComm Sidebar: Text Size and Width',
         desc: "The EmComm sidebar toolbar has A− / A+ next to Expand all / Collapse all, scaling every panel from 70% to 200% like the Dockable layout's per-panel buttons; click the percentage to reset (#1232). Drag the divider between the map and the sidebar to make the sidebar wider or narrower (260 to 900 pixels, the map always keeps at least 300), use the arrow keys on it, or double-click it to reset; the width is remembered in that browser (#1233). Both asked for by Michael, KE8PLM.",

@@ -138,6 +138,30 @@ import {
   activeEvents,
   EVENT_TYPE_META,
 } from '../utils/emcommEventLog.js';
+import {
+  getAliases,
+  setAliases,
+  ALIASES_EVENT,
+  ALIASES_KEY,
+  filterRosterByAliases,
+  rosterKey,
+  entryAlias,
+  messageIsRelevant,
+  groupRoster,
+  rosterForAddress,
+} from '../utils/netAliases.js';
+import NetRosterControls from '../components/NetRosterControls.jsx';
+
+// Net Roster view (#1240): grouping and the one-address filter, per browser.
+const ROSTER_VIEW_KEY = 'openhamclock_emcommRosterView';
+const readRosterView = () => {
+  try {
+    const v = JSON.parse(localStorage.getItem(ROSTER_VIEW_KEY) || '{}') || {};
+    return { group: ['none', 'alias', 'net'].includes(v.group) ? v.group : 'none', show: String(v.show || 'all') };
+  } catch {
+    return { group: 'none', show: 'all' };
+  }
+};
 
 // APRS symbol codes for emergency-related stations
 const EMCOMM_SYMBOLS = new Set([
@@ -387,8 +411,45 @@ export default function EmcommLayout(props) {
   // APRS source filter: 'all' | 'internet' | 'rf'
   const [aprsSource, setAprsSource] = useState('all');
   // Net operations
-  const [netRoster, setNetRoster] = useState([]);
+  // Everything this server's roster holds, for every net address (#1237)
+  const [serverRoster, setNetRoster] = useState([]);
   const [rosterBootId, setRosterBootId] = useState(null);
+  // The addresses this station takes check-ins from; the roster, its event
+  // log entries and the shared incident only see those (#1237, #1239).
+  const [netAliases, setNetAliasesState] = useState(getAliases);
+  useEffect(() => {
+    const refresh = () => setNetAliasesState(getAliases());
+    const onStorage = (e) => {
+      if (!e || e.key === ALIASES_KEY) refresh();
+    };
+    window.addEventListener(ALIASES_EVENT, refresh);
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.removeEventListener(ALIASES_EVENT, refresh);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, []);
+  const changeNetAliases = useCallback((list) => setNetAliasesState(setAliases(list)), []);
+  const netRoster = useMemo(() => filterRosterByAliases(serverRoster, netAliases), [serverRoster, netAliases]);
+  // Read by the message poll, which keeps one interval across alias edits
+  const netAliasesRef = useRef(netAliases);
+  netAliasesRef.current = netAliases;
+  const myCallRef = useRef(config.callsign);
+  myCallRef.current = config.callsign;
+  const [rosterView, setRosterView] = useState(readRosterView);
+  const updateRosterView = useCallback((patch) => {
+    setRosterView((v) => {
+      const next = { ...v, ...patch };
+      try {
+        localStorage.setItem(ROSTER_VIEW_KEY, JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  }, []);
+  // Roster keys net control removed by hand (#1238): their disappearance is
+  // logged as a removal, not as a check-out.
+  const removedRosterKeysRef = useRef(new Set());
+  const rosterAliasSigRef = useRef(null);
   // Voice-net check-ins from the Net Control panel, in the same roster entry
   // shape. Merged into the roster for display and the EmComm-only map filter
   // only — the event-log diff below keeps watching the APRS roster alone,
@@ -478,6 +539,13 @@ export default function EmcommLayout(props) {
   const displayRoster = useMemo(
     () => (incidentJoined ? mergeDisplayedRoster(localRoster, incidentState) : localRoster),
     [incidentJoined, localRoster, incidentState],
+  );
+  // Net Roster view (#1240): one address only, then grouped
+  const rosterShow = netAliases.length > 1 && netAliases.includes(rosterView.show) ? rosterView.show : 'all';
+  const shownRoster = useMemo(() => rosterForAddress(displayRoster, rosterShow), [displayRoster, rosterShow]);
+  const rosterGroups = useMemo(
+    () => groupRoster(shownRoster, rosterView.group, netAliases),
+    [shownRoster, rosterView.group, netAliases],
   );
   const displayFieldReports = useMemo(
     () => (incidentJoined ? mergeFieldReports(fieldReports, incidentState) : fieldReports),
@@ -625,6 +693,9 @@ export default function EmcommLayout(props) {
         const msgs = Array.isArray(data.messages) ? data.messages : [];
         for (const m of msgs) {
           if (m.timestamp > msgSinceRef.current) msgSinceRef.current = m.timestamp;
+          // Only traffic for this station's net addresses, its own callsign and
+          // bulletins — not every message between two stations in range (#1237)
+          if (!messageIsRelevant(m, netAliasesRef.current, myCallRef.current)) continue;
           recordEvent('aprs_msg_rx', {
             callsign: m.from,
             summary: `${m.type === 'bulletin' ? 'Bulletin' : 'Message'} to ${m.to}`,
@@ -710,18 +781,30 @@ export default function EmcommLayout(props) {
   // ── Event log recording — diff-and-append on each data flow update ────────
   // Net roster: check-ins (new calls) and check-outs (calls that disappeared)
   useEffect(() => {
-    const { added, removed, keys } = diffAdded(evtPrevRef.current.roster, netRoster, (op) => op.call);
+    // Keyed by address + call: one station can be in two groups' nets (#1239).
+    // The dedupe keys stay call-based so logs from before this change match.
+    // Editing the address list shows or hides whole groups of entries; that
+    // is not anyone checking in or out, so start a fresh baseline instead.
+    const aliasSig = netAliases.join(',');
+    if (rosterAliasSigRef.current !== aliasSig) {
+      rosterAliasSigRef.current = aliasSig;
+      evtPrevRef.current.roster = null;
+    }
+    const { added, removed, keys } = diffAdded(evtPrevRef.current.roster, netRoster, rosterKey);
+    const multi = netAliases.length > 1;
     for (const op of added) {
       recordEvent('net_checkin', {
         callsign: op.call,
-        summary: `Checked into ${op.netName}`,
+        summary: `Checked into ${op.netName}${multi ? ` (${entryAlias(op)})` : ''}`,
         details: op.status && op.status !== 'Checked in' ? op.status : '',
         ts: op.checkinTime,
         dedupeKey: `${op.call}-${op.checkinTime}`,
       });
     }
-    for (const call of removed) {
-      const checkinTime = rosterCheckinRef.current.get(call);
+    for (const key of removed) {
+      const call = key.slice(key.indexOf('|') + 1);
+      if (removedRosterKeysRef.current.delete(key)) continue; // logged as a removal
+      const checkinTime = rosterCheckinRef.current.get(key);
       recordEvent('net_checkout', {
         callsign: call,
         summary: 'Checked out of net',
@@ -729,9 +812,9 @@ export default function EmcommLayout(props) {
         ...(checkinTime ? { dedupeKey: `${call}-${checkinTime}-out` } : {}),
       });
     }
-    rosterCheckinRef.current = new Map(netRoster.filter((op) => op?.call).map((op) => [op.call, op.checkinTime]));
+    rosterCheckinRef.current = new Map(netRoster.filter((op) => op?.call).map((op) => [rosterKey(op), op.checkinTime]));
     evtPrevRef.current.roster = keys;
-  }, [netRoster, logEpoch]);
+  }, [netRoster, netAliases, logEpoch]);
 
   // NWS alerts: new alert IDs
   useEffect(() => {
@@ -1180,6 +1263,59 @@ export default function EmcommLayout(props) {
       }
     },
     [eventLog, incidentJoined, sharedActiveEvents],
+  );
+  // Remove a roster entry by hand, e.g. a check-in to the wrong net (#1238).
+  // The Event Log gets a "Removed from Roster" entry (with the reason, if
+  // given) instead of a check-out, so the record shows the correction.
+  const incidentCheckOut = incident.checkOut;
+  const removeRosterEntry = useCallback(
+    async (op) => {
+      const alias = entryAlias(op);
+      const reason = window.prompt(
+        `Remove ${op.call} (${op.netName || 'no net name'}, sent to ${op.address || alias}) from the Net Roster?\n\n` +
+          'The removal is recorded in the Event Log. Reason (optional), e.g. "wrong net name":',
+        '',
+      );
+      if (reason == null) return;
+      const key = rosterKey(op);
+      const onServer = netRoster.some((e) => rosterKey(e) === key);
+      if (onServer) {
+        removedRosterKeysRef.current.add(key);
+        let ok = false;
+        try {
+          const res = await fetch('/api/aprs/net/checkout', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ callsign: op.call, alias: op.address || alias }),
+          });
+          ok = res.ok;
+        } catch {}
+        if (!ok) {
+          removedRosterKeysRef.current.delete(key);
+          window.alert(`Could not remove ${op.call}: the server did not answer. Try again.`);
+          return;
+        }
+        const address = String(op.address || alias).toUpperCase();
+        setNetRoster((prev) =>
+          prev.filter(
+            (e) =>
+              !(
+                String(e.call).toUpperCase() === String(op.call).toUpperCase() &&
+                String(e.alias || 'EMCOMM').toUpperCase() === address
+              ),
+          ),
+        );
+      }
+      if (incidentJoined) incidentCheckOut(op.call, op, { log: false });
+      const by = String(config.callsign || '').toUpperCase();
+      recordEvent('net_removed', {
+        callsign: op.call,
+        summary: `Removed from the ${op.netName ? `${op.netName} ` : ''}roster (${alias})${by && by !== 'N0CALL' ? ` by ${by}` : ''}`,
+        details: String(reason).trim(),
+        dedupeKey: `${op.call}-${op.checkinTime || ''}-removed`,
+      });
+    },
+    [netRoster, incidentJoined, incidentCheckOut, config.callsign],
   );
   const scheduleHistoryHover = useCallback(
     (call) => {
@@ -2131,119 +2267,180 @@ export default function EmcommLayout(props) {
           </PanelSection>
 
           {/* Net Operations Panel */}
-          <PanelSection title="Net Roster" count={displayRoster.length} color="#a855f7" panels={panels}>
-            {displayRoster.length === 0 ? (
-              <EmptyState text="No operators checked in. Send 'CQ NETNAME status' to EMCOMM via APRS to check in." />
+          <PanelSection title="Net Roster" count={shownRoster.length} color="#a855f7" panels={panels}>
+            <NetRosterControls
+              aliases={netAliases}
+              onAliasesChange={changeNetAliases}
+              group={rosterView.group}
+              onGroupChange={(group) => updateRosterView({ group })}
+              show={rosterShow}
+              onShowChange={(show) => updateRosterView({ show })}
+            />
+            {shownRoster.length === 0 ? (
+              <EmptyState
+                text={`No operators checked in. Send 'CQ NETNAME status' to ${rosterShow === 'all' ? netAliases[0] : rosterShow} via APRS to check in.`}
+              />
             ) : (
-              displayRoster.map((op) => {
-                const ageStr = op.age < 1 ? 'now' : op.age < 60 ? `${op.age}m` : `${Math.floor(op.age / 60)}h`;
-                const hasPos = op.lat != null && op.lon != null;
-                return (
-                  <div
-                    key={op.call}
-                    data-testid="roster-row"
-                    data-call={op.call}
-                    onClick={hasPos ? () => panToTarget(op) : undefined}
-                    onMouseEnter={() => scheduleHistoryHover(op.call)}
-                    onMouseLeave={cancelHistoryHover}
-                    title={hasPos ? 'Show on map' : 'No APRS position heard for this station'}
-                    style={{
-                      padding: '5px 8px',
-                      fontSize: '11px',
-                      borderLeft: `2px solid ${op.stale ? '#f59e0b' : '#22c55e'}`,
-                      background: '#0d1117',
-                      borderRadius: '4px',
-                      marginBottom: '3px',
-                      cursor: hasPos ? 'pointer' : 'default',
-                    }}
-                    onMouseEnter={hasPos ? (e) => (e.currentTarget.style.background = '#1a1f2e') : undefined}
-                    onMouseLeave={hasPos ? (e) => (e.currentTarget.style.background = '#0d1117') : undefined}
-                  >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <div>
-                        <span style={{ color: op.stale ? '#f59e0b' : '#22c55e', fontWeight: 600 }}>{op.call}</span>
-                        <span style={{ color: '#888', marginLeft: '6px', fontSize: '10px' }}>
-                          {op.source === 'net-control' ? '🎙️ ' : ''}
-                          {op.netName}
-                        </span>
-                        {incidentJoined && op.site && (
-                          <span style={{ color: '#38bdf8', marginLeft: '6px', fontSize: '9px' }}>@{op.site}</span>
-                        )}
-                      </div>
-                      <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                        <span style={{ color: '#888', fontSize: '10px' }}>{ageStr}</span>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setMessageTarget(op.call);
-                          }}
-                          style={{
-                            background: 'none',
-                            border: '1px solid #333',
-                            borderRadius: '3px',
-                            color: '#888',
-                            fontSize: '9px',
-                            padding: '1px 4px',
-                            cursor: 'pointer',
-                          }}
-                        >
-                          MSG
-                        </button>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            openHistory(op.call);
-                          }}
-                          title="Messages exchanged with this station, newest first"
-                          style={{
-                            background: 'none',
-                            border: '1px solid #333',
-                            borderRadius: '3px',
-                            color: historyTarget === op.call ? '#22d3ee' : '#888',
-                            fontSize: '9px',
-                            padding: '1px 4px',
-                            cursor: 'pointer',
-                          }}
-                        >
-                          HIST
-                        </button>
-                        {incidentJoined && (
+              rosterGroups.flatMap((g) => [
+                ...(g.label
+                  ? [
+                      <div
+                        key={`group-${g.key}`}
+                        data-testid="roster-group"
+                        style={{
+                          color: '#a855f7',
+                          fontSize: '10px',
+                          fontWeight: 700,
+                          letterSpacing: '0.5px',
+                          padding: '4px 4px 2px',
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                        }}
+                      >
+                        <span>{g.label}</span>
+                        <span style={{ color: '#666' }}>{g.entries.length}</span>
+                      </div>,
+                    ]
+                  : []),
+                ...g.entries.map((op) => {
+                  const ageStr = op.age < 1 ? 'now' : op.age < 60 ? `${op.age}m` : `${Math.floor(op.age / 60)}h`;
+                  const hasPos = op.lat != null && op.lon != null;
+                  return (
+                    <div
+                      key={rosterKey(op)}
+                      data-testid="roster-row"
+                      data-call={op.call}
+                      onClick={hasPos ? () => panToTarget(op) : undefined}
+                      onMouseEnter={() => scheduleHistoryHover(op.call)}
+                      onMouseLeave={cancelHistoryHover}
+                      title={hasPos ? 'Show on map' : 'No APRS position heard for this station'}
+                      style={{
+                        padding: '5px 8px',
+                        fontSize: '11px',
+                        borderLeft: `2px solid ${op.stale ? '#f59e0b' : '#22c55e'}`,
+                        background: '#0d1117',
+                        borderRadius: '4px',
+                        marginBottom: '3px',
+                        cursor: hasPos ? 'pointer' : 'default',
+                      }}
+                      onMouseEnter={hasPos ? (e) => (e.currentTarget.style.background = '#1a1f2e') : undefined}
+                      onMouseLeave={hasPos ? (e) => (e.currentTarget.style.background = '#0d1117') : undefined}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div>
+                          <span style={{ color: op.stale ? '#f59e0b' : '#22c55e', fontWeight: 600 }}>{op.call}</span>
+                          <span style={{ color: '#888', marginLeft: '6px', fontSize: '10px' }}>
+                            {op.source === 'net-control' ? '🎙️ ' : ''}
+                            {op.netName}
+                          </span>
+                          {netAliases.length > 1 && rosterView.group !== 'alias' && op.source !== 'net-control' && (
+                            <span
+                              title={`Checked in to ${op.address || entryAlias(op)}`}
+                              style={{ color: '#a855f7', marginLeft: '6px', fontSize: '9px' }}
+                            >
+                              →{entryAlias(op)}
+                            </span>
+                          )}
+                          {incidentJoined && op.site && (
+                            <span style={{ color: '#38bdf8', marginLeft: '6px', fontSize: '9px' }}>@{op.site}</span>
+                          )}
+                        </div>
+                        <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                          <span style={{ color: '#888', fontSize: '10px' }}>{ageStr}</span>
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
-                              incident.checkOut(op.call, op);
+                              setMessageTarget(op.call);
                             }}
-                            title={t('emcomm.incident.outTitle', {
-                              defaultValue: 'Check this operator out of the shared net',
-                            })}
                             style={{
                               background: 'none',
-                              border: '1px solid #f59e0b55',
+                              border: '1px solid #333',
                               borderRadius: '3px',
-                              color: '#f59e0b',
+                              color: '#888',
                               fontSize: '9px',
                               padding: '1px 4px',
                               cursor: 'pointer',
                             }}
                           >
-                            {t('emcomm.incident.out', { defaultValue: 'OUT' })}
+                            MSG
                           </button>
-                        )}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openHistory(op.call);
+                            }}
+                            title="Messages exchanged with this station, newest first"
+                            style={{
+                              background: 'none',
+                              border: '1px solid #333',
+                              borderRadius: '3px',
+                              color: historyTarget === op.call ? '#22d3ee' : '#888',
+                              fontSize: '9px',
+                              padding: '1px 4px',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            HIST
+                          </button>
+                          {incidentJoined && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                incident.checkOut(op.call, op);
+                              }}
+                              title={t('emcomm.incident.outTitle', {
+                                defaultValue: 'Check this operator out of the shared net',
+                              })}
+                              style={{
+                                background: 'none',
+                                border: '1px solid #f59e0b55',
+                                borderRadius: '3px',
+                                color: '#f59e0b',
+                                fontSize: '9px',
+                                padding: '1px 4px',
+                                cursor: 'pointer',
+                              }}
+                            >
+                              {t('emcomm.incident.out', { defaultValue: 'OUT' })}
+                            </button>
+                          )}
+                          {op.source !== 'net-control' && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                removeRosterEntry(op);
+                              }}
+                              aria-label={`Remove ${op.call} from the roster`}
+                              title="Remove from the roster (e.g. wrong net name) — recorded in the Event Log"
+                              style={{
+                                background: 'none',
+                                border: '1px solid #ef444455',
+                                borderRadius: '3px',
+                                color: '#ef4444',
+                                fontSize: '9px',
+                                padding: '1px 4px',
+                                cursor: 'pointer',
+                              }}
+                            >
+                              ✕
+                            </button>
+                          )}
+                        </div>
                       </div>
+                      {op.status && op.status !== 'Checked in' && (
+                        <div style={{ color: '#aaa', fontSize: '10px', marginTop: '2px' }}>{op.status}</div>
+                      )}
+                      {op.tokens && op.tokens.length > 0 && (
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '3px', marginTop: '3px' }}>
+                          {op.tokens.map((tk, i) => (
+                            <TokenPill key={`${tk.key}-${i}`} token={tk} />
+                          ))}
+                        </div>
+                      )}
                     </div>
-                    {op.status && op.status !== 'Checked in' && (
-                      <div style={{ color: '#aaa', fontSize: '10px', marginTop: '2px' }}>{op.status}</div>
-                    )}
-                    {op.tokens && op.tokens.length > 0 && (
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '3px', marginTop: '3px' }}>
-                        {op.tokens.map((tk, i) => (
-                          <TokenPill key={`${tk.key}-${i}`} token={tk} />
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                );
-              })
+                  );
+                }),
+              ])
             )}
           </PanelSection>
 

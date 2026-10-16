@@ -110,6 +110,8 @@ const EVENT_TYPES = new Set([
   'net_traffic',
   // Net Control's Undo: withdraws the event named by `ref` (kept below)
   'net_withdrawn',
+  // A roster entry removed by net control (wrong net name etc., #1238)
+  'net_removed',
   'ics213_sent',
   'aprs_msg_sent',
   'aprs_msg_rx',
@@ -178,6 +180,8 @@ function sanitiseRoster(raw, now) {
   return {
     call,
     netName: cleanStr(raw.netName, 40),
+    // Net address the check-in was sent to (#1237); '' for voice / manual
+    alias: cleanStr(raw.alias, 9).toUpperCase(),
     status: cleanStr(raw.status, STR_MAX) || 'Checked in',
     checkinTime: cleanTs(raw.checkinTime, now),
     lastHeard: cleanTs(raw.lastHeard, now),
