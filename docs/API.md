@@ -401,16 +401,40 @@ common ancestor, using Net Control's `rebaseCheck`:
   fields, both changes are kept. The merged state is published with the
   other site's state as its parent. Its stations are listed newest check-in
   first, then by callsign, so every site holds the same net at once.
-- If the same station line or field was changed at both sites, the other
-  site's version is kept and Net Control shows which call changed, and at
-  which site. Our version is kept in the browser (`openhamclock_netControlConflicts`)
-  and shown as a "your change" chip with **Apply mine**.
+- If the same station line or field was changed at both sites, both sites
+  keep the later change: the later commit time, with the tag as a tie-break.
+  - The earlier site takes the later version. Net Control shows which call
+    changed, and at which site. The earlier site's own version is kept in
+    the browser (`openhamclock_netControlConflicts`) and shown as a
+    "your change" chip with **Apply mine**.
+  - The later site keeps its own version and publishes it again on top of
+    the other, with `overrode: {tag, calls, fields}`. The site whose change
+    lost then shows the chip, even if this is the first copy of the later
+    state it receives.
+- A state a site has already handled is ignored if it arrives again with
+  the same tag and content.
 
 **Document order.** The server orders documents by when it receives them,
 never by client clocks. Each accepted copy gets `docRev` (rising per
 document) and `receivedAt`; a copy identical to the stored one is ignored.
 Clients compare `docRev`. The client's own `updatedAt` is kept only for
 display, so a site whose clock is wrong can still save.
+
+**Conditional writes.** A document sent with `baseRev` (the `docRev` it was
+made from) is a conditional write. The app sends `baseRev` for the ICS form
+drafts.
+
+- If someone has saved a newer revision since, the server refuses the write
+  rather than let an old copy, such as a draft flushed after hours offline,
+  replace newer edits. The response is `409`, with
+  `conflicts: [{id, baseRev, current}]`.
+- The rest of the batch is applied.
+- `docRevs` gives each accepted document's new revision.
+- To put the refused copy back anyway, send it again with
+  `baseRev: current.docRev`.
+- A write without `baseRev` is applied unconditionally. Net Control's net
+  documents are sent that way, because the running net reconciles through
+  its own merge.
 
 **Withdrawals.** A `net_withdrawn` event names the entry it withdraws in
 `ref`. Clients hide withdrawn entries from the merged log, so a withdrawal
@@ -423,19 +447,19 @@ holds (for example after a server restart), the reply is the full state with
 `full: true`, and the client replaces what it has. Records sent with a `site`
 keep it; otherwise the request's `site` is stamped on them.
 
-| Endpoint                               | Body / query                                                                                         | Returns                                                                                                                                                           |
-| -------------------------------------- | ---------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /api/incident`                    | —                                                                                                    | `{hosted, listing, requireCallsign, limits}`                                                                                                                      |
-| `POST /api/incident`                   | `{name?, ic?, netFreq?, notes?, clientId?, call}`                                                    | `{ok, id, joinKey, adminKey, role, incident}`. `incident` is the full state (below)                                                                               |
-| `POST /api/incident/:id/join`          | key + `{clientId?, call?}`                                                                           | `{ok, id, role, joinKey?, incident}`. `role` is `admin` or `operator`, depending on the key; `joinKey` for an admin                                               |
-| `POST /api/incident/:id/leave`         | key + `{clientId}`                                                                                   | `{ok, participants}`                                                                                                                                              |
-| `GET /api/incident/:id`                | key + `?since=<seq>&clientId=`                                                                       | `{id, seq, since, full, role, board, participants, counts, roster[], events[], reports[], docs[], deleted[]}`. Only what changed after `since`                    |
-| `POST /api/incident/:id/sync`          | key + `{clientId?, call?, site?, roster?[], events?[], reports?[], docs?[], board?}` (≤200 per list) | `{ok, seq, accepted:{roster, events, reports, docs, board}, denied[]}`. Counts of records that actually changed                                                   |
-| `POST /api/incident/:id/admin`         | admin key + `{edit?: {events?[], reports?[]}, delete?: {events?[], reports?[], board?}}`             | `{ok, seq, edited:{events, reports}, deleted, board}`. An edit is `{id, …fields}` and keeps `id`, `kind`/`type` and `site`. `delete.board: true` clears the board |
-| `POST /api/incident/:id/rotate`        | admin key                                                                                            | `{ok, joinKey, keyGen, disconnected}`. The old join key stops working at once                                                                                     |
-| `POST /api/incident/:id/ticket`        | key + `{clientId?}`                                                                                  | `{ok, ticket, expiresIn: 60, role}`. A one-time stream ticket                                                                                                     |
-| `GET /api/incident/:id/stream`         | `?ticket=&clientId=&since=` (or `Last-Event-ID`)                                                     | Server-sent events (below)                                                                                                                                        |
-| `GET /api/incident/list` (self-hosted) | `API_WRITE_KEY` when set                                                                             | `{incidents:[{id, name, createdAt, lastActivity, participants, counts}]}`. Never keys. `403` when `OHC_HOSTED` is set                                             |
+| Endpoint                               | Body / query                                                                                         | Returns                                                                                                                                                                       |
+| -------------------------------------- | ---------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/incident`                    | —                                                                                                    | `{hosted, listing, requireCallsign, limits}`                                                                                                                                  |
+| `POST /api/incident`                   | `{name?, ic?, netFreq?, notes?, clientId?, call}`                                                    | `{ok, id, joinKey, adminKey, role, incident}`. `incident` is the full state (below)                                                                                           |
+| `POST /api/incident/:id/join`          | key + `{clientId?, call?}`                                                                           | `{ok, id, role, joinKey?, incident}`. `role` is `admin` or `operator`, depending on the key; `joinKey` for an admin                                                           |
+| `POST /api/incident/:id/leave`         | key + `{clientId}`                                                                                   | `{ok, participants}`                                                                                                                                                          |
+| `GET /api/incident/:id`                | key + `?since=<seq>&clientId=`                                                                       | `{id, seq, since, full, role, board, participants, counts, roster[], events[], reports[], docs[], deleted[]}`. Only what changed after `since`                                |
+| `POST /api/incident/:id/sync`          | key + `{clientId?, call?, site?, roster?[], events?[], reports?[], docs?[], board?}` (≤200 per list) | `{ok, seq, accepted:{roster, events, reports, docs, board}, docRevs, denied[]}`. Counts of records that actually changed. `409` with `conflicts[]` when a `baseRev` was stale |
+| `POST /api/incident/:id/admin`         | admin key + `{edit?: {events?[], reports?[]}, delete?: {events?[], reports?[], board?}}`             | `{ok, seq, edited:{events, reports}, deleted, board}`. An edit is `{id, …fields}` and keeps `id`, `kind`/`type` and `site`. `delete.board: true` clears the board             |
+| `POST /api/incident/:id/rotate`        | admin key                                                                                            | `{ok, joinKey, keyGen, disconnected}`. The old join key stops working at once                                                                                                 |
+| `POST /api/incident/:id/ticket`        | key + `{clientId?}`                                                                                  | `{ok, ticket, expiresIn: 60, role}`. A one-time stream ticket                                                                                                                 |
+| `GET /api/incident/:id/stream`         | `?ticket=&clientId=&since=` (or `Last-Event-ID`)                                                     | Server-sent events (below)                                                                                                                                                    |
+| `GET /api/incident/list` (self-hosted) | `API_WRITE_KEY` when set                                                                             | `{incidents:[{id, name, createdAt, lastActivity, participants, counts}]}`. Never keys. `403` when `OHC_HOSTED` is set                                                         |
 
 **Stream.**
 
