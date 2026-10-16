@@ -44,4 +44,12 @@ describe('cloud relay indicators', () => {
     for (let i = 0; i < 80; i++) q = queueRelayCommand(q, 'setPTT', { ptt: false }, 10 + i);
     expect(q).toHaveLength(MAX_QUEUED_COMMANDS);
   });
+
+  it('carries the lightning guard settings for the headless guard, whitelisted', () => {
+    const out = sanitizeRelayIndicators({
+      lightningRelay: false,
+      lightningGuard: { lat: 45, lon: 7, warnKm: 40, repeatCloser: false, relayOn: 'warn', evil: 'x', alarmKm: '9' },
+    });
+    expect(out.lightningGuard).toEqual({ lat: 45, lon: 7, warnKm: 40, repeatCloser: false, relayOn: 'warn' });
+  });
 });

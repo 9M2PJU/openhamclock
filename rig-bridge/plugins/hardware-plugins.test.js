@@ -362,6 +362,55 @@ describe('gpio plugin (mock backend)', () => {
     off.disconnect();
   });
 
+  it('headless guard follows the settings a display sends, saves them, starts once a location arrives', async () => {
+    const svc = { ...services(), saveConfig: vi.fn() };
+    const cfg = {
+      gpio: { enabled: true, backend: 'mock', pins: { lightningOut: 25 }, lightningHeadless: { enabled: true } },
+    };
+    const inst = gpio.create(cfg, svc);
+    inst.connect();
+    await flush(1000);
+    let st = inst.getStatus();
+    expect(st.features).toContain('lightning-arbiter');
+    expect(st.lightning.headless).toMatchObject({ running: true, watching: false });
+
+    const guard = { lat: 45, lon: 7, warnKm: 40, alarmKm: 15, allClearMin: 5, hysteresisPct: 10, repeatCloser: false };
+    // A display that does not drive the relay is ignored
+    svc.pluginBus.emit('indicators', { lightningGuard: guard });
+    expect(svc.saveConfig).not.toHaveBeenCalled();
+    svc.pluginBus.emit('indicators', {
+      displayId: 'shack',
+      lightning: 'clear',
+      lightningRelay: false,
+      lightningGuard: guard,
+    });
+    await flush(500);
+    st = inst.getStatus();
+    expect(st.lightning.headless).toMatchObject({
+      watching: true,
+      warnKm: 40,
+      alarmKm: 15,
+      allClearMin: 5,
+      hysteresisPct: 10,
+      repeatCloser: false,
+    });
+    expect(cfg.gpio.lightningHeadless).toMatchObject({ enabled: true, lat: 45, lon: 7, alarmKm: 15 });
+    expect(svc.saveConfig).toHaveBeenCalledTimes(1);
+
+    // Same settings again → nothing saved
+    svc.pluginBus.emit('indicators', {
+      displayId: 'shack',
+      lightning: 'clear',
+      lightningRelay: false,
+      lightningGuard: guard,
+    });
+    expect(svc.saveConfig).toHaveBeenCalledTimes(1);
+
+    // The new alarm radius is what the headless guard uses: a 12 km strike is an alarm
+    expect(inst.injectLightning({ distanceKm: 12, bearingDeg: 0 }).status.level).toBe('alarm');
+    inst.disconnect();
+  });
+
   it('lightningFailSafe energises the line while the antenna may stay connected', async () => {
     const svc = services();
     const inst = gpio.create(

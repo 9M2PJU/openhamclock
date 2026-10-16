@@ -29,11 +29,16 @@
  *                               pushes for a location (rounded to 0.01°)
  *   POST /api/push/lightning    { endpoint, strike: { lat, lon, timestamp }, level,
  *                                 closer, simulated, relay, imperial }
- *                               → targeted: every opted-in subscription whose
- *                               own radius the strike falls inside gets a push
- *                               computed for ITS location, throttled per
- *                               subscription; all-clear and simulated strikes
- *                               go to the caller's subscription only. The
+ *                               → targeted: the strike is first VERIFIED
+ *                               against the server's own Blitzortung feed
+ *                               (ServerLightningFeed — runs only while some
+ *                               subscription has opted in; a match within
+ *                               5 km / 30 s); then every opted-in subscription
+ *                               whose own radius the seen strike falls inside
+ *                               gets a push computed for ITS location,
+ *                               throttled per subscription. Unverifiable
+ *                               reports, all-clear and simulated strikes go to
+ *                               the caller's subscription only. The
  *                               caller must itself be opted in. Rate-limited
  *                               per client. PUSH_LIGHTNING_BROADCAST=true
  *                               (override) instead broadcasts the caller's
@@ -43,6 +48,7 @@
 const fs = require('fs');
 const path = require('path');
 const helpers = require('../utils/push-helpers');
+const { ServerLightningFeed } = require('../utils/lightning-feed');
 
 module.exports = function (app, ctx) {
   const { ROOT_DIR, logInfo, logWarn, logDebug } = ctx;
@@ -236,7 +242,10 @@ module.exports = function (app, ctx) {
   app.post('/api/push/unsubscribe', (req, res) => {
     const endpoint = req.body?.endpoint || req.body?.subscription?.endpoint;
     const removed = helpers.removeSubscription(store, endpoint);
-    if (removed) saveStore();
+    if (removed) {
+      saveStore();
+      refreshLightningFeed();
+    }
     res.json({ ok: true, removed });
   });
 
@@ -267,6 +276,21 @@ module.exports = function (app, ctx) {
   const lightningLimiter = helpers.makeKeyedLimiter(30, 60 * 1000); // strike reports per client per minute
   const prefsLimiter = helpers.makeKeyedLimiter(20, 60 * 1000);
   const lightningSent = new Map(); // endpoint → { at, level, km } (memory only)
+  // The server's own view of the strike feed, to verify reports before they
+  // reach anyone but the sender. ctx._lightningFeed: test-only injection hook.
+  const lightningFeed = ctx._lightningFeed || new ServerLightningFeed({ log: logInfo });
+  function refreshLightningFeed() {
+    const areas = [];
+    for (const entry of Object.values(store.subscriptions)) {
+      if (entry.lightning) {
+        areas.push({ lat: entry.lightning.lat, lon: entry.lightning.lon, radiusKm: entry.lightning.warnKm });
+      }
+    }
+    lightningFeed.setWatchAreas(areas);
+    // The override broadcasts reports unverified, so it needs no feed
+    lightningFeed.setActive(areas.length > 0 && !LIGHTNING_PUSH);
+  }
+  refreshLightningFeed();
   let lastLightningBroadcast = null; // override mode
   const clientKey = (req) => req.ip || req.socket?.remoteAddress || 'unknown';
 
@@ -280,7 +304,10 @@ module.exports = function (app, ctx) {
     const entry = store.subscriptions[endpoint];
     if (!entry) return { ok: false };
     const r = await sendTo(entry.subscription, JSON.stringify(payload));
-    if (r.gone && helpers.removeSubscription(store, endpoint)) saveStore();
+    if (r.gone && helpers.removeSubscription(store, endpoint)) {
+      saveStore();
+      refreshLightningFeed();
+    }
     return r;
   }
 
@@ -290,6 +317,7 @@ module.exports = function (app, ctx) {
     const r = helpers.setLightningPrefs(store, endpoint, lightning === null ? null : lightning);
     if (!r.ok) return res.status(r.reason === 'unknown-subscription' ? 404 : 400).json(r);
     saveStore();
+    refreshLightningFeed();
     res.json(r);
   });
 
@@ -332,8 +360,31 @@ module.exports = function (app, ctx) {
       return res.json({ ok: true, mode: 'self', sent: r.ok ? 1 : 0 });
     }
 
-    const strike = helpers.sanitizeStrike(body.strike, now);
-    if (!strike) return res.status(400).json({ ok: false, error: 'Invalid strike' });
+    const reported = helpers.sanitizeStrike(body.strike, now);
+    if (!reported) return res.status(400).json({ ok: false, error: 'Invalid strike' });
+
+    // Verify against the server's own feed. A report the server cannot match
+    // (fake, or the feed is down) only goes back to the caller.
+    const seen = await lightningFeed.verify(reported);
+    if (!seen) {
+      const hit = helpers.lightningForPrefs(caller.lightning, reported);
+      const last = lightningSent.get(body.endpoint);
+      if (!hit.level || !helpers.shouldPushLightningTo(last, hit.level, hit.distanceKm, now)) {
+        return res.json({ ok: true, mode: 'self-unverified', sent: 0 });
+      }
+      lightningSent.set(body.endpoint, { at: now, level: hit.level, km: hit.distanceKm });
+      const payload = helpers.buildLightningPushPayload({
+        ...hit,
+        relay: body.relay,
+        closer: body.closer,
+        imperial: caller.lightning.imperial,
+      });
+      const r = await sendLightning(body.endpoint, payload);
+      return res.json({ ok: true, mode: 'self-unverified', sent: r.ok ? 1 : 0 });
+    }
+
+    // Target from the strike as the server saw it, not as reported
+    const strike = { lat: seen.lat, lon: seen.lon, timestamp: seen.timestamp };
     const targets = helpers.lightningTargets(store, strike);
     let sent = 0;
     let skipped = 0;
@@ -352,8 +403,13 @@ module.exports = function (app, ctx) {
       if (r.ok) sent++;
     }
     logDebug(`[Push] Lightning strike → ${targets.length} in range, ${sent} pushed, ${skipped} throttled`);
-    res.json({ ok: true, mode: 'targeted', inRange: targets.length, sent, skipped });
+    res.json({ ok: true, mode: 'targeted', verified: true, inRange: targets.length, sent, skipped });
   });
 
-  return { _pushStore: store, _broadcast: broadcast, _handleSwpcAlerts: handleSwpcAlerts };
+  return {
+    _pushStore: store,
+    _broadcast: broadcast,
+    _handleSwpcAlerts: handleSwpcAlerts,
+    _lightningFeed: lightningFeed,
+  };
 };

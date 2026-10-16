@@ -150,8 +150,72 @@ function sanitizeIndicators(body) {
     lightningAllClearMin: allClear == null ? null : Math.min(240, Math.max(1, Math.round(allClear))),
     lightningOverride: LIGHTNING_OVERRIDES.has(b.lightningOverride) ? b.lightningOverride : 'auto',
     displayId: typeof b.displayId === 'string' && DISPLAY_ID_RE.test(b.displayId) ? b.displayId : null,
+    lightningGuard: sanitizeGuardSettings(b.lightningGuard),
   };
 }
+
+/**
+ * The lightning guard settings a display sends with its indicators, for the
+ * headless guard: { lat, lon, warnKm, alarmKm, allClearMin, minStrikes,
+ * hysteresisPct, repeatCloser, relayOn }. Numbers are clamped like the guard
+ * core does; null when absent or without a valid location.
+ */
+function sanitizeGuardSettings(g) {
+  if (!g || typeof g !== 'object' || Array.isArray(g)) return null;
+  const num = (v, lo, hi) => {
+    const x = typeof v === 'string' && v.trim() !== '' ? Number(v) : v;
+    return Number.isFinite(x) ? Math.min(hi, Math.max(lo, x)) : null;
+  };
+  const lat = num(g.lat, -Infinity, Infinity);
+  const lon = num(g.lon, -Infinity, Infinity);
+  if (lat === null || lon === null || Math.abs(lat) > 90 || Math.abs(lon) > 180) return null;
+  const warnKm = num(g.warnKm, 2, 500) ?? 50;
+  return {
+    lat: Math.round(lat * 1000) / 1000,
+    lon: Math.round(lon * 1000) / 1000,
+    warnKm,
+    alarmKm: Math.min(warnKm, num(g.alarmKm, 1, 500) ?? 25),
+    allClearMin: Math.round(num(g.allClearMin, 1, 240) ?? 30),
+    minStrikes: Math.round(num(g.minStrikes, 1, 50) ?? 1),
+    hysteresisPct: Math.round(num(g.hysteresisPct, 0, 100) ?? 20),
+    repeatCloser: g.repeatCloser !== false,
+    relayOn: g.relayOn === 'warn' ? 'warn' : 'alarm',
+  };
+}
+
+/** Fields of config.gpio.lightningHeadless a display may set (not `enabled`). */
+const HEADLESS_SETTING_KEYS = [
+  'lat',
+  'lon',
+  'warnKm',
+  'alarmKm',
+  'allClearMin',
+  'minStrikes',
+  'hysteresisPct',
+  'repeatCloser',
+  'relayOn',
+];
+
+/** Copy of `current` with the reported settings applied, or null when nothing changed. */
+function applyGuardSettings(current, reported) {
+  if (!reported) return null;
+  const cur = current && typeof current === 'object' ? current : {};
+  let changed = false;
+  const next = { ...cur };
+  for (const k of HEADLESS_SETTING_KEYS) {
+    const a = cur[k];
+    const b = reported[k];
+    const same = a === b || (a !== '' && a != null && Number(a) === b);
+    if (!same) {
+      next[k] = b;
+      changed = true;
+    }
+  }
+  return changed ? next : null;
+}
+
+/** Capabilities reported by /api/gpio/status, for the app's update notice. */
+const GPIO_FEATURES = ['lightning-relay', 'lightning-arbiter', 'lightning-headless', 'lightning-guard-settings'];
 
 const LIGHTNING_OVERRIDES = new Set(['auto', 'on', 'off']);
 const DISPLAY_ID_RE = /^[A-Za-z0-9_-]{1,40}$/;
@@ -409,6 +473,9 @@ module.exports = {
   pulse,
   sanitizeIndicators,
   LightningRelayArbiter,
+  sanitizeGuardSettings,
+  applyGuardSettings,
+  GPIO_FEATURES,
   computeOutputs,
   physicalLevel,
   InputDebouncer,

@@ -2735,6 +2735,23 @@ function createServer(registry, version) {
   // plugins such as GPIO can drive LEDs and relays. Any
   // plugin may subscribe with pluginBus.on('indicators', fn).
   let lastIndicators = null;
+  const GUARD_KEYS = [
+    'lat',
+    'lon',
+    'warnKm',
+    'alarmKm',
+    'allClearMin',
+    'minStrikes',
+    'hysteresisPct',
+    'repeatCloser',
+    'relayOn',
+  ];
+  const pickGuardSettings = (g) =>
+    Object.fromEntries(
+      GUARD_KEYS.filter((k) => typeof g[k] === 'number' || typeof g[k] === 'boolean' || typeof g[k] === 'string').map(
+        (k) => [k, typeof g[k] === 'string' ? g[k].slice(0, 16) : g[k]],
+      ),
+    );
   app.post('/api/indicators', requireAuth, indicatorLimiter, (req, res) => {
     const body = req.body && typeof req.body === 'object' ? req.body : {};
     const clean = {
@@ -2750,6 +2767,10 @@ function createServer(registry, version) {
         ? { lightningAllClearMin: Math.min(240, Math.max(1, Math.round(body.lightningAllClearMin))) }
         : {}),
       ...(['auto', 'on', 'off'].includes(body.lightningOverride) ? { lightningOverride: body.lightningOverride } : {}),
+      // Guard settings + location for the headless guard (sanitized again by the GPIO plugin)
+      ...(body.lightningGuard && typeof body.lightningGuard === 'object' && !Array.isArray(body.lightningGuard)
+        ? { lightningGuard: pickGuardSettings(body.lightningGuard) }
+        : {}),
       // Stable per-display id so several displays can each hold a claim on the relay
       ...(typeof body.displayId === 'string' && /^[A-Za-z0-9_-]{1,40}$/.test(body.displayId)
         ? { displayId: body.displayId }
