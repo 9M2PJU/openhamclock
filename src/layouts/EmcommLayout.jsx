@@ -75,6 +75,27 @@ const EMCOMM_APRS_SELECT = {
   fontSize: '9px',
   padding: '1px 4px',
 };
+// Sidebar text size (#1232): same steps as the Dockable layout's per-panel
+// A−/A+, stored in the same synced openhamclock_panelZoom map under 'emcomm'.
+const PANEL_ZOOM_KEY = 'openhamclock_panelZoom';
+const TEXT_ZOOM_STEPS = [0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.5, 1.75, 2.0];
+const readTextZoom = () => {
+  try {
+    const z = Number(JSON.parse(localStorage.getItem(PANEL_ZOOM_KEY) || '{}')?.emcomm);
+    return TEXT_ZOOM_STEPS.includes(z) ? z : 1.0;
+  } catch {
+    return 1.0;
+  }
+};
+const writeTextZoom = (zoom) => {
+  try {
+    const all = JSON.parse(localStorage.getItem(PANEL_ZOOM_KEY) || '{}') || {};
+    if (zoom === 1.0) delete all.emcomm;
+    else all.emcomm = zoom;
+    localStorage.setItem(PANEL_ZOOM_KEY, JSON.stringify(all));
+  } catch {}
+};
+
 const PANEL_TOOL_BTN = {
   background: 'transparent',
   color: '#888',
@@ -272,14 +293,27 @@ export default function EmcommLayout(props) {
     // Apply the new default immediately; 'remember' picks up the saved states
     setPanelStates(mode === 'remember' ? readPanelStates() : {});
   }, []);
+  const [textZoom, setTextZoom] = useState(readTextZoom);
+  const stepTextZoom = useCallback((delta) => {
+    setTextZoom((prev) => {
+      const idx = TEXT_ZOOM_STEPS.indexOf(prev);
+      const next =
+        delta === 0
+          ? 1.0
+          : TEXT_ZOOM_STEPS[Math.max(0, Math.min(TEXT_ZOOM_STEPS.length - 1, (idx < 0 ? 3 : idx) + delta))];
+      writeTextZoom(next);
+      return next;
+    });
+  }, []);
   const panels = useMemo(
     () => ({
+      zoom: textZoom,
       collapsedFor: (title) => isPanelCollapsed(panelStates, panelMode, title),
       toggle: (title) =>
         updatePanelStates({ ...panelStates, [title]: !isPanelCollapsed(panelStates, panelMode, title) }),
       setAll: (collapsed) => updatePanelStates({ __all: collapsed }),
     }),
-    [panelStates, panelMode, updatePanelStates],
+    [panelStates, panelMode, updatePanelStates, textZoom],
   );
   // APRS source filter: 'all' | 'internet' | 'rf'
   const [aprsSource, setAprsSource] = useState('all');
@@ -1347,6 +1381,38 @@ export default function EmcommLayout(props) {
               ))}
             </select>
             <span style={{ flex: 1 }} />
+            <button
+              type="button"
+              onClick={() => stepTextZoom(-1)}
+              disabled={textZoom <= TEXT_ZOOM_STEPS[0]}
+              title="Decrease panel text size"
+              style={{ ...PANEL_TOOL_BTN, fontWeight: 700, opacity: textZoom <= TEXT_ZOOM_STEPS[0] ? 0.3 : 1 }}
+            >
+              A−
+            </button>
+            {textZoom !== 1.0 && (
+              <button
+                type="button"
+                onClick={() => stepTextZoom(0)}
+                title="Reset panel text size"
+                style={{ ...PANEL_TOOL_BTN, color: 'var(--accent-amber)' }}
+              >
+                {Math.round(textZoom * 100)}%
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => stepTextZoom(1)}
+              disabled={textZoom >= TEXT_ZOOM_STEPS[TEXT_ZOOM_STEPS.length - 1]}
+              title="Increase panel text size"
+              style={{
+                ...PANEL_TOOL_BTN,
+                fontWeight: 700,
+                opacity: textZoom >= TEXT_ZOOM_STEPS[TEXT_ZOOM_STEPS.length - 1] ? 0.3 : 1,
+              }}
+            >
+              A+
+            </button>
             <button type="button" onClick={() => panels.setAll(false)} style={PANEL_TOOL_BTN}>
               Expand all
             </button>
@@ -2542,7 +2608,15 @@ function PanelSection({ title, panelKey, count, color, extra, panels, bodyMaxHei
   return (
     // flexShrink 0: the rail is a scrolling flex column; without it, once the
     // panels outgrow the rail every section is squashed and its content clipped.
-    <div style={{ background: '#0d0d0d', borderRadius: '6px', overflow: 'hidden', flexShrink: 0 }}>
+    <div
+      style={{
+        background: '#0d0d0d',
+        borderRadius: '6px',
+        overflow: 'hidden',
+        flexShrink: 0,
+        ...(panels?.zoom && panels.zoom !== 1 ? { zoom: panels.zoom } : {}),
+      }}
+    >
       <div
         style={{
           display: 'flex',
