@@ -47,6 +47,7 @@
 const http = require('http');
 const https = require('https');
 const { URL } = require('url');
+const { nextLongPollDelay, heartbeatDue } = require('../lib/relay-timing');
 const { createCommandVerifier, isValidKey } = require('../lib/relay-sign');
 
 // Unsigned commands a bridge that has not been re-paired still accepts during
@@ -146,6 +147,7 @@ const descriptor = {
     let totalCommands = 0;
     let totalDecodes = 0;
     let consecutiveErrors = 0;
+    let lastPushAt = 0; // last successful push, for the heartbeat
     let lastState = {};
     let pendingDecodes = []; // Batched decodes to push
     let pendingAprs = []; // Batched APRS packets to push
@@ -258,8 +260,11 @@ const descriptor = {
         currentState.ptt !== lastState.ptt ||
         currentState.connected !== lastState.connected;
 
-      // Only push if state changed or there's data to send
-      if (!stateChanged && !hasDecodes && !hasAprs && !hasMeshCom && !hasHamAlerts && !hasPluginEvents) return;
+      // Only push if state changed or there's data to send — or a heartbeat is
+      // due: the server forgets sessions on restart and after an idle TTL, and
+      // an unchanged rig would otherwise never re-register.
+      const hasData = hasDecodes || hasAprs || hasMeshCom || hasHamAlerts || hasPluginEvents;
+      if (!stateChanged && !hasData && !heartbeatDue(Date.now(), lastPushAt)) return;
       lastState = { ...currentState };
 
       // Include batched data in the push
@@ -324,6 +329,7 @@ const descriptor = {
           serverReachable = true;
           consecutiveErrors = 0;
           totalPushed++;
+          lastPushAt = Date.now();
           if (cfg.verbose) {
             const decodeInfo = payload.decodes ? ` + ${payload.decodes.length} decodes` : '';
             console.log(`[CloudRelay] Pushed state (${currentState.freq} Hz ${currentState.mode}${decodeInfo})`);
@@ -337,12 +343,14 @@ const descriptor = {
     // Long-poll loop — holds the connection open for up to LONG_POLL_WAIT ms.
     // The server resolves the request immediately when a command is queued,
     // so latency is ~network RTT rather than the push interval.
-    // On timeout (no commands) it restarts immediately. On network error it
-    // waits 1 s before retrying to avoid hammering a temporarily unreachable server.
+    // On timeout (no commands) it restarts immediately. On network error, or an
+    // empty response the server did not hold, it waits before retrying — see
+    // lib/relay-timing.js.
     const LONG_POLL_WAIT = 28000; // ms to hold open (server caps at 30 s)
 
     function longPollCommands() {
       if (pollAborted) return;
+      const startedAt = Date.now();
       const url =
         `${serverUrl}/api/rig-bridge/relay/commands` + `?session=${encodeURIComponent(session)}&wait=${LONG_POLL_WAIT}`;
 
@@ -353,21 +361,24 @@ const descriptor = {
         (err, status, data) => {
           if (pollAborted) return;
 
-          if (!err && status === 200) {
+          if (!err && (status === 401 || status === 403)) {
+            // Invalid credentials — stop permanently, no retry
+            handleCredentialsInvalid(status, data);
+            return;
+          }
+          const ok = !err && status === 200;
+          let commandCount = 0;
+          if (ok) {
             try {
               const response = JSON.parse(data);
               const commands = response.commands || [];
+              commandCount = commands.length;
               for (const cmd of commands) executeCommand(cmd);
             } catch (e) {}
-            // Restart immediately — no delay when things are healthy
-            longPollCommands();
-          } else if (!err && (status === 401 || status === 403)) {
-            // Invalid credentials — stop permanently, no retry
-            handleCredentialsInvalid(status, data);
-          } else {
-            // Network error or unexpected status — back off 1 s before retry
-            pollRetryTimer = setTimeout(longPollCommands, 1000);
           }
+          const delay = nextLongPollDelay({ ok, elapsedMs: Date.now() - startedAt, commandCount });
+          if (delay === 0) longPollCommands();
+          else pollRetryTimer = setTimeout(longPollCommands, delay);
         },
         LONG_POLL_WAIT + 4000, // HTTP timeout = hold window + 4 s network buffer
       );
