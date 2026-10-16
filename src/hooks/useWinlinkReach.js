@@ -16,6 +16,7 @@ import {
   refreshReach,
   requestReach,
   releaseReach,
+  setReachPactor4,
   setReachRange,
   setReachThresholds,
   subscribeReach,
@@ -87,6 +88,7 @@ export function useWinlinkReach({
   const refresh = useCallback(() => refreshReach(), []);
   const setRange = useCallback((km) => setReachRange(km), []);
   const setThresholds = useCallback((t) => setReachThresholds(t), []);
+  const setPactor4 = useCallback((on) => setReachPactor4(on), []);
 
   return {
     ...state,
@@ -94,6 +96,7 @@ export function useWinlinkReach({
     refresh,
     setRange,
     setThresholds,
+    setPactor4,
   };
 }
 

@@ -34,6 +34,11 @@ export const MAX_PREDICTIONS_REST = 20;
 export const PREDICT_CONCURRENCY = 2;
 /** Parallel in-flight REST fallback calls — the server allows 3 upstream; leave room. */
 export const REST_CONCURRENCY = 1;
+/**
+ * Distance rings for sharing the prediction cap: each refresh takes gateways
+ * round-robin from <500, <1000, <2000 km and beyond, nearest first in each.
+ */
+export const DISTANCE_RINGS_KM = [500, 1000, 2000, Infinity];
 /** Distinct frequencies passed to one engine run for one gateway. */
 export const MAX_FREQS_PER_JOB = 8;
 /** Entries kept in the per-gateway+hour result cache. */
@@ -115,80 +120,99 @@ export function classifyStatus(reliability, snrMargin = null, thresholds = DEFAU
  * above that floor (room for the faster speed levels).
  *
  * Sources (fetched 2026-10-15):
- *   [ARDOP] R. Muething KN6KB, M. Pitts N8OHU, J. Wiseman GM8BPQ, "ARDOP
- *           (Amateur Radio Digital Open Protocol)", ARRL/TAPR DCC 2015,
- *           Fig. 3 p.101: ARQ sessions on an HF channel simulator still pass
- *           data at −5 dB S:N (3 kHz) for both 200 Hz and 2000 Hz bandwidth
- *           (WGN, MPG and MPP channels). Lowest measured point; used as-is.
+ *   [IONOS] T. Whiteside N5TW, "A comparison of Winlink digital mode
+ *           performance based on simulation results using the Teensy IONOS
+ *           Simulator", Winlink.org, 18 May 2020 — SCS DR-7800 modems and
+ *           sound-card modes through a Watterson-model simulator, SNR in the
+ *           simulator's 3 kHz bandwidth. Page 3 (wide modes, WGN): "All modes
+ *           were able to operate over this range" 20 dB → −5 dB for PACTOR 4,
+ *           VARA HF (2300), PACTOR 3, ARDOP and WINMOR; page 4 (500 Hz modes,
+ *           WGN): VARA 500, PACTOR 2, ARDOP 500 and WINMOR 500 all still pass
+ *           data at −5 dB. −5 dB was the LOWEST SNR TESTED, so these are
+ *           conservative floors (the true floor may be lower). The revised
+ *           "Take Three" edition (2 Nov 2020, simulator re-calibrated with SCS)
+ *           tested 30 → 0 dB and all modes still operated at 0 dB.
+ *   [ARDOP] R. Muething KN6KB, M. Pitts N8OHU, J. Wiseman GM8BPQ, "ARDOP",
+ *           ARRL/TAPR DCC 2015, Fig. 3 p.101: ARQ still passes data at −5 dB
+ *           S:N (3 kHz) for 200 Hz and 2000 Hz bandwidth.
  *   [P4]    SCS P4dragon DR-7800 manual §3.3: "Minimum SNR: −19 dB required
- *           for maintaining a connection on AWGN channel" (SCS web page:
- *           "down to −20 dB @ 3 kHz"). PACTOR-4 only — see note below.
- *   [VARA]  EA5HVK, "VARA HF Modem Specification" rev 2.0.0 (2018) gives
- *           speed levels but NO SNR thresholds; the only developer figure
+ *           for maintaining a connection on AWGN channel". Applied to
+ *           PACTOR-4-capable gateways (codes 17–19) ONLY when the operator
+ *           says their modem supports PACTOR 4 (a link runs the best level
+ *           both ends support); otherwise those gateways are scored as P3.
+ *   [VARA]  EA5HVK, "VARA HF Modem Specification" rev 2.0.0 (2018) lists the
+ *           speed levels but no SNR thresholds; the developer's only figure
  *           is full speed (5629 bps) at "S/N 14.5 dB @ 4 kHz"
  *           (rosmodem.wordpress.com, 2017-09-03) — a ceiling, not a floor.
  *
- * Entries marked `estimated: true` have NO published absolute floor we
- * could find; they are set to ARDOP's measured floor (the closest comparable
- * published measurement: a narrow, slow, heavily coded ARQ level) and say
- * so in the UI tooltip:
- *   • VARA HF (all widths): no developer floor published (see [VARA]).
- *   • PACTOR 1–3: SCS publishes no absolute floor for P1–P3.
- *     PACTOR-4-capable gateways (codes 17–19) also use the P1–P3 estimate,
- *     because a gateway runs the best level BOTH ends support and we do not
- *     know whether the operator owns a P4 modem; the [P4] row documents the
- *     −19 dB figure but is not applied.
- *   • WINMOR, Robust Packet: no published floor.
- *   • HF AX.25 packet (300 bd AFSK, no FEC): assumed +5 dB.
+ * Still estimates (no published or measured figure found): VARA 2750 (not
+ * in the IONOS tests — scored like VARA 2300), PACTOR 1-only operation
+ * (code 12 gateways also speak P2, which was measured), Robust Packet, and
+ * HF AX.25 (300 bd AFSK, no FEC, assumed +5 dB).
+ *
+ * `basis`: 'measured' (independent simulator measurement), 'vendor'
+ * (manufacturer's specification) or 'estimate'.
  */
-export const PACTOR4_FLOOR_DB = -19; // [P4], not applied — see note above
+export const PACTOR4_FLOOR_DB = -19; // [P4]
+const PACTOR4_CODES = new Set([17, 18, 19]);
 
-const SRC_ARDOP = 'ARDOP, TAPR DCC 2015, Fig. 3';
-const EST_NOTE = 'no published floor — set to ARDOP’s measured −5 dB';
+const SRC_IONOS = 'Winlink IONOS simulator comparison, N5TW, May 2020 (lowest SNR tested)';
+const SRC_ARDOP = 'ARDOP, TAPR DCC 2015 Fig. 3; Winlink IONOS comparison, May 2020';
+const SRC_P4 = 'SCS P4dragon DR-7800 manual §3.3';
+const HF_PACKET = { floorDb: 5, basis: 'estimate', source: 'HF AX.25 300 bd AFSK, no FEC — assumed' };
 
 export const WINLINK_MODE_SNR = Object.freeze({
   // Packet (AX.25) — only reaches the engine when published below 30 MHz
-  0: { floorDb: 5, estimated: true, source: 'HF AX.25 300 bd AFSK, no FEC — assumed' },
-  1: { floorDb: 5, estimated: true, source: 'HF AX.25 — assumed' },
-  2: { floorDb: 5, estimated: true, source: 'HF AX.25 — assumed' },
-  3: { floorDb: 5, estimated: true, source: 'HF AX.25 — assumed' },
-  5: { floorDb: 5, estimated: true, source: 'HF AX.25 — assumed' },
-  // PACTOR
-  12: { floorDb: -5, estimated: true, source: `PACTOR 1/2: ${EST_NOTE}` },
-  13: { floorDb: -5, estimated: true, source: `PACTOR 1–3: ${EST_NOTE}` },
-  14: { floorDb: -5, estimated: true, source: `PACTOR 2: ${EST_NOTE}` },
-  15: { floorDb: -5, estimated: true, source: `PACTOR 2/3: ${EST_NOTE}` },
-  16: { floorDb: -5, estimated: true, source: `PACTOR 3: ${EST_NOTE}` },
-  17: { floorDb: -5, estimated: true, source: `PACTOR 1–4: ${EST_NOTE} (P4 alone: −19 dB, SCS)` },
-  18: { floorDb: -5, estimated: true, source: `PACTOR 2–4: ${EST_NOTE} (P4 alone: −19 dB, SCS)` },
-  19: { floorDb: -5, estimated: true, source: `PACTOR 3/4: ${EST_NOTE} (P4 alone: −19 dB, SCS)` },
-  // WINMOR (retired) and Robust Packet
-  22: { floorDb: -5, estimated: true, source: `WINMOR: ${EST_NOTE}` },
-  30: { floorDb: -5, estimated: true, source: `Robust Packet: ${EST_NOTE}` },
-  // ARDOP — measured
-  41: { floorDb: -5, estimated: false, source: SRC_ARDOP },
-  42: { floorDb: -5, estimated: false, source: SRC_ARDOP },
-  43: { floorDb: -5, estimated: false, source: SRC_ARDOP },
+  0: HF_PACKET,
+  1: HF_PACKET,
+  2: HF_PACKET,
+  3: HF_PACKET,
+  5: HF_PACKET,
+  // PACTOR — P2 and P3 measured in [IONOS]; P4-capable codes use P3 unless the operator has P4
+  12: { floorDb: -5, basis: 'measured', source: `PACTOR 2: ${SRC_IONOS}` },
+  13: { floorDb: -5, basis: 'measured', source: `PACTOR 3: ${SRC_IONOS}` },
+  14: { floorDb: -5, basis: 'measured', source: `PACTOR 2: ${SRC_IONOS}` },
+  15: { floorDb: -5, basis: 'measured', source: `PACTOR 3: ${SRC_IONOS}` },
+  16: { floorDb: -5, basis: 'measured', source: `PACTOR 3: ${SRC_IONOS}` },
+  17: { floorDb: -5, basis: 'measured', source: `PACTOR 3 (no P4 modem): ${SRC_IONOS}` },
+  18: { floorDb: -5, basis: 'measured', source: `PACTOR 3 (no P4 modem): ${SRC_IONOS}` },
+  19: { floorDb: -5, basis: 'measured', source: `PACTOR 3 (no P4 modem): ${SRC_IONOS}` },
+  // WINMOR (retired) — measured at 1600 and 500 Hz
+  22: { floorDb: -5, basis: 'measured', source: `WINMOR: ${SRC_IONOS}` },
+  // Robust Packet — no figure
+  30: { floorDb: -5, basis: 'estimate', source: 'Robust Packet: no published floor — set like ARDOP' },
+  // ARDOP
+  41: { floorDb: -5, basis: 'measured', source: SRC_ARDOP },
+  42: { floorDb: -5, basis: 'measured', source: SRC_ARDOP },
+  43: { floorDb: -5, basis: 'measured', source: SRC_ARDOP },
   // VARA HF
-  50: { floorDb: -5, estimated: true, source: `VARA 2300: ${EST_NOTE}` },
-  53: { floorDb: -5, estimated: true, source: `VARA 500: ${EST_NOTE}` },
-  54: { floorDb: -5, estimated: true, source: `VARA 2750: ${EST_NOTE}` },
+  50: { floorDb: -5, basis: 'measured', source: `VARA 2300: ${SRC_IONOS}` },
+  53: { floorDb: -5, basis: 'measured', source: `VARA 500: ${SRC_IONOS}` },
+  54: { floorDb: -5, basis: 'estimate', source: 'VARA 2750: not tested — scored like VARA 2300' },
 });
 
-/** Table row for a mode code; unknown codes are scored like SSB voice. */
-export function modeSnrInfo(modeInt) {
-  return (
-    WINLINK_MODE_SNR[modeInt] || {
-      floorDb: P533_REF_SNR_DB,
-      estimated: true,
-      source: 'unknown mode — scored like SSB voice',
-    }
-  );
+const PACTOR4_ROW = Object.freeze({ floorDb: PACTOR4_FLOOR_DB, basis: 'vendor', source: `PACTOR 4: ${SRC_P4}` });
+
+/**
+ * Table row for a mode code. `pactor4` (the operator's modem supports
+ * PACTOR 4) switches P4-capable gateways to the SCS figure. Unknown codes
+ * are scored like SSB voice. `estimated` mirrors basis === 'estimate'.
+ */
+export function modeSnrInfo(modeInt, { pactor4 = false } = {}) {
+  const row =
+    pactor4 && PACTOR4_CODES.has(modeInt)
+      ? PACTOR4_ROW
+      : WINLINK_MODE_SNR[modeInt] || {
+          floorDb: P533_REF_SNR_DB,
+          basis: 'estimate',
+          source: 'unknown mode — scored like SSB voice',
+        };
+  return { ...row, estimated: row.basis === 'estimate' };
 }
 
 /** Required SNR (dB, 3 kHz) the engine should score a channel's mode against. */
-export function winlinkRequiredSNR(modeInt) {
-  return modeSnrInfo(modeInt).floorDb;
+export function winlinkRequiredSNR(modeInt, opts) {
+  return modeSnrInfo(modeInt, opts).floorDb;
 }
 
 /**
@@ -287,6 +311,34 @@ function fillRange(mask, start, endIncl) {
     if (h === endIncl) return;
     h = (h + 1) % 24;
   }
+}
+
+/**
+ * What a gateway's published hours tell us:
+ *   { kind: 'none' }                       — nothing published
+ *   { kind: 'all' }                        — on the air all day
+ *   { kind: 'partial', hoursPerDay }       — a schedule we can apply
+ *   { kind: 'unknown', hoursPerDay?, text } — published, but which hours is not stated
+ *
+ * "N/7" follows the "24/7" idiom: N hours a day, 7 days a week. "24/7" is
+ * all day; any other N (the live list has "1/7", "12/7", "23/7") says how
+ * MANY hours, not WHICH, so the gateway may or may not be up at a given hour.
+ * Other free text ("Other") is unknown too. Unknown never makes a gateway
+ * Off the air — it gets an "hours unknown" badge instead.
+ */
+export function describeHours(text) {
+  if (text == null || String(text).trim() === '') return { kind: 'none' };
+  const s = String(text).trim();
+  const perWeek = s.match(/^(\d{1,2})\s*\/\s*7$/);
+  if (perWeek) {
+    const n = Number(perWeek[1]);
+    if (n >= 24) return { kind: 'all', hoursPerDay: 24 };
+    if (n >= 1) return { kind: 'unknown', hoursPerDay: n, text: s };
+  }
+  const mask = parseOperatingHours(s);
+  if (!mask) return { kind: 'unknown', text: s };
+  const on = mask.filter(Boolean).length;
+  return on === 24 ? { kind: 'all', hoursPerDay: 24 } : { kind: 'partial', hoursPerDay: on };
 }
 
 /** Is a channel with these published hours on the air at this UTC hour? Unknown hours → true. */
@@ -527,6 +579,7 @@ export function selectCandidates(
     maxPredictions = MAX_PREDICTIONS_PER_REFRESH,
     maxFreqs = MAX_FREQS_PER_JOB,
     hour = null,
+    pactor4 = false,
   } = {},
 ) {
   const out = { hf: [], packet: [], truncated: 0, totalJobs: 0 };
@@ -547,7 +600,7 @@ export function selectCandidates(
       // Group by required SNR so each engine run scores against one threshold.
       const bySnr = new Map();
       for (const c of onAir) {
-        const snr = winlinkRequiredSNR(c.mode);
+        const snr = winlinkRequiredSNR(c.mode, { pactor4 });
         if (!bySnr.has(snr)) bySnr.set(snr, { requiredSNR: snr, channels: [], freqsMHz: [] });
         const job = bySnr.get(snr);
         job.channels.push(c);
@@ -575,17 +628,36 @@ export function selectCandidates(
   packet.sort((a, b) => a.distanceKm - b.distanceKm);
 
   // Cap by jobs, keeping whole gateways; off-air-only gateways cost nothing.
+  // The budget is shared round-robin across distance rings (nearest first
+  // within each ring), so a dense local area cannot use it all up and the
+  // list still covers the whole range.
+  const rings = DISTANCE_RINGS_KM.map(() => []);
+  for (const c of hf) {
+    const i = DISTANCE_RINGS_KM.findIndex((edge) => c.distanceKm < edge);
+    rings[i === -1 ? rings.length - 1 : i].push(c);
+  }
+  const ptr = rings.map(() => 0);
   let jobCount = 0;
   const kept = [];
   let truncated = 0;
-  for (const c of hf) {
-    if (jobCount + c.jobs.length > maxPredictions) {
-      truncated++;
-      continue;
+  let progressed = true;
+  while (progressed) {
+    progressed = false;
+    for (let r = 0; r < rings.length; r++) {
+      while (ptr[r] < rings[r].length) {
+        const c = rings[r][ptr[r]++];
+        progressed = true;
+        if (jobCount + c.jobs.length > maxPredictions) {
+          truncated++;
+          continue; // try the next gateway in this ring on this pass
+        }
+        jobCount += c.jobs.length;
+        kept.push(c);
+        break; // one gateway per ring per pass
+      }
     }
-    jobCount += c.jobs.length;
-    kept.push(c);
   }
+  kept.sort((a, b) => a.distanceKm - b.distanceKm);
   out.hf = kept;
   out.truncated = truncated;
   out.totalJobs = jobCount;
@@ -692,7 +764,7 @@ function bandFor(freqHz) {
  * it depends on the operator's thresholds (see summarizeGateway).
  * @returns {Array} {...channel, band, bandApprox, dialHz, reliability, snr, snrMargin, approx}
  */
-export function scoreChannels(channels, frequencies, requiredSNR) {
+export function scoreChannels(channels, frequencies, requiredSNR, { muf = null } = {}) {
   return (channels || []).map((c) => {
     const r = nearestFreqResult(frequencies, roundMHz(c.frequency));
     const reliability =
@@ -708,16 +780,26 @@ export function scoreChannels(channels, frequencies, requiredSNR) {
       snr,
       snrMargin,
       approx: !!r?.approx,
+      muf: Number.isFinite(muf) ? Math.round(muf * 10) / 10 : null,
+      aboveMuf: Number.isFinite(muf) && c.frequency / 1e6 > muf,
     };
   });
 }
 
-/** Pick the best scored channel: highest reliability, SNR margin as tiebreak. */
+/**
+ * Pick the best scored channel: best status first (when statuses are set),
+ * then highest reliability, SNR margin as tiebreak.
+ */
 export function bestChannel(scored) {
+  const rank = (c) => (c.status ? (STATUS_ORDER[c.status] ?? 9) : 0);
   let best = null;
   for (const c of scored || []) {
     if (!best) {
       best = c;
+      continue;
+    }
+    if (rank(c) !== rank(best)) {
+      if (rank(c) < rank(best)) best = c;
       continue;
     }
     const cr = c.reliability ?? -1;
@@ -738,10 +820,14 @@ export function summarizeGateway(
   scoredChannels,
   { engine = 'wasm', updatedAt = Date.now(), thresholds = DEFAULT_THRESHOLDS, offAirChannels = [] } = {},
 ) {
-  const onAir = (scoredChannels || []).map((c) => ({
-    ...c,
-    status: classifyStatus(c.reliability, c.snrMargin, thresholds),
-  }));
+  // The engine's basic MUF is a monthly MEDIAN: above it the ionosphere
+  // supports the frequency on half the days or fewer, so such a channel is
+  // never Good, whatever reliability the above-MUF loss model still gives
+  // (P.533 is optimistic there, especially on short/NVIS paths).
+  const onAir = (scoredChannels || []).map((c) => {
+    const st = classifyStatus(c.reliability, c.snrMargin, thresholds);
+    return { ...c, status: c.aboveMuf && st === 'good' ? 'marginal' : st };
+  });
   const offAir = (offAirChannels || []).map((c) => ({
     ...c,
     ...bandFor(c.frequency),
@@ -760,6 +846,7 @@ export function summarizeGateway(
   let status = 'unknown';
   if (best) status = best.status;
   else if (offAir.length) status = 'offair';
+  const bestHours = best ? describeHours(best.hours) : { kind: 'none' };
   return {
     callsign: candidate.callsign,
     lat: candidate.gateway.lat,
@@ -770,6 +857,8 @@ export function summarizeGateway(
     channels,
     best,
     status,
+    hoursUnknown: bestHours.kind === 'unknown',
+    hoursNote: bestHours.kind === 'unknown' ? bestHours : null,
     reliability: best ? best.reliability : null,
     snrMargin: best ? best.snrMargin : null,
     approx: !!best?.approx,
@@ -806,15 +895,20 @@ export function buildReachSnapshot(rows, packet) {
       band: r.best?.band ?? null,
       freqHz: r.best?.frequency ?? null,
       modeLabel: r.best?.modeLabel ?? null,
+      hoursUnknown: !!r.hoursUnknown,
+      hoursText: r.hoursNote?.text ?? null,
     };
   }
   for (const p of packet || []) {
     if (byCall[p.callsign]) continue; // an HF prediction says more than a distance
+    const h = describeHours(p.channels?.[0]?.hours);
     byCall[p.callsign] = {
       kind: 'packet',
       status: p.onAir === false ? 'offair' : 'unknown',
       los: p.los,
       distanceKm: p.distanceKm,
+      hoursUnknown: h.kind === 'unknown',
+      hoursText: h.kind === 'unknown' ? h.text : null,
     };
   }
   return byCall;

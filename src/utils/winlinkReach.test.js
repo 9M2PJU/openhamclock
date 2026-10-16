@@ -14,6 +14,7 @@ import {
   cacheKey,
   cachePut,
   classifyStatus,
+  describeHours,
   dialFrequencyHz,
   freqHzToBand,
   hourKeyFor,
@@ -117,15 +118,28 @@ describe('mode SNR table', () => {
     }
   });
 
-  it('uses the measured ARDOP floor (DCC 2015) and marks the rest as estimates', () => {
-    for (const code of [41, 42, 43]) expect(modeSnrInfo(code)).toMatchObject({ floorDb: -5, estimated: false });
-    for (const code of [16, 50, 53, 54, 22, 30]) expect(modeSnrInfo(code).estimated).toBe(true);
+  it('uses measured floors for the modes the Winlink IONOS comparison tested', () => {
+    for (const code of [12, 13, 14, 15, 16, 22, 41, 42, 43, 50, 53]) {
+      expect(modeSnrInfo(code), `code ${code}`).toMatchObject({ floorDb: -5, basis: 'measured', estimated: false });
+    }
+    expect(modeSnrInfo(50).source).toMatch(/IONOS/);
+    expect(modeSnrInfo(41).source).toMatch(/DCC 2015/);
   });
 
-  it('documents the PACTOR-4 figure but does not apply it to P4-capable gateways', () => {
+  it('keeps untested modes flagged as estimates', () => {
+    for (const code of [54, 30, 0]) expect(modeSnrInfo(code)).toMatchObject({ basis: 'estimate', estimated: true });
+  });
+
+  it('applies the SCS PACTOR-4 floor only when the operator has a P4 modem', () => {
     expect(PACTOR4_FLOOR_DB).toBe(-19);
-    expect(winlinkRequiredSNR(17)).toBe(winlinkRequiredSNR(16));
-    expect(modeSnrInfo(17).source).toMatch(/−19 dB/);
+    for (const code of [17, 18, 19]) {
+      expect(winlinkRequiredSNR(code)).toBe(-5); // scored as PACTOR 3
+      expect(winlinkRequiredSNR(code, { pactor4: true })).toBe(-19);
+      expect(modeSnrInfo(code, { pactor4: true })).toMatchObject({ basis: 'vendor', estimated: false });
+    }
+    // P3-only and P2 gateways are unaffected by the setting
+    expect(winlinkRequiredSNR(16, { pactor4: true })).toBe(-5);
+    expect(winlinkRequiredSNR(50, { pactor4: true })).toBe(-5);
   });
 
   it('scores unknown codes like SSB voice', () => {
@@ -138,6 +152,28 @@ describe('mode SNR table', () => {
     expect(restFallbackMode(5)).toMatch(/^(CW|PSK31)$/); // 10 dB
     expect(restFallbackMode(15)).toBe('SSB');
     expect(restFallbackMode(undefined)).toBe('SSB');
+  });
+});
+
+describe('describeHours', () => {
+  it('reads "N/7" as N hours a day: 24/7 is all day, anything else says how many hours but not which', () => {
+    expect(describeHours('24/7')).toEqual({ kind: 'all', hoursPerDay: 24 });
+    expect(describeHours('12/7')).toEqual({ kind: 'unknown', hoursPerDay: 12, text: '12/7' });
+    expect(describeHours('23/7')).toMatchObject({ kind: 'unknown', hoursPerDay: 23 });
+    expect(describeHours('1/7')).toMatchObject({ kind: 'unknown', hoursPerDay: 1 });
+  });
+
+  it('separates schedules, all-day, free text and nothing', () => {
+    expect(describeHours('00-23')).toEqual({ kind: 'all', hoursPerDay: 24 });
+    expect(describeHours('13-19')).toEqual({ kind: 'partial', hoursPerDay: 7 });
+    expect(describeHours('Other')).toEqual({ kind: 'unknown', text: 'Other' });
+    expect(describeHours('')).toEqual({ kind: 'none' });
+    expect(describeHours(null)).toEqual({ kind: 'none' });
+  });
+
+  it('never makes an unknown schedule Off the air', () => {
+    expect(isOnAirAt('12/7', 3)).toBe(true);
+    expect(isOnAirAt('Other', 3)).toBe(true);
   });
 });
 
@@ -289,6 +325,12 @@ describe('selectCandidates', () => {
     expect(near.jobs.find((j) => j.requiredSNR === -5).freqsMHz).toEqual([7.101, 14.109]);
   });
 
+  it('regroups P4-capable channels under the −19 dB floor when the operator has PACTOR 4', () => {
+    const p4 = aggregateGateways([row({ callsign: 'K0P4', gridsquare: 'DM79', frequency: 7102000, mode: 17 })]);
+    expect(selectCandidates(p4, DE, { hour: 15 }).hf[0].jobs[0].requiredSNR).toBe(-5);
+    expect(selectCandidates(p4, DE, { hour: 15, pactor4: true }).hf[0].jobs[0].requiredSNR).toBe(-19);
+  });
+
   it('gives off-air gateways no job and flags off-air VHF', () => {
     const sel = selectCandidates(gateways, DE, { hour: 15 });
     const night = sel.hf.find((c) => c.callsign === 'K0NIGHT');
@@ -309,6 +351,24 @@ describe('selectCandidates', () => {
     expect(capped.hf.map((c) => c.callsign)).toEqual(['K0NEAR', 'K0NIGHT']);
     expect(capped.totalJobs).toBe(2);
     expect(capped.truncated).toBe(1);
+  });
+
+  it('shares the cap across distance rings so a dense local area cannot use it all', () => {
+    const many = [];
+    for (let i = 0; i < 30; i++) {
+      many.push(row({ callsign: `LOCAL${i}`, gridsquare: 'DM79', frequency: 7101200 + i * 100, mode: 50 }));
+    }
+    many.push(row({ callsign: 'MID-1', gridsquare: 'EN34', frequency: 7101200, mode: 50 })); // ~1200 km
+    many.push(row({ callsign: 'FAR-1', gridsquare: 'FN31', frequency: 7101200, mode: 50 })); // ~2700 km
+    const sel = selectCandidates(aggregateGateways(many), DE, { maxPredictions: 6, hour: 15 });
+    const calls = sel.hf.map((c) => c.callsign);
+    expect(calls).toContain('MID-1');
+    expect(calls).toContain('FAR-1');
+    expect(sel.totalJobs).toBe(6);
+    expect(sel.truncated).toBe(26);
+    // still nearest first in the output
+    const d = sel.hf.map((c) => c.distanceKm);
+    expect([...d].sort((a, b) => a - b)).toEqual(d);
   });
 
   it('returns nothing without a station location; sane defaults', () => {
@@ -419,6 +479,43 @@ describe('scoring, off-air and ranking', () => {
     expect(scored[0]).toMatchObject({ band: '40m', reliability: 99, snr: 9.5, snrMargin: 14.5, dialHz: 7099700 });
     expect(scored[1]).toMatchObject({ reliability: null });
     expect(scored[0].status).toBeUndefined();
+  });
+
+  it('flags a gateway whose published hours do not say when it is on', () => {
+    const r = summarizeGateway(cand('PART', 10), [
+      { frequency: 7101200, hours: '12/7', reliability: 80, snrMargin: 3 },
+    ]);
+    expect(r).toMatchObject({ status: 'good', hoursUnknown: true, hoursNote: { hoursPerDay: 12, text: '12/7' } });
+    expect(buildReachSnapshot([r], []).PART).toMatchObject({ hoursUnknown: true, hoursText: '12/7' });
+    const known = summarizeGateway(cand('ALL', 10), [{ frequency: 7101200, hours: '00-23', reliability: 80 }]);
+    expect(known.hoursUnknown).toBe(false);
+  });
+
+  it('never rates a channel above the predicted MUF Good, and prefers a Good channel below it', () => {
+    const scored = scoreChannels(
+      [
+        { frequency: 14108500, mode: 50, modeLabel: 'VARA' },
+        { frequency: 7101200, mode: 50, modeLabel: 'VARA' },
+      ],
+      [
+        { freq: 14.109, snr: 24, reliability: 100 },
+        { freq: 7.101, snr: 40, reliability: 95 },
+      ],
+      -5,
+      { muf: 9.53 },
+    );
+    expect(scored[0]).toMatchObject({ aboveMuf: true, muf: 9.5 });
+    expect(scored[1].aboveMuf).toBe(false);
+    const r = summarizeGateway(cand('NVIS', 10), scored);
+    expect(r.status).toBe('good');
+    expect(r.best.frequency).toBe(7101200);
+    expect(r.channels.find((c) => c.frequency === 14108500).status).toBe('marginal');
+    const only20 = summarizeGateway(cand('NVIS20', 10), [scored[0]]);
+    expect(only20.status).toBe('marginal');
+    // no MUF from the engine (server fallback) → no cap
+    expect(
+      scoreChannels([{ frequency: 14108500, mode: 50 }], [{ freq: 14.109, reliability: 100 }], -5)[0].aboveMuf,
+    ).toBe(false);
   });
 
   it('marks a gateway with nothing on the air Off the air — never Good', () => {
