@@ -6,12 +6,16 @@
  * The Web Locks API (navigator.locks) gives a lock across all tabs of the
  * origin; where it is missing, a short lease in localStorage stands in: a
  * tab takes it when nobody holds it or the holder's lease has run out (the
- * holder crashed or closed mid-flush), and renews it by writing it again.
+ * holder crashed or closed mid-flush). The holder renews it every 5 s for
+ * as long as its send runs, however slow, and releases it when the send
+ * finishes or fails.
  */
 
 export const LOCK_NAME = 'ohc-incident-outbox';
 export const LEASE_KEY = 'openhamclock_incidentOutboxLease';
 export const LEASE_MS = 15 * 1000;
+/** While a send runs, the lease is renewed this often, so a slow send keeps it. */
+export const LEASE_RENEW_MS = 5 * 1000;
 
 const readLease = (storage) => {
   try {
@@ -57,10 +61,12 @@ export async function withOutboxLock(fn, { locks, storage, owner, now = Date.now
     });
   }
   if (!tryLease(storage, owner, now())) return false;
+  const heartbeat = setInterval(() => tryLease(storage, owner, now()), LEASE_RENEW_MS);
   try {
     await fn();
     return true;
   } finally {
+    clearInterval(heartbeat);
     releaseLease(storage, owner);
   }
 }
