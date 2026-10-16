@@ -776,7 +776,7 @@ The rig-bridge holds a persistent long-poll connection to the server. The moment
 
 `GET /api/cloud-relay/status` shows `commandAuth` (`hmac-sha256`, `legacy` or `unsigned-allowed`) and how many commands were refused.
 
-Reads are protected too: Rig Bridge registers the hash of a read token derived from the command key (HKDF, separate label), and the server then requires that token for `/relay/state`, `/relay/decodes` and `/relay/aprs` (`X-Relay-Read` header) and a one-time ticket from `POST /relay/stream-ticket` for the live stream. The server keeps only the hash, persisted with the session. Self-hosters can move the grace date for unpaired sessions with `RELAY_UNSIGNED_GRACE_UNTIL` in `.env`.
+Reads are protected too: Rig Bridge registers the hash of a read token derived from the command key (HKDF, separate label), and the server then requires that token for `/relay/state`, `/relay/decodes` and `/relay/aprs` (`X-Relay-Read` header) and a one-time ticket from `POST /relay/stream-ticket` for the live stream. The same rule covers the session's MeshCom data (`/api/meshcom/nodes`, `messages`, `weather`, `status`) and WSJT-X relay data (`/api/wsjtx`, `/api/wsjtx/decodes`) when they are read with `?session=`. The server keeps only the hash, persisted with the session. Self-hosters can move the grace date for unpaired sessions with `RELAY_UNSIGNED_GRACE_UNTIL` in `.env`.
 
 **Config reference:**
 
