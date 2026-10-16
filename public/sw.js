@@ -21,9 +21,9 @@
  *                         can say "as of"). SSE streams are never touched.
  *   - offline-pack tiles: tiles from hosts whose terms allow offline area
  *                         packs, and from the operator's own tile server —
- *                         network when it works, the downloaded pack when it
- *                         doesn't, a scaled-up saved ancestor past the
- *                         pack's zoom (over-zoom).
+ *                         saved tiles straight from the pack, others from
+ *                         the network, a scaled-up saved ancestor when the
+ *                         network fails (over-zoom).
  *   - /vendor/*:          self-hosted Leaflet + fonts, or the CDN copy the
  *                         server redirects to — cached so the map starts
  *                         offline either way.
@@ -282,11 +282,11 @@ function markStale(cached) {
   }
 }
 
-/** Offline area pack tiles. Online: the network answers, exactly as before
- *  the worker existed. When the network fails, the browser reports offline,
- *  or a request hangs past PACK_TILE_NETWORK_TIMEOUT_MS while a pack holds
- *  the tile, the pack copy is served and the page is told (for the subtle
- *  "offline tiles" badge on the map). With no copy of that exact tile —
+/** Offline area pack tiles. A tile saved in a pack is served from the pack
+ *  at once (cache-first); a background HEAD probe decides whether the page
+ *  should show the subtle "offline tiles" badge (no answer within
+ *  PACK_TILE_NETWORK_TIMEOUT_MS, or the browser reports offline). Tiles not
+ *  in a pack go to the network as before. With no copy of that exact tile —
  *  zoomed in past the pack's top zoom, or a tile the server had no data
  *  for — the nearest saved ancestor is scaled up (over-zoom) rather than
  *  leaving a blank. Tiles are never written here; only the explicit
@@ -301,8 +301,32 @@ async function handleTile(event, req) {
     cached = null;
   }
 
-  if (cached && self.navigator && self.navigator.onLine === false) {
-    notifyPackTile(event);
+  // A saved tile is answered at once (cache-first). Basemap tiles change
+  // rarely, and answering immediately matters: WebKit was seen replacing
+  // the worker instance ~50 ms into a page load and abandoning fetch events
+  // still waiting on the network, which left saved tiles blank. The
+  // network is still tried in the background, only to decide whether the
+  // map should show the OFFLINE TILES badge.
+  if (cached) {
+    if (self.navigator && self.navigator.onLine === false) {
+      notifyPackTile(event);
+    } else {
+      event.waitUntil(
+        withTimeout(
+          fetch(req, { method: 'HEAD' }).then(
+            function (r) {
+              return !!r; // any HTTP answer means the server is reachable
+            },
+            function () {
+              return false;
+            },
+          ),
+          POLICY.PACK_TILE_NETWORK_TIMEOUT_MS,
+        ).then(function (ok) {
+          if (!ok) notifyPackTile(event);
+        }),
+      );
+    }
     return cached;
   }
 
@@ -321,10 +345,6 @@ async function handleTile(event, req) {
   var res = await withTimeout(network, POLICY.PACK_TILE_NETWORK_TIMEOUT_MS);
   if (res && res.ok) return res;
 
-  if (cached) {
-    notifyPackTile(event);
-    return cached;
-  }
   var scaled = cache ? await overzoomFromPacks(cache, req.url) : null;
   if (scaled) {
     notifyPackTile(event);
