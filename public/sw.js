@@ -159,6 +159,7 @@ function classify(req) {
     method: req.method,
     mode: req.mode,
     origin: self.location.origin,
+    accept: req.headers && req.headers.get ? req.headers.get('accept') : '',
     extraTilePrefixes: tileRouting.prefixes,
   });
 }

@@ -115,8 +115,9 @@
   /** True for API paths that stream (SSE, live audio) and must be left to the browser. */
   function isStreamingApiPath(pathname) {
     if (STREAMING_API_PATHS.indexOf(pathname) !== -1) return true;
-    // Defensive: any future /api/**/stream endpoint is assumed to be SSE.
-    return pathname.indexOf('/api/') === 0 && /\/stream\/?$/.test(pathname);
+    // Defensive: any /api/**/stream endpoint (also /stream/<id>, e.g. the
+    // per-callsign PSK Reporter feed) is assumed to be SSE.
+    return pathname.indexOf('/api/') === 0 && /\/stream(\/|$)/.test(pathname);
   }
 
   /**
@@ -128,6 +129,7 @@
    *   mode   - Request.mode ('navigate' for top-level navigations)
    *   origin - the service worker's own origin (self.location.origin)
    *   extraTilePrefixes - URL prefixes of operator-supplied tile sources
+   *   accept - the request's Accept header (EventSource: text/event-stream)
    * @returns {'navigation'|'asset'|'api'|'tile'|'bypass'}
    *   navigation - network-first with cached-shell fallback
    *   asset      - cache-first, cache-on-fetch
@@ -138,6 +140,11 @@
    */
   function classifyRequest(req) {
     if (!req || req.method !== 'GET') return 'bypass';
+    // EventSource requests announce themselves. A stream answered through
+    // the worker keeps that request in flight for as long as the stream
+    // lives — and Chromium will not activate an updated worker while the
+    // old one has requests in flight, so an update could wait forever.
+    if (String(req.accept || '').indexOf('text/event-stream') !== -1) return 'bypass';
     var u;
     try {
       u = new URL(req.url, req.origin);

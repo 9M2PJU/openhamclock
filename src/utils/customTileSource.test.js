@@ -17,8 +17,8 @@ import {
   isCacheableVendorResponse,
 } from './swPolicy.js';
 import { isOfflinePackStyle } from './offlineTiles.js';
+import { applyCustomTileSource, MAP_STYLES_CHANGED_EVENT } from './mapStylesLive.js';
 import { storageNotes, createPackManifest, isIncomplete } from './offlinePackManifest.js';
-import { stateFromIso, resolveUsState, _clearUsStateMemo } from './usState.js';
 
 const LAN = 'http://192.168.1.5:8080/data/osm/{z}/{x}/{y}.png';
 
@@ -230,28 +230,21 @@ describe('manifest completeness', () => {
   });
 });
 
-describe('usState', () => {
-  beforeEach(() => _clearUsStateMemo());
-
-  it('maps ISO 3166-2 US codes to state codes', () => {
-    expect(stateFromIso('US-CO')).toBe('CO');
-    expect(stateFromIso('CA-ON')).toBeNull();
-    expect(stateFromIso(undefined)).toBeNull();
-  });
-
-  it('looks up once per location and survives failures', async () => {
-    let calls = 0;
-    const ok = async () => {
-      calls++;
-      return new Response(JSON.stringify({ address: { 'ISO3166-2-lvl4': 'US-CO' } }));
-    };
-    expect(await resolveUsState(40.015, -105.27, ok)).toBe('CO');
-    expect(await resolveUsState(40.015, -105.27, ok)).toBe('CO');
-    expect(calls).toBe(1);
-    const down = async () => {
-      throw new TypeError('Failed to fetch');
-    };
-    expect(await resolveUsState(51.5, -0.1, down)).toBeNull();
-    expect(await resolveUsState(null, 1, ok)).toBeNull();
+describe('applyCustomTileSource', () => {
+  it('adds, edits, and removes the custom basemap live and announces it', () => {
+    const styles = {};
+    const seen = [];
+    const on = (e) => seen.push(e.detail);
+    window.addEventListener(MAP_STYLES_CHANGED_EVENT, on);
+    const { source } = validateCustomTileSource({ url: LAN, confirmed: true, name: 'Pi' });
+    applyCustomTileSource(source, styles);
+    expect(styles.custom).toMatchObject({ name: 'Pi', url: LAN, offlinePack: true });
+    applyCustomTileSource(null, styles);
+    expect(styles.custom).toBeUndefined();
+    window.removeEventListener(MAP_STYLES_CHANGED_EVENT, on);
+    expect(seen).toEqual([
+      { id: 'custom', removed: false },
+      { id: 'custom', removed: true },
+    ]);
   });
 });

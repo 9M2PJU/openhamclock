@@ -217,3 +217,18 @@ describe('offline area packs', () => {
     }
   });
 });
+
+describe('server-sent event streams are never intercepted', () => {
+  const ORIGIN2 = 'https://openhamclock.com';
+  it('bypasses EventSource requests by Accept header and /stream/<id> paths', () => {
+    const base = { method: 'GET', mode: 'cors', origin: ORIGIN2 };
+    expect(
+      classifyRequest({ ...base, url: `${ORIGIN2}/api/logsync/wavelog/events`, accept: 'text/event-stream' }),
+    ).toBe('bypass');
+    expect(classifyRequest({ ...base, url: `${ORIGIN2}/api/pskreporter/stream/K0CJH` })).toBe('bypass');
+    expect(classifyRequest({ ...base, url: `${ORIGIN2}/api/incident/abc/stream?x=1` })).toBe('bypass');
+    expect(classifyRequest({ ...base, url: `${ORIGIN2}/api/logsync/wavelog/events`, accept: 'application/json' })).toBe(
+      'api',
+    );
+  });
+});

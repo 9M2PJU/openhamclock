@@ -37,6 +37,7 @@ import MapCursorReadout from './MapCursorReadout.jsx';
 import AzimuthalMap from './AzimuthalMap.jsx';
 import { MAP_FOCUS_EVENT, MAP_FOCUS_PULSE_MS, nearestWrappedLon, isInView } from '../utils/mapFocus.js';
 import { publishMapViewport } from '../utils/mapViewport.js';
+import { useMapStylesVersion } from '../utils/mapStylesLive.js';
 import OfflineTilesBadge from './OfflineTilesBadge.jsx';
 // three.js is ~600 kB — load it only when the operator actually opens 3D mode.
 // React 18 permanently caches a rejected lazy() import, so a single failed
@@ -738,6 +739,11 @@ export const WorldMap = ({
   const initialStyle = MAP_STYLES[migratedStyle] && !MAP_STYLES[migratedStyle].legacy ? migratedStyle : 'dark';
   const initialProjection = storedSettings.isAzimuthal ? 'azimuthal' : storedSettings.mapProjection || 'mercator';
   const [mapStyle, setMapStyle] = useState(initialStyle);
+  const stylesVersion = useMapStylesVersion();
+  // The operator removed their tile source while the map showed it.
+  useEffect(() => {
+    if (!MAP_STYLES[mapStyle]) setMapStyle('dark');
+  }, [stylesVersion, mapStyle]);
   const [mapRotationConfig, setMapRotationConfig] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem('ohc_main_map_rotator_v1') || '{}');
@@ -816,9 +822,11 @@ export const WorldMap = ({
   // Both non-Leaflet projections hide the Mercator map and its dock.
   const isLeafletHidden = isAzimuthal || isGlobe3D;
 
+  // stylesVersion: the operator tile source can be added/removed live
   const availableBaseMapIds = useMemo(
     () => Object.keys(MAP_STYLES).filter((id) => MAP_STYLES[id] && !MAP_STYLES[id].legacy),
-    [],
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- MAP_STYLES is mutated in place; the version is the signal
+    [stylesVersion],
   );
 
   useEffect(() => {
@@ -1509,6 +1517,7 @@ export const WorldMap = ({
   // Update tile layer and handle night light clipping
   useEffect(() => {
     if (!mapInstanceRef.current || !tileLayerRef.current) return;
+    if (!MAP_STYLES[mapStyle]) return; // removed own tile source — the fallback effect switches style
     const map = mapInstanceRef.current;
 
     // Remove old tile layer completely — setUrl() doesn't flush the tile cache,
@@ -1579,7 +1588,8 @@ export const WorldMap = ({
     const maskInterval = setInterval(updateMask, 3000);
 
     return () => clearInterval(maskInterval);
-  }, [mapStyle, gibsOffset]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- stylesVersion: an edited own tile source reloads the layer
+  }, [mapStyle, gibsOffset, stylesVersion]);
 
   // Offline area packs read the current basemap (which style to download,
   // and whether the map is on the style a pack was saved for).
