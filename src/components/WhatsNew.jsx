@@ -201,8 +201,8 @@ const CHANGELOG = [
       },
       {
         icon: '🩹',
-        title: 'FIX: Two Crashes, Update Ready, Microphone',
-        desc: 'The Propagation panel could take the whole dashboard down with React error #310 when its data finished loading, and switching to the azimuthal view always failed and quietly fell back to the flat map; both are fixed. A first visit gets one prompt instead of a stack. Live streams no longer hold up Update ready → Reload in Chrome. The server had blocked the microphone for every page; OpenHamClock itself may now use it (the Decoder needs it), embedded frames still may not.',
+        title: 'FIX: Sharp APRS on the Globe, Two Crashes, Update Ready, Microphone',
+        desc: 'APRS stations on the 3D globe are now drawn as their own sharp, outlined dots with crisp callsign tags and a hover tooltip, at any zoom; they used to be painted into the world-wide overlay image of the globe and turned into blurry squares when you zoomed in (#1234, KE8PLM). The Propagation panel could take the whole dashboard down with React error #310 when its data finished loading, and switching to the azimuthal view always failed and quietly fell back to the flat map; both are fixed. A first visit gets one prompt instead of a stack. Live streams no longer hold up Update ready → Reload in Chrome. The server had blocked the microphone for every page; OpenHamClock itself may now use it (the Decoder needs it), embedded frames still may not.',
       },
       {
         icon: '📚',

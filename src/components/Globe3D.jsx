@@ -171,6 +171,29 @@ function makeDotTexture() {
   return tex;
 }
 
+// Dot with a dark rim baked in, for APRS stations: the shader multiplies the
+// texel by the station colour, so the white disc takes the colour and the
+// black rim stays black — the same outlined look as the flat map's markers.
+function makeOutlinedDotTexture() {
+  const size = 256;
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#000';
+  ctx.beginPath();
+  ctx.arc(size / 2, size / 2, size / 2 - 2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#fff';
+  ctx.beginPath();
+  ctx.arc(size / 2, size / 2, size * 0.36, 0, Math.PI * 2);
+  ctx.fill();
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+const APRS_LABEL_MAX = 300; // text sprites are one texture each — cap them
+
 /**
  * Relative luminance of any CSS colour string, resolved by letting canvas do
  * the parsing. Composited over black so the theme's translucent panel colours
@@ -1001,6 +1024,12 @@ export default function Globe3D({
     const satGroup = new THREE.Group();
     scene.add(satGroup);
 
+    // APRS stations (#1234): native points + callsign sprites. They used to be
+    // painted into the shared 2048-px overlay canvas, so zooming in blew each
+    // one up into a blurry square; these keep a constant on-screen size.
+    const aprsGroup = new THREE.Group();
+    scene.add(aprsGroup);
+
     // Plugin overlay shell — one shared equirectangular canvas (Maidenhead,
     // zones, D-RAP, aurora) draped on a transparent sphere just above the
     // earth mesh. SphereGeometry's UV layout matches the canvas's lat/lon
@@ -1041,6 +1070,9 @@ export default function Globe3D({
       stars,
       overlayGroup,
       satGroup,
+      aprsGroup,
+      aprsData: [],
+      aprsLabels: [],
       overlayShell,
       overlayTexture,
       overlayCanvas,
@@ -1048,6 +1080,7 @@ export default function Globe3D({
       raycaster,
       pointer,
       dotTexture: makeDotTexture(),
+      aprsDotTexture: makeOutlinedDotTexture(),
       markerData: [],
       disposables: [],
     };
@@ -1084,6 +1117,16 @@ export default function Globe3D({
       if (s.stationMarkers?.length) {
         const k = s.camera.position.length() / DEFAULT_CAM_DISTANCE;
         for (let i = 0; i < s.stationMarkers.length; i++) s.stationMarkers[i].scale.setScalar(k);
+      }
+      // APRS callsign tags: constant on-screen size, like the dots under them
+      if (s.aprsLabels?.length) {
+        const h = s.renderer.domElement.clientHeight || 1;
+        const fovK = 2 * Math.tan((s.camera.fov * Math.PI) / 360);
+        for (let i = 0; i < s.aprsLabels.length; i++) {
+          const sp = s.aprsLabels[i];
+          const f = (fovK * s.camera.position.distanceTo(sp.position)) / h;
+          sp.scale.set(sp.userData.wPx * f, sp.userData.hPx * f, 1);
+        }
       }
       // Satellite 3D models: shown inside the LOD distance (always for
       // selected birds), scaled per frame to a constant apparent size. The
@@ -2357,7 +2400,6 @@ export default function Globe3D({
       'tornado-warnings': overlayTornado,
       'atc-sectors': overlayATC,
       'history-playback': overlayHistory,
-      aprs: { stations: aprsStations, watch: aprsWatchlistCalls, labels: showAPRSLabels, scale: aprsIconScale },
     };
     let painted = false;
     for (const [id, painter] of Object.entries(GLOBE_OVERLAY_PAINTERS)) {
@@ -2388,12 +2430,138 @@ export default function Globe3D({
     overlayTornado,
     overlayATC,
     overlayHistory,
-    aprsStations,
-    aprsWatchlistCalls,
-    showAPRSLabels,
-    aprsIconScale,
     lowMem,
   ]);
+
+  // ── APRS stations: native points + callsign tags (#1234) ──
+  const aprsLayerState = overlayLayerStates?.aprs;
+  const aprsEnabled = !!aprsLayerState?.enabled;
+  const aprsOpacity = aprsLayerState?.opacity ?? 1;
+  useEffect(() => {
+    const s = gl.current;
+    if (!s.aprsGroup) return;
+    while (s.aprsGroup.children.length) {
+      const child = s.aprsGroup.children.pop();
+      child.geometry?.dispose?.();
+      child.material?.map?.dispose?.();
+      child.material?.dispose?.();
+    }
+    s.aprsData = [];
+    s.aprsLabels = [];
+    const stations = Array.isArray(aprsStations) ? aprsStations : [];
+    if (!aprsEnabled || !stations.length) {
+      s.requestRender?.();
+      return;
+    }
+    const scale = Number(aprsIconScale) > 0 ? Number(aprsIconScale) : 1;
+    const watch = aprsWatchlistCalls;
+    const list = [];
+    for (const st of stations) {
+      const lat = Number(st?.lat);
+      const lon = Number(st?.lon);
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+      const watched = !!(watch?.has?.(st.call) || watch?.has?.(st.ssid));
+      // Same colours as the flat map: amber watched, green RF, cyan internet
+      const color = watched ? '#f59e0b' : st.source === 'local-tnc' ? '#4ade80' : '#22d3ee';
+      list.push({ st, lat, lon, watched, color });
+    }
+    if (!list.length) {
+      s.requestRender?.();
+      return;
+    }
+
+    const positions = new Float32Array(list.length * 3);
+    const colors = new Float32Array(list.length * 3);
+    const sizes = new Float32Array(list.length);
+    const c = new THREE.Color();
+    list.forEach((m, i) => {
+      const v = latLonToVec3(m.lat, m.lon, EARTH_R * MARKER_ALT);
+      positions.set([v.x, v.y, v.z], i * 3);
+      c.set(m.color);
+      colors.set([c.r, c.g, c.b], i * 3);
+      sizes[i] = (m.watched ? 12 : 10) * scale;
+    });
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    geo.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
+    const mat = new THREE.ShaderMaterial({
+      uniforms: {
+        uTex: { value: s.aprsDotTexture },
+        uPixelRatio: { value: s.renderer?.getPixelRatio?.() ?? 1 },
+        uOpacity: { value: aprsOpacity },
+      },
+      vertexShader: /* glsl */ `
+        attribute float size;
+        uniform float uPixelRatio;
+        varying vec3 vColor;
+        void main() {
+          vColor = color;
+          gl_PointSize = size * uPixelRatio;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: /* glsl */ `
+        uniform sampler2D uTex;
+        uniform float uOpacity;
+        varying vec3 vColor;
+        void main() {
+          vec4 t = texture2D(uTex, gl_PointCoord);
+          if (t.a < 0.5) discard;
+          // White disc takes the station colour; the baked black rim stays black
+          gl_FragColor = vec4(vColor * t.rgb, uOpacity);
+          #include <colorspace_fragment>
+        }
+      `,
+      transparent: true,
+      vertexColors: true,
+      depthWrite: false,
+    });
+    const points = new THREE.Points(geo, mat);
+    points.name = 'aprs';
+    points.frustumCulled = false;
+    s.aprsGroup.add(points);
+    s.aprsData = list;
+
+    if (showAPRSLabels) {
+      const dpr = Math.min(2, s.renderer?.getPixelRatio?.() ?? 1);
+      const fontPx = Math.round(11 * scale);
+      for (const m of list.slice(0, APRS_LABEL_MAX)) {
+        const text = String(m.st.ssid || m.st.call || '');
+        if (!text) continue;
+        const cnv = document.createElement('canvas');
+        const ctx = cnv.getContext('2d');
+        const font = `600 ${fontPx * dpr}px monospace`;
+        ctx.font = font;
+        const pad = 3 * dpr;
+        cnv.width = Math.ceil(ctx.measureText(text).width + pad * 2);
+        cnv.height = Math.ceil(fontPx * dpr * 1.4);
+        ctx.font = font;
+        ctx.textBaseline = 'middle';
+        ctx.lineWidth = 3 * dpr;
+        ctx.strokeStyle = 'rgba(0,0,0,0.9)';
+        ctx.strokeText(text, pad, cnv.height / 2);
+        ctx.fillStyle = m.color;
+        ctx.fillText(text, pad, cnv.height / 2);
+        const tex = new THREE.CanvasTexture(cnv);
+        tex.colorSpace = THREE.SRGBColorSpace;
+        const sp = new THREE.Sprite(
+          new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, opacity: aprsOpacity }),
+        );
+        sp.position.copy(latLonToVec3(m.lat, m.lon, EARTH_R * MARKER_ALT));
+        const wPx = cnv.width / dpr;
+        const hPx = cnv.height / dpr;
+        // Anchor the tag's left edge just right of the dot
+        const dotPx = (m.watched ? 12 : 10) * scale;
+        sp.center.set(-(dotPx / 2 + 2) / wPx, 0.5);
+        sp.userData = { wPx, hPx };
+        sp.frustumCulled = false;
+        s.aprsGroup.add(sp);
+        s.aprsLabels.push(sp);
+      }
+    }
+    s.requestRender?.();
+  }, [aprsEnabled, aprsOpacity, aprsStations, aprsWatchlistCalls, showAPRSLabels, aprsIconScale, lowMem]);
 
   // ── Aircraft: native 3D models ───────────────────────────
   // One InstancedMesh of flat airliner silhouettes (one draw call for
@@ -3050,6 +3218,25 @@ export default function Globe3D({
             .filter(Boolean)
             .join(' · '),
           color: sat.color || '#00ddff',
+        });
+        return;
+      }
+
+      const aprsObj = s.aprsGroup?.children.find((c) => c.name === 'aprs');
+      const aprsHit = nearest(aprsObj ? s.raycaster.intersectObject(aprsObj, false) : []);
+      if (aprsHit && s.aprsData?.[aprsHit.index]) {
+        const { st, color } = s.aprsData[aprsHit.index];
+        el.style.cursor = 'pointer';
+        setTooltip({
+          x: ev.clientX - rect.left,
+          y: ev.clientY - rect.top,
+          label: st.ssid || st.call,
+          kind: '📡 APRS',
+          detail: [st.source === 'local-tnc' ? 'RF' : 'APRS-IS', st.cleanComment || st.comment || '']
+            .filter(Boolean)
+            .join(' · ')
+            .slice(0, 120),
+          color,
         });
         return;
       }
