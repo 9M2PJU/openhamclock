@@ -2344,6 +2344,8 @@
   "winlinkReach.shifted": "Display time is shifted",
   "winlinkReach.show": "Show",
   "winlinkReach.showAria": "Which gateways to show",
+  "winlinkReach.ssnMonth": "(month)",
+  "winlinkReach.ssnMonthTitle": "Display time is in another month: predictions use that month’s smoothed sunspot number from the NOAA SWPC solar-cycle data.",
   "winlinkReach.station": "{{power}} W · {{antenna}} · SSN {{ssn}}",
   "winlinkReach.status.closed": "Closed",
   "winlinkReach.status.good": "Good",

@@ -26,6 +26,7 @@ import { predictInWorker } from './p533/predictInWorker.js';
 import { ANTENNA_PROFILES } from '../utils/propagationAdjust.js';
 import { apiFetch } from '../utils/apiFetch.js';
 import { displayNow, subscribeDisplayTime } from '../utils/displayTime.js';
+import { ssnForMonth, ymOf } from '../utils/solarCycleSsn.js';
 import {
   DEFAULT_RANGE_KM,
   DEFAULT_THRESHOLDS,
@@ -102,6 +103,10 @@ let listTimer = null;
 let listLoading = null;
 let fetchedSsn = null;
 let ssnAttempted = false;
+// Solar-cycle feed (/api/solar-cycle) for a time-shifted display month.
+let cycleData = null;
+let cycleAttempted = false;
+let cycleLoading = false;
 let ssnTimer = null;
 let hourTimer = null;
 let unsubscribeTime = null;
@@ -132,6 +137,8 @@ function makeState(over = {}) {
     hasDe: false,
     byCall: null,
     rangeKm: DEFAULT_RANGE_KM,
+    ssnUsed: null,
+    ssnSource: 'current',
     thresholds: { ...DEFAULT_THRESHOLDS },
     pactor4: false,
     ...over,
@@ -283,6 +290,21 @@ function loadList() {
     scheduleReconcile();
   });
   return listLoading;
+}
+
+async function loadCycle() {
+  if (cycleLoading) return;
+  cycleLoading = true;
+  try {
+    const res = await apiFetch('/api/solar-cycle');
+    if (res && res.ok) cycleData = await res.json();
+  } catch {
+    /* keep the current SSN */
+  } finally {
+    cycleLoading = false;
+    cycleAttempted = true;
+    scheduleReconcile();
+  }
 }
 
 async function loadSsn() {
@@ -443,7 +465,26 @@ function reconcile() {
   const year = now.getUTCFullYear();
   const power = parseFloat(propConfig?.power) || 100;
   const antenna = propConfig?.antenna || 'isotropic';
-  const ssnBucket = Math.round((Number.isFinite(ssn) ? ssn : 100) / 10) * 10;
+
+  // Display time shifted into another month: run with that month's smoothed
+  // SSN (SWPC observed, else the cycle-25 prediction) — the same feed the
+  // Solar Cycle panel and the server fallback use. Today's SSN otherwise.
+  const displayYm = ymOf(now);
+  let ssnUsed = Number.isFinite(ssn) ? ssn : 100;
+  let ssnSource = 'current';
+  if (displayYm !== ymOf(new Date())) {
+    if (!cycleAttempted) {
+      loadCycle();
+      setState({ ...patch, running: true });
+      return;
+    }
+    const cyc = ssnForMonth(cycleData, displayYm);
+    if (Number.isFinite(cyc)) {
+      ssnUsed = cyc;
+      ssnSource = 'solar-cycle';
+    }
+  }
+  const ssnBucket = Math.round(ssnUsed / 10) * 10;
   const rangeKm = state.rangeKm;
   const pactor4 = !!state.pactor4;
   const runKey = [
@@ -505,6 +546,8 @@ function reconcile() {
 
   publishRows({
     ...patch,
+    ssnUsed: Math.round(ssnUsed),
+    ssnSource,
     truncated: sel.truncated,
     progress: { done: 0, total: pending.length },
     running: pending.length > 0,
@@ -566,6 +609,9 @@ export function __resetWinlinkReachStoreForTests() {
   listLoading = null;
   fetchedSsn = null;
   ssnAttempted = false;
+  cycleData = null;
+  cycleAttempted = false;
+  cycleLoading = false;
   reconcileQueued = false;
   gen++;
   currentRunKey = null;
