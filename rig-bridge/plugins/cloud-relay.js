@@ -179,18 +179,30 @@ const descriptor = {
     // Refusals reported back to the browser, at most one per type + reason
     // every 30 s (indicators repeat every few seconds).
     const refusalReportedAt = new Map();
-    function reportRefusal(type, reason) {
-      const key = `${type}|${reason}`;
-      const t = Date.now();
-      if (t - (refusalReportedAt.get(key) || 0) < 30000) return;
-      refusalReportedAt.set(key, t);
-      pendingFldigiOther.push({
-        event: 'relay-cmd-refused',
-        source: 'cloud-relay',
-        data: { type: String(type || '').slice(0, 40), reason, at: t },
-      });
+    const cleanRequestId = (v) =>
+      String(v || '')
+        .replace(/[^A-Za-z0-9-]/g, '')
+        .slice(0, 40);
+    function queueRelayEvent(event, data) {
+      pendingFldigiOther.push({ event, source: 'cloud-relay', data });
       if (pendingFldigiOther.length > 50) pendingFldigiOther.splice(0, pendingFldigiOther.length - 50);
       schedulePluginPush();
+    }
+    // A refusal for a command that carried a requestId is always reported
+    // (someone is waiting for it); anonymous ones are rate-limited.
+    function reportRefusal(type, reason, requestId = '') {
+      const key = `${type}|${reason}`;
+      const t = Date.now();
+      if (!requestId) {
+        if (t - (refusalReportedAt.get(key) || 0) < 30000) return;
+        refusalReportedAt.set(key, t);
+      }
+      queueRelayEvent('relay-cmd-refused', {
+        type: String(type || '').slice(0, 40),
+        reason,
+        at: t,
+        ...(requestId ? { requestId } : {}),
+      });
     }
     const FLDIGI_RX_MAX = 8000;
 
@@ -429,7 +441,7 @@ const descriptor = {
       const verdict = authorizeCommand(cmd);
       if (!verdict.ok) {
         refusedCommands++;
-        reportRefusal(cmd?.type, verdict.reason);
+        reportRefusal(cmd?.type, verdict.reason, cleanRequestId(cmd?.payload?.requestId));
         warnOnce(
           `refused-${verdict.reason}`,
           `Refused relay command ${cmd?.type} (${verdict.reason})` +
@@ -501,10 +513,20 @@ const descriptor = {
           // Display indicator state (satellite, countdown, alarm, lightning
           // guard relay) from a browser in cloud-relay mode → the same local
           // /api/indicators the browser would POST to directly.
+          // A browser waiting to acknowledge a lightning-relay report sends a
+          // requestId; the bridge's answer goes back as 'relay-cmd-result'.
           if (cmd.payload && typeof cmd.payload === 'object') {
-            const indReq = localMod.request(localOptions('/api/indicators'), () => {});
+            const requestId = cleanRequestId(cmd.payload.requestId);
+            const answer = (ok, status) => {
+              if (requestId) queueRelayEvent('relay-cmd-result', { requestId, type: 'indicators', ok, status });
+            };
+            const indReq = localMod.request(localOptions('/api/indicators'), (res) => {
+              res.resume();
+              answer(res.statusCode >= 200 && res.statusCode < 300, res.statusCode);
+            });
             indReq.on('error', (err) => {
               if (cfg.verbose) console.error(`[CloudRelay] indicators dispatch error: ${err.message}`);
+              answer(false, 502);
             });
             indReq.write(JSON.stringify(cmd.payload));
             indReq.end();

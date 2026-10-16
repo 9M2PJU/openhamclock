@@ -154,6 +154,7 @@ module.exports = function (app, ctx) {
     'nbems-form',
     'fldigi-cmd-result',
     'relay-cmd-refused',
+    'relay-cmd-result',
   ]);
   const PLUGIN_EVENT_MAX_BYTES = 20000;
   const FLDIGI_RX_TAIL = 4000;
@@ -164,7 +165,7 @@ module.exports = function (app, ctx) {
       if (!ev.data || typeof ev.data !== 'object') continue;
       let json;
       try {
-        const source = ev.event === 'relay-cmd-refused' ? 'cloud-relay' : 'fldigi';
+        const source = ev.event === 'relay-cmd-refused' || ev.event === 'relay-cmd-result' ? 'cloud-relay' : 'fldigi';
         json = JSON.stringify({ type: 'plugin', event: ev.event, source, data: ev.data });
       } catch {
         continue;
