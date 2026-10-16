@@ -116,6 +116,23 @@ export function applyMineStation(net, call, mine) {
   return { ...net, stations };
 }
 
+/**
+ * Net history from two sites that saved at once: start from theirs (the copy
+ * the server holds), add the nets ours added since `base` and drop the ones
+ * ours deleted since `base`. Keyed by net id; newest first; capped at `max`.
+ */
+export function mergeHistory(base, mine, theirs, max = 50) {
+  const ids = (list) => new Set((list || []).map((n) => n?.id).filter(Boolean));
+  const baseIds = ids(base);
+  const mineIds = ids(mine);
+  const removed = new Set([...baseIds].filter((id) => !mineIds.has(id)));
+  const out = new Map();
+  for (const n of theirs || []) if (n?.id && !removed.has(n.id)) out.set(n.id, n);
+  for (const n of mine || []) if (n?.id && !baseIds.has(n.id) && !out.has(n.id)) out.set(n.id, n);
+  const when = (n) => n.endTime ?? n.startTime ?? 0;
+  return [...out.values()].sort((a, b) => when(b) - when(a)).slice(0, max);
+}
+
 /** Net Control operation: put our value of one net field back. */
 export const applyMineField = (net, field, value) => (net ? { ...net, [field]: value } : net);
 
@@ -126,9 +143,11 @@ export const applyMineField = (net, field, value) => (net ? { ...net, [field]: v
  * @param {Map}    o.history    tag → net, states this site has seen
  * @param {object|null} o.local the running net here (live) or null
  * @param {object} o.remote     the received document ({ net, rev, updatedAt, tag, parentTag })
+ * @param {object} [o.order]    server receipt order: { local, remote } — the server sequence (docRev)
+ *                              of our state (undefined while not yet accepted) and of theirs
  * @returns {{ action: string, net?: object, calls?: string[], fields?: string[] }}
  */
-export function reconcileNet({ head, history, local, remote }) {
+export function reconcileNet({ head, history, local, remote, order = null }) {
   if (!remote) return { action: 'ignore' };
   if (remote.tag && remote.tag === head) return { action: 'ignore' };
   const theirs = remote.net;
@@ -154,14 +173,24 @@ export function reconcileNet({ head, history, local, remote }) {
   const calls = check.calls.filter((c) => !sameValue(stationOf(local, c), stationOf(theirs, c)));
   const fields = check.fields;
   if (!calls.length && !fields.length) return { action: 'merge', net: mergeNets(base, local, theirs) };
-  return { action: theirsWins(local, remote) ? 'conflict' : 'keep', net: theirs, calls, fields };
+  return { action: theirsWins(local, remote, order) ? 'conflict' : 'keep', net: theirs, calls, fields };
 }
 
 /**
- * Of two conflicting states, the one both sites keep: the later commit (its
- * updatedAt), then the larger tag. Deterministic, so the two sites agree.
+ * Of two conflicting states, the one both sites keep: the one the server
+ * received later. Each accepted net state gets a rising server sequence
+ * (its docRev); a state of ours the server has not recorded yet will arrive
+ * after theirs, so ours is the later one. Clocks do not matter, so a site
+ * whose clock runs fast cannot win by it. Only when the remote state has no
+ * server sequence (an older server) does the commit time decide, then the tag.
  */
-export function theirsWins(local, remote) {
+export function theirsWins(local, remote, order = null) {
+  const remoteSeq = Number(order?.remote);
+  if (Number.isFinite(remoteSeq) && remoteSeq > 0) {
+    const localSeq = Number(order?.local);
+    if (!Number.isFinite(localSeq) || localSeq <= 0) return false; // ours reaches the server after theirs
+    return remoteSeq > localSeq;
+  }
   const mine = Number(local?.updatedAt) || 0;
   const theirs = Number(remote?.updatedAt ?? remote?.net?.updatedAt) || 0;
   if (theirs !== mine) return theirs > mine;

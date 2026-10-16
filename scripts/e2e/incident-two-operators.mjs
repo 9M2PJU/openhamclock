@@ -37,8 +37,29 @@ function check(cond, msg) {
 }
 
 /** A fresh station: its own storage, callsign and layout. */
-async function station(browser, { call, layout = 'emcomm', viewport = { width: 1440, height: 900 } }) {
+async function station(
+  browser,
+  { call, layout = 'emcomm', viewport = { width: 1440, height: 900 }, clockSkew = false },
+) {
   const context = await browser.newContext({ viewport });
+  if (clockSkew) {
+    // Lets a step make this station's computer clock wrong: Date reads
+    // globalThis.__clockSkewMs (0 until a step sets it); timers run normally.
+    await context.addInitScript(() => {
+      const RealDate = Date;
+      const skew = () => globalThis.__clockSkewMs || 0;
+      class SkewedDate extends RealDate {
+        constructor(...args) {
+          if (args.length === 0) super(RealDate.now() + skew());
+          else super(...args);
+        }
+        static now() {
+          return RealDate.now() + skew();
+        }
+      }
+      globalThis.Date = SkewedDate;
+    });
+  }
   await context.addInitScript(
     ({ call, layout, version }) => {
       if (sessionStorage.getItem('e2e-seeded')) return;
@@ -96,7 +117,8 @@ async function railShot(page, file) {
 
 async function main() {
   const browser = await chromium.launch();
-  const a = await station(browser, { call: 'K0CJH' });
+  // A's clock can be made wrong for one step (the net conflict, decided by the server's order).
+  const a = await station(browser, { call: 'K0CJH', clockSkew: true });
   // B starts in another layout: the invite link must switch it to EmComm.
   const b = await station(browser, { call: 'W1AW', layout: 'modern' });
   try {
@@ -251,7 +273,7 @@ async function main() {
       'the incident bridge is not counted as another Net Control panel',
     );
 
-    log('Both operators change W9NET at the same moment: one change stands, the other site gets "your change"');
+    log('Both change W9NET while offline; A (clock +10 min) reaches the server first: the server’s order decides');
     const ncRow = (page) => page.locator('[data-testid="nc-station"][data-call="W9NET"]');
     await ncRow(b.page).waitFor({ timeout: T });
     const debugLog = [];
@@ -276,13 +298,25 @@ async function main() {
         );
       }
     }
+    // From here A's clock runs 10 minutes fast.
+    await a.page.evaluate(() => (globalThis.__clockSkewMs = 10 * 60 * 1000));
     // Offline, so neither sees the other's change before making its own.
     await a.context.setOffline(true);
     await b.context.setOffline(true);
     await ncRow(a.page).getByTitle('Traffic', { exact: true }).click();
     await b.page.waitForTimeout(50); // B's change is the later one
     await ncRow(b.page).getByTitle('Mobile', { exact: true }).click();
+    // A's change reaches the server first, B's second. A's clock says A's is
+    // ten minutes later — the server's order must win anyway.
     await a.context.setOffline(false);
+    for (let waited = 0; ; waited += 250) {
+      const r = await fetch(`${BASE}/api/incident/${id}`, { headers: { 'X-Incident-Key': joinKey } });
+      const net = (await r.json()).docs?.find((d) => d.id === 'net-running');
+      const w9 = net?.data?.net?.stations?.find((x) => x.call === 'W9NET');
+      if (w9?.flags?.includes('traffic')) break;
+      if (waited > 30_000) throw new Error('FAILED: A’s change never reached the server');
+      await a.page.waitForTimeout(250);
+    }
     await b.context.setOffline(false);
     const pressed = async (page, title) =>
       (await ncRow(page).getByTitle(title, { exact: true }).getAttribute('aria-pressed')) === 'true';
@@ -311,7 +345,7 @@ async function main() {
     );
     check(
       onA === 1 && (await flags(a.page)) === 'false,true',
-      'the later change (B: Mobile) stands; A is offered its own',
+      'B’s change, received second by the server, stands although A’s clock is 10 min ahead; A is offered its own',
     );
     check((await chipA.textContent()).includes('EOC South'), 'the chip names the other site');
 
@@ -328,6 +362,7 @@ async function main() {
     check((await flags(a.page)) === 'true,false', 'A’s change is back at A');
     check((await flags(b.page)) === 'true,false', 'and reached B');
     check((await chipA.count()) === 0, 'the chip is gone');
+    await a.page.evaluate(() => (globalThis.__clockSkewMs = 0)); // A's clock right again
 
     log('B goes offline, checks in; the update waits and flushes on reconnect');
     await b.context.setOffline(true);

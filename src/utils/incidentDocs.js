@@ -121,7 +121,9 @@ export function saveDoc(id, value) {
 }
 
 /** The server took our write of `id`; it is now at revision `rev`. */
-export function noteAccepted(id, rev) {
+export function noteAccepted(id, rev, sentData) {
+  if (id === 'net-running') return netBridge.noteNetAccepted(sentData?.tag, rev); // its server order
+  if (id === 'net-history') return netBridge.noteHistoryAccepted(rev, sentData);
   if (!DOC_SPECS[id] || !Number.isFinite(rev)) return;
   state.serverRev[id] = Math.max(state.serverRev[id] ?? 0, rev);
 }
@@ -133,6 +135,8 @@ export function noteAccepted(id, rev) {
  * back (applyMineDoc) or drop it (dismissDocConflict).
  */
 export function docConflict(id, mine, current) {
+  // Net history is a list of closed nets: merged by net id and sent again, no prompt.
+  if (id === 'net-history') return netBridge.historyConflict(mine, current);
   if (!DOC_SPECS[id] || !current) return;
   state.conflicts[id] = {
     mine,
@@ -225,8 +229,8 @@ export function receive(docs) {
   for (const doc of Array.isArray(docs) ? docs : Object.values(docs || {})) {
     if (!doc?.id) continue;
     if (NET_DOC_IDS.has(doc.id)) {
-      if (doc.id === 'net-running') netBridge.receiveNet(doc.data);
-      else netBridge.receiveHistory(doc.data);
+      if (doc.id === 'net-running') netBridge.receiveNet(doc.data, { docRev: doc.docRev });
+      else netBridge.receiveHistory(doc.data, { docRev: doc.docRev });
       continue;
     }
     if (!DOC_SPECS[doc.id]) continue;

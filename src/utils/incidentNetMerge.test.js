@@ -10,6 +10,8 @@ import {
   removeConflictEntry,
   applyMineStation,
   applyMineField,
+  theirsWins,
+  mergeHistory,
 } from './incidentNetMerge.js';
 
 const st = (call, extra = {}) => ({ call, flags: [], checkinTime: 1, checkoutTime: null, ...extra });
@@ -182,5 +184,40 @@ describe('reconcileNet (shared net across sites)', () => {
     expect(sameNetContent(mergeNets(base, base, theirs), { ...theirs, stations: orderStations(theirs.stations) })).toBe(
       true,
     );
+  });
+
+  it('server receipt order decides, not clocks; commit time only without a server sequence', () => {
+    const local = { updatedAt: 10 * 60e3 + 1000 }; // this site's clock is 10 minutes fast
+    const remote = { updatedAt: 2000, tag: '5:2000' };
+    expect(theirsWins(local, remote)).toBe(false); // clock rule: ours "later"
+    expect(theirsWins(local, remote, { local: 4, remote: 5 })).toBe(true); // server got theirs later
+    expect(theirsWins(local, remote, { local: 6, remote: 5 })).toBe(false);
+    expect(theirsWins(local, remote, { local: undefined, remote: 5 })).toBe(false); // ours not there yet: ours is later
+    const ours = { ...base, stations: [st('W1AW', { flags: ['T'] }), st('K1ABC')], rev: 11, updatedAt: 9e12 };
+    const theirs = { ...base, stations: [st('W1AW', { flags: ['M'] }), st('K1ABC')] };
+    const r = reconcileNet({
+      head: '11:9000000000000',
+      history,
+      local: ours,
+      remote: doc(theirs, '10:100'),
+      order: { local: 4, remote: 5 },
+    });
+    expect(r.action).toBe('conflict');
+  });
+
+  it('mergeHistory: both sites’ closed nets survive; a delete on our side stays deleted', () => {
+    const n = (id, endTime) => ({ id, name: id, stations: [], endTime });
+    const base = [n('a', 1), n('b', 2)];
+    const mine = [n('mine', 5), n('a', 1)]; // closed "mine", deleted "b"
+    const theirs = [n('theirs', 4), n('b', 2), n('a', 1)]; // closed "theirs"
+    expect(mergeHistory(base, mine, theirs).map((x) => x.id)).toEqual(['mine', 'theirs', 'a']);
+    expect(mergeHistory([], [n('x', 1)], [n('x', 1)]).map((x) => x.id)).toEqual(['x']); // no duplicates
+    expect(
+      mergeHistory(
+        [],
+        Array.from({ length: 60 }, (_, i) => n(`m${i}`, i)),
+        [],
+      ).length,
+    ).toBe(50);
   });
 });
