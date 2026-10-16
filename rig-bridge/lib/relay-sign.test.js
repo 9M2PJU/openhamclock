@@ -4,7 +4,22 @@
  * commands and a missing key are refused.
  */
 import { describe, it, expect } from 'vitest';
+import crypto from 'crypto';
 import lib from './relay-sign.js';
+
+describe('relay read token', () => {
+  const K = 'a'.repeat(64);
+  const S = 'f00dbabe12345678';
+  it('is HKDF-SHA256 of the key with a session-bound label, and only its hash is shared', () => {
+    const t = lib.deriveReadToken(K, S);
+    const info = Buffer.from(`ohc-relay-read-v1\n${S}`);
+    const expected = Buffer.from(crypto.hkdfSync('sha256', Buffer.from(K, 'hex'), Buffer.alloc(0), info, 32));
+    expect(t).toBe(expected.toString('hex'));
+    expect(lib.deriveReadToken(K, 'othersession0000')).not.toBe(t);
+    expect(lib.deriveReadToken('', S)).toBe('');
+    expect(lib.readTokenHash(t)).toBe(crypto.createHash('sha256').update(Buffer.from(t, 'hex')).digest('hex'));
+  });
+});
 
 const { canonicalJson, signCommand, createCommandVerifier, isValidKey, MAX_SKEW_MS } = lib;
 

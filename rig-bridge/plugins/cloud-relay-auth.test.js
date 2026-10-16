@@ -38,7 +38,9 @@ const readBody = (req) =>
 
 async function setup(relayCfg = {}) {
   const pushes = [];
+  const polls = [];
   const hostedPort = await listen(async (req, res) => {
+    if (req.url.startsWith('/api/rig-bridge/relay/commands')) polls.push(req.headers);
     if (req.url.startsWith('/api/rig-bridge/relay/state')) {
       pushes.push(JSON.parse(await readBody(req)));
       res.writeHead(200);
@@ -73,7 +75,7 @@ async function setup(relayCfg = {}) {
   const inst = relay.create(config, { state: { freq: 7074000, mode: 'USB' }, pluginBus: new EventEmitter() });
   inst.connect();
   const settle = () => new Promise((r) => setTimeout(r, 150));
-  return { inst, config, radio, pushes, settle };
+  return { inst, config, radio, pushes, polls, settle };
 }
 
 describe('paired bridge (commandKey set)', () => {
@@ -114,6 +116,18 @@ describe('paired bridge (commandKey set)', () => {
     inst._pushState();
     await vi.waitFor(() => expect(pushes.length).toBeGreaterThan(0));
     expect(pushes[0].commandAuth).toBe('hmac-sha256');
+    inst.disconnect();
+  });
+
+  it('registers the hash of its read token on pushes and command polls, never the token', async () => {
+    const { inst, pushes, polls } = await setup({ commandKey: KEY });
+    const hash = signLib.readTokenHash(signLib.deriveReadToken(KEY, SESSION));
+    inst._pushState();
+    await vi.waitFor(() => expect(pushes.length).toBeGreaterThan(0));
+    await vi.waitFor(() => expect(polls.length).toBeGreaterThan(0));
+    expect(pushes[0].readTokenHash).toBe(hash);
+    expect(polls[0]['x-relay-read-hash']).toBe(hash);
+    expect(JSON.stringify(pushes)).not.toContain(signLib.deriveReadToken(KEY, SESSION));
     inst.disconnect();
   });
 });

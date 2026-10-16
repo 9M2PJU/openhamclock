@@ -425,6 +425,8 @@ The openhamclock.com website uses a secure connection (HTTPS), and browsers will
 
 The **Command Key** is made by your browser and goes only to Rig Bridge — the OpenHamClock server never sees it. Every tune, PTT or transmit command from that browser is signed with it, and Rig Bridge refuses commands without a valid signature, so neither the server nor anyone who learns your session id can operate your radio. Each command can be used once and only within five minutes, so a captured command cannot be replayed. Using another browser? Press **Connect Cloud Relay** there and paste the new settings; the old browser then stops working.
 
+The same key also protects **reading** the relay — your rig state, decodes, APRS and the live stream. Rig Bridge derives a separate read token from it and gives the server only that token's hash; your browser derives the same token and presents it, so knowing the session id is no longer enough to watch your station. The live stream opens with a one-time ticket, so no secret ever appears in a URL. A relay paired before command keys existed can still be read with the session id alone until **31 January 2027** (the server logs a reminder), then reads are refused until you reconnect it.
+
 **Paired before command keys existed?** Rig Bridge keeps accepting unsigned **tuning** (frequency and mode) from such a pairing until **31 January 2027** (`unsignedGraceUntil` in the `cloudRelay` settings) and logs a reminder; it never accepts unsigned **PTT** or anything that transmits. To fix it, press **Disconnect Cloud Relay** and then **Connect Cloud Relay** in OpenHamClock Settings and paste the new settings into Rig Bridge. `"allowUnsigned": true` restores the old behaviour of accepting every command unsigned; it is unsafe and only meant for a bridge you cannot re-pair yet.
 
 How it works behind the scenes:
@@ -773,6 +775,8 @@ The rig-bridge holds a persistent long-poll connection to the server. The moment
 | `allowUnsigned`      | Accept every command unsigned, PTT included (old behaviour; unsafe)                        | `false`        |
 
 `GET /api/cloud-relay/status` shows `commandAuth` (`hmac-sha256`, `legacy` or `unsigned-allowed`) and how many commands were refused.
+
+Reads are protected too: Rig Bridge registers the hash of a read token derived from the command key (HKDF, separate label), and the server then requires that token for `/relay/state`, `/relay/decodes` and `/relay/aprs` (`X-Relay-Read` header) and a one-time ticket from `POST /relay/stream-ticket` for the live stream. The server keeps only the hash, persisted with the session. Self-hosters can move the grace date for unpaired sessions with `RELAY_UNSIGNED_GRACE_UNTIL` in `.env`.
 
 **Config reference:**
 
