@@ -256,8 +256,8 @@ export function useSharedIncident({
     const settle = (data) => {
       let next = ackOutbox(readSharedOutbox(), batch);
       for (const [docId, rev] of Object.entries(data?.docRevs || {})) {
-        incidentDocs.noteAccepted(docId, rev);
         const sent = (batch.docs || []).find((d) => d.id === docId);
+        incidentDocs.noteAccepted(docId, rev, sent?.data);
         const queued = next.docs?.[docId];
         if (queued && sent && queued.baseRev === sent.baseRev) {
           next = { ...next, docs: { ...next.docs, [docId]: { ...queued, baseRev: rev } } };

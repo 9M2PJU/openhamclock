@@ -43,6 +43,7 @@ import {
   conflictRecord,
   mergeConflictRecords,
   removeConflictEntry,
+  mergeHistory,
 } from './incidentNetMerge.js';
 
 export const BRIDGE_ID = 'shared-incident';
@@ -98,6 +99,9 @@ const state = {
   known: { net: '', history: '' },
   head: '', // tag of the last net state this site published or took
   seen: new Map(), // tag → net, recent states (common ancestors for merging)
+  serverSeq: new Map(), // tag → server sequence (docRev) of an accepted net state
+  historyRev: null, // docRev of the history copy this browser last saw
+  historyBase: [], // that copy (the base of our next history write)
   channel: null,
   onStorage: null,
 };
@@ -106,6 +110,43 @@ function remember(tag, net) {
   if (!tag || !net) return;
   state.seen.set(tag, net);
   while (state.seen.size > HISTORY_MAX) state.seen.delete(state.seen.keys().next().value);
+}
+
+function noteSeq(tag, seq) {
+  if (!tag || !Number.isFinite(seq)) return;
+  state.serverSeq.set(tag, seq);
+  while (state.serverSeq.size > HISTORY_MAX) state.serverSeq.delete(state.serverSeq.keys().next().value);
+}
+
+/** The server accepted a net state we published (sync response `docRevs`). */
+export function noteNetAccepted(tag, seq) {
+  noteSeq(tag, seq);
+}
+
+/** The server accepted our history write: it is now at `rev`, with `list` as its content. */
+export function noteHistoryAccepted(rev, list) {
+  if (!Number.isFinite(rev)) return;
+  if (state.historyRev == null || rev >= state.historyRev) {
+    state.historyRev = rev;
+    state.historyBase = Array.isArray(list) ? list : [];
+  }
+}
+
+/**
+ * Our history write was refused (someone else saved history meanwhile — two
+ * sites closing a net at once). Merge by net id against the copy ours was
+ * based on — keep their nets, add ours, honour our deletions — and send the
+ * merge on top of theirs.
+ */
+export function historyConflict(mine, current) {
+  if (!state.attached || !current) return;
+  const merged = fitHistory(mergeHistory(state.historyBase, mine, current.data));
+  state.historyRev = current.docRev ?? state.historyRev;
+  state.historyBase = Array.isArray(current.data) ? current.data : [];
+  saveHistory(merged);
+  announce('history');
+  state.known.history = '';
+  publishHistory();
 }
 
 /** Comparison key for a serialized net state (updatedAt of an empty state changes every call). */
@@ -173,16 +214,18 @@ export function publishHistory() {
   const key = historyKey(list);
   if (key === state.known.history) return;
   state.known.history = key;
-  state.publish?.('net-history', list);
+  // Conditional, like the ICS drafts: made from the history copy we last saw.
+  state.publish?.('net-history', list, Number.isFinite(state.historyRev) ? { baseRev: state.historyRev } : {});
 }
 
 /**
  * A running-net document from the incident. `force` (on join) makes the
  * incident's net replace whatever runs here, whatever its revision.
  */
-export function receiveNet(data, { force = false } = {}) {
+export function receiveNet(data, { force = false, docRev } = {}) {
   if (!state.attached || !data || data.kind !== 'net-control') return false;
   const key = netKey(data);
+  if (data?.tag && Number.isFinite(docRev)) noteSeq(data.tag, docRev);
   if (!force && key === state.known.net) return false;
   // A state this site has already dealt with, announced again (a site that
   // kept its change in a conflict re-publishes it; an echo of our own older
@@ -197,7 +240,9 @@ export function receiveNet(data, { force = false } = {}) {
   // Both sites may have changed the same net at once: reconcile through the
   // common ancestor the way Net Control rebases a refused change in a tab.
   if (!force) {
-    const r = reconcileNet({ head: state.head, history: state.seen, local, remote: data });
+    // Who wins a same-station conflict: the state the server received later.
+    const order = { local: state.serverSeq.get(state.head), remote: docRev };
+    const r = reconcileNet({ head: state.head, history: state.seen, local, remote: data, order });
     if (r.action === 'ignore') return false;
     if (r.action === 'same') {
       state.head = data.tag;
@@ -281,8 +326,12 @@ export function receiveNet(data, { force = false } = {}) {
 }
 
 /** A net-history document from the incident. */
-export function receiveHistory(list) {
+export function receiveHistory(list, { docRev } = {}) {
   if (!state.attached || !Array.isArray(list)) return false;
+  if (Number.isFinite(docRev) && (state.historyRev == null || docRev >= state.historyRev)) {
+    state.historyRev = docRev;
+    state.historyBase = list;
+  }
   const clean = list.filter((n) => n && Array.isArray(n.stations));
   const key = historyKey(clean);
   if (key === state.known.history) return false;
@@ -301,6 +350,9 @@ export function attach({ docs = {}, publish, origin = null }) {
   state.origin = origin;
   state.head = '';
   state.seen = new Map();
+  state.serverSeq = new Map();
+  state.historyRev = null;
+  state.historyBase = [];
   // Set this browser's own net aside once — a reload while joined must not
   // overwrite the stash with the incident's copy.
   if (!readStash()) {
@@ -333,13 +385,13 @@ export function attach({ docs = {}, publish, origin = null }) {
   window.addEventListener('storage', state.onStorage);
 
   const netDoc = docs['net-running']?.data;
-  if (netDoc?.net) receiveNet(netDoc, { force: true });
+  if (netDoc?.net) receiveNet(netDoc, { force: true, docRev: docs['net-running']?.docRev });
   else if (loadRunningNet())
     publishNet(); // the incident has no live net: ours becomes the shared one
   else if (netDoc) state.known.net = netKey(netDoc);
 
   const histDoc = docs['net-history']?.data;
-  if (Array.isArray(histDoc)) receiveHistory(histDoc);
+  if (Array.isArray(histDoc)) receiveHistory(histDoc, { docRev: docs['net-history']?.docRev });
   else {
     state.known.history = historyKey([]);
     saveHistory([]);
@@ -408,4 +460,7 @@ export function _resetForTests() {
   state.known = { net: '', history: '' };
   state.head = '';
   state.seen = new Map();
+  state.serverSeq = new Map();
+  state.historyRev = null;
+  state.historyBase = [];
 }
