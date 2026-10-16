@@ -354,6 +354,11 @@ module.exports = function (app, ctx) {
     return refuseRead(res, verdict);
   }
 
+  // Other routes that serve a relay session's data (MeshCom, WSJT-X relay)
+  // apply the same rule through ctx.relayRead (they load before this module,
+  // so they look it up per request).
+  ctx.relayRead = { check: checkRelayRead, require: requireRelayRead };
+
   // One-time stream tickets: the read token goes in a header to POST
   // /relay/stream-ticket, only the short-lived ticket goes in the stream URL.
   const STREAM_TICKET_TTL_MS = 60000;
