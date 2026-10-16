@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { reconcileNet, mergeNets, netTag, sameNetContent } from './incidentNetMerge.js';
+import { reconcileNet, mergeNets, netTag, sameNetContent, orderStations } from './incidentNetMerge.js';
 
 const st = (call, extra = {}) => ({ call, flags: [], checkinTime: 1, checkoutTime: null, ...extra });
 const base = {
@@ -89,15 +89,29 @@ describe('reconcileNet (shared net across sites)', () => {
     ).toBe('legacy');
   });
 
-  it('converges: each site merging the other gives the same content', () => {
-    const a = { ...base, stations: [st('KD0ABC'), ...base.stations], rev: 11, updatedAt: 150 };
-    const b = { ...base, stations: [st('N0XYZ'), ...base.stations], rev: 11, updatedAt: 160 };
+  it('converges at once: both sites hold the same stations in the same order', () => {
+    const a = { ...base, stations: [st('KD0ABC', { checkinTime: 5 }), ...base.stations], rev: 11, updatedAt: 150 };
+    const b = { ...base, stations: [st('N0XYZ', { checkinTime: 5 }), ...base.stations], rev: 11, updatedAt: 160 };
     const atA = reconcileNet({ head: netTag(a), history, local: a, remote: doc(b, '10:100', 11, 160) }).net;
     const atB = reconcileNet({ head: netTag(b), history, local: b, remote: doc(a, '10:100', 11, 150) }).net;
-    expect(new Set(atA.stations.map((s) => s.call))).toEqual(new Set(atB.stations.map((s) => s.call)));
+    expect(atA.stations.map((s) => s.call)).toEqual(atB.stations.map((s) => s.call));
+    expect(atA.stations.map((s) => s.call)).toEqual(['KD0ABC', 'N0XYZ', 'K1ABC', 'W1AW']); // newest first, then call
+    expect(sameNetContent(atA, atB)).toBe(true);
   });
 
-  it('mergeNets keeps theirs where mine did not change anything', () => {
-    expect(sameNetContent(mergeNets(base, base, { ...base, name: 'X' }), { ...base, name: 'X' })).toBe(true);
+  it('orderStations: newest check-in first, ties by callsign', () => {
+    const out = orderStations([
+      st('W1AW', { checkinTime: 1 }),
+      st('K1ABC', { checkinTime: 3 }),
+      st('AA1A', { checkinTime: 3 }),
+    ]);
+    expect(out.map((s) => s.call)).toEqual(['AA1A', 'K1ABC', 'W1AW']);
+  });
+
+  it('mergeNets keeps theirs where mine did not change anything (in merged order)', () => {
+    const theirs = { ...base, name: 'X' };
+    expect(sameNetContent(mergeNets(base, base, theirs), { ...theirs, stations: orderStations(theirs.stations) })).toBe(
+      true,
+    );
   });
 });

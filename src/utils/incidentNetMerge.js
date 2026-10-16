@@ -38,9 +38,20 @@ export const sameNetContent = (a, b) => sameValue(content(a), content(b));
 const stationOf = (net, call) => (net?.stations || []).find((s) => s.call === call) || null;
 
 /**
+ * The order of a merged net's stations, the same at every site: newest
+ * check-in first (as Net Control lists them), then callsign. Two sites that
+ * merge the same changes therefore hold identical nets at once.
+ */
+export function orderStations(stations) {
+  return [...(stations || [])].sort(
+    (a, b) => (b.checkinTime ?? 0) - (a.checkinTime ?? 0) || String(a.call).localeCompare(String(b.call)),
+  );
+}
+
+/**
  * Apply `mine`'s changes since `base` on top of `theirs`: changed net fields
- * take mine's value; changed station lines are replaced, added (at mine's
- * position) or removed.
+ * take mine's value; changed station lines are replaced, added or removed.
+ * The result is in orderStations() order.
  */
 export function mergeNets(base, mine, theirs) {
   const out = { ...theirs };
@@ -51,15 +62,12 @@ export function mergeNets(base, mine, theirs) {
     const at = list.findIndex((s) => s.call === call);
     if (m) {
       if (at >= 0) list[at] = m;
-      else {
-        const pos = (mine.stations || []).findIndex((s) => s.call === call);
-        list.splice(Math.min(Math.max(pos, 0), list.length), 0, m);
-      }
+      else list.push(m);
     } else if (at >= 0) {
       list.splice(at, 1);
     }
   }
-  out.stations = list;
+  out.stations = orderStations(list);
   return out;
 }
 
