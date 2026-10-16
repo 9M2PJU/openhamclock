@@ -24,6 +24,7 @@ import {
   getReachState,
   requestReach,
   releaseReach,
+  setReachPactor4,
   setReachThresholds,
 } from '../services/winlinkReachStore.js';
 import { resetDisplayTime, setDisplayOffsetMs, HOUR_MS } from '../utils/displayTime.js';
@@ -211,6 +212,38 @@ describe('useWinlinkReach / shared store', () => {
     });
     // Server mode chosen from the −5 dB floor.
     expect(restCalls()[0][0]).toMatch(/mode=OLIVIA/);
+  });
+
+  it('sends the display-time month to the server fallback', async () => {
+    mocks.predict = vi.fn(async () => {
+      throw new Error('no wasm');
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    setDisplayOffsetMs(-20 * 24 * HOUR_MS); // 15 Oct → 25 Sep
+    mount();
+    await settle();
+    warn.mockRestore();
+    expect(restCalls().length).toBeGreaterThan(0);
+    for (const [url] of restCalls()) expect(url).toMatch(/[?&]month=9(&|$)/);
+  });
+
+  it('re-scores PACTOR-4 gateways when the operator says their modem supports P4', async () => {
+    const p4Only = [{ callsign: 'K0P4', gridsquare: 'DM79', frequency: 7102000, mode: 17, hours: '00-23' }];
+    const base = mocks.fetch;
+    mocks.fetch = vi.fn(async (url) =>
+      url === '/api/winlink/gateways' ? { ok: true, status: 200, json: async () => ({ gateways: p4Only }) } : base(url),
+    );
+    mount();
+    await settle();
+    expect(mocks.predict.mock.calls.at(-1)[0].requiredSNR).toBe(-5);
+    act(() => setReachPactor4(true));
+    await settle();
+    expect(latest.pactor4).toBe(true);
+    expect(mocks.predict.mock.calls.at(-1)[0].requiredSNR).toBe(-19);
+    const n = mocks.predict.mock.calls.length;
+    act(() => setReachPactor4(false));
+    await settle();
+    expect(mocks.predict.mock.calls.length).toBe(n); // P3 result still cached
   });
 
   it('stays idle when inactive or without a station location', async () => {
