@@ -38,6 +38,34 @@ export function createS16beDecoder() {
   };
 }
 
+// G.711 µ-law → float lookup (the Cloud Relay sends Kiwi audio as µ-law to
+// halve its bandwidth; encoder in rig-bridge/lib/mulaw.js).
+const MULAW_TABLE = (() => {
+  const t = new Float32Array(256);
+  for (let b = 0; b < 256; b++) {
+    const u = ~b & 0xff;
+    const exponent = (u >> 4) & 0x07;
+    const s = ((((u & 0x0f) << 3) + 0x84) << exponent) - 0x84;
+    t[b] = (u & 0x80 ? -s : s) / 32768;
+  }
+  return t;
+})();
+
+/** Returns decode(Uint8Array of µ-law bytes) → Float32Array (−1…1). Stateless. */
+export function createMulawDecoder() {
+  return function decode(bytes) {
+    const src = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    const out = new Float32Array(src.length);
+    for (let i = 0; i < src.length; i++) out[i] = MULAW_TABLE[src[i]];
+    return out;
+  };
+}
+
+/** Decoder for an X-Audio-Format header value ('s16be' default, 'ulaw'). */
+export function createAudioDecoder(format) {
+  return String(format || '').toLowerCase() === 'ulaw' ? createMulawDecoder() : createS16beDecoder();
+}
+
 /**
  * Schedules consecutive chunks on an audio clock.
  *   next(nowSec, durationSec) → start time (sec), or null to drop the chunk

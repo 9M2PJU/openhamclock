@@ -25,12 +25,15 @@
  *   relayRig:       boolean  Relay rig state (default: true)
  *   relayWsjtx:     boolean  Relay WSJT-X decodes (default: true)
  *   relayAprs:      boolean  Relay APRS packets (default: true)
+ *   relayAudio:     boolean  Carry KiwiSDR audio to the Decoder panel while it
+ *                            listens (µ-law, ~12 kB/s; default: false — opt-in)
  *   verbose:        boolean  Log all relay activity (default: false)
  */
 
 const http = require('http');
 const https = require('https');
 const { URL } = require('url');
+const { createRelayAudio } = require('../lib/relay-audio');
 
 let _currentInstance = null;
 
@@ -72,6 +75,25 @@ const descriptor = {
     let pendingAprs = []; // Batched APRS packets to push
     let pendingMeshCom = []; // Batched MeshCom packets to push
     let pendingHamAlerts = []; // Batched HamAlert spots to push
+
+    // Opt-in KiwiSDR audio over the relay (see lib/relay-audio.js)
+    const relayAudio = cfg.relayAudio
+      ? createRelayAudio({
+          serverUrl,
+          apiKey,
+          session,
+          getKiwiAudio: () => {
+            try {
+              return require('./kiwi-audio').getActive();
+            } catch (e) {
+              return null;
+            }
+          },
+          parseTune: (f, m) => require('./kiwi-audio').parseTune(f, m),
+          log: (m) => console.log(`[CloudRelay] ${m}`),
+        })
+      : null;
+    let audioRefusedLogged = false;
 
     function makeRequest(urlStr, method, body, callback, timeoutMs) {
       let parsed;
@@ -262,6 +284,15 @@ const descriptor = {
       totalCommands++;
       if (cfg.verbose) console.log(`[CloudRelay] Command: ${cmd.type} ${JSON.stringify(cmd.payload || {})}`);
 
+      if (relayAudio && relayAudio.handleCommand(cmd)) return;
+      if (!relayAudio && /^kiwiAudio/.test(cmd.type || '')) {
+        if (!audioRefusedLogged) {
+          audioRefusedLogged = true;
+          console.log('[CloudRelay] KiwiSDR audio was requested but "Relay KiwiSDR audio" is off — enable it to allow');
+        }
+        return;
+      }
+
       const localMod = config.tls?.enabled ? https : http;
       const localOptions = (path, body) => ({
         hostname: '127.0.0.1',
@@ -425,6 +456,7 @@ const descriptor = {
       if (stateChangeHandler && typeof removeStateChangeListener === 'function') {
         removeStateChangeListener(stateChangeHandler);
       }
+      if (relayAudio) relayAudio.stop('relay stopped');
       _currentInstance = null;
       console.log(`[CloudRelay] Stopped (pushed: ${totalPushed}, commands: ${totalCommands})`);
     }
@@ -440,6 +472,7 @@ const descriptor = {
         consecutiveErrors,
         pushInterval,
         commandDelivery: 'long-poll',
+        audio: relayAudio ? relayAudio.status() : { enabled: false },
       };
     }
 

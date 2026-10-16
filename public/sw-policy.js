@@ -13,8 +13,12 @@
 (function (global) {
   'use strict';
 
-  /** Streaming endpoints that must never be intercepted or cached (SSE). */
-  var STREAMING_API_PATHS = ['/api/pskreporter/stream', '/api/rig-bridge/relay/stream'];
+  /**
+   * Streaming endpoints that must never be intercepted or cached (SSE, and
+   * the Decoder panel's endless KiwiSDR audio body — caching it would hold
+   * the response forever).
+   */
+  var STREAMING_API_PATHS = ['/api/pskreporter/stream', '/api/rig-bridge/relay/stream', '/api/rig-bridge/relay/audio'];
 
   /**
    * Same-origin static content that is safe to serve cache-first within a
@@ -99,7 +103,7 @@
     return OFFLINE_TILE_HOSTS.indexOf(String(hostname || '').toLowerCase()) !== -1;
   }
 
-  /** True for API paths that stream (SSE) and must be left to the browser. */
+  /** True for API paths that stream (SSE, live audio) and must be left to the browser. */
   function isStreamingApiPath(pathname) {
     if (STREAMING_API_PATHS.indexOf(pathname) !== -1) return true;
     // Defensive: any future /api/**/stream endpoint is assumed to be SSE.

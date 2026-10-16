@@ -1043,6 +1043,7 @@ function buildSetupHtml(version, firstRunToken = null) {
         { id: 'session', label: 'Session ID', type: 'text', default: '' },
         { id: 'pushInterval', label: 'Push Interval (ms)', type: 'number', default: 2000 },
         { id: 'pollInterval', label: 'Poll Interval (ms)', type: 'number', default: 1000 },
+        { id: 'relayAudio', label: 'Relay KiwiSDR audio to the Decoder panel (~12 kB/s while listening)', type: 'checkbox', default: false },
       ]},
       { key: 'meshcom', name: 'MeshCom UDP', maturity: 'beta', desc: 'Receive MeshCom LoRa mesh node positions, messages and telemetry via UDP JSON (port 1799)', fields: [
         { id: 'bindPort', label: 'UDP Listen Port', type: 'number', default: 1799 },
@@ -1061,10 +1062,11 @@ function buildSetupHtml(version, firstRunToken = null) {
         { id: 'ohcApiKey', label: 'Server API_WRITE_KEY (if set)', type: 'text', default: '' },
         { id: 'verbose', label: 'Log every measurement', type: 'checkbox', default: false },
       ]},
-      { key: 'kiwiAudio', name: 'KiwiSDR Audio (Decoder panel)', maturity: 'alpha', desc: 'Streams the audio of a KiwiSDR to the OpenHamClock Decoder panel (CW decoder + waterfall). Connects only while the panel is listening, one receiver slot. Leave the host empty to use the Beacon Monitor KiwiSDR.', fields: [
+      { key: 'kiwiAudio', name: 'KiwiSDR Audio (Decoder panel)', maturity: 'alpha', desc: 'Streams the audio of a KiwiSDR to the OpenHamClock Decoder panel (CW and FT8 decoders + waterfall). Connects only while the panel is listening, one receiver slot: a Beacon Monitor on the same Kiwi pauses meanwhile (or keep it, using a second slot). Leave the host empty to use the Beacon Monitor KiwiSDR.', fields: [
         { id: 'host', label: 'KiwiSDR Host (no http://, blank = Beacon Monitor host)', type: 'text', default: '' },
         { id: 'port', label: 'KiwiSDR Port', type: 'number', default: 8073 },
         { id: 'password', label: 'Kiwi Password (if required)', type: 'text', default: '' },
+        { id: 'beaconMonitor', label: 'Beacon Monitor on the same Kiwi while listening', type: 'select', options: ['pause', 'keep'], default: 'pause' },
       ]},
       { key: 'gps', name: 'GPS Receiver', maturity: 'alpha', desc: 'NMEA over serial, gpsd, or a fifo/file — drives DE location and rover mode in OpenHamClock', fields: [
         { id: 'source', label: 'Source', type: 'select', options: ['serial', 'gpsd', 'file', 'mock'], default: 'serial' },
@@ -2380,6 +2382,9 @@ function createServer(registry, version) {
       }
       if (ka.port !== undefined && ka.port !== '' && !isValidPort(Number(ka.port))) {
         return res.status(400).json({ success: false, error: 'Invalid port value for kiwiAudio.port' });
+      }
+      if (ka.beaconMonitor !== undefined && !['pause', 'keep'].includes(ka.beaconMonitor)) {
+        return res.status(400).json({ success: false, error: "kiwiAudio.beaconMonitor must be 'pause' or 'keep'" });
       }
     }
     for (const key of [
