@@ -15,9 +15,62 @@ import {
   setCommandKey,
   signRelayCommand,
   sendRelayCommand,
+  deriveReadToken,
+  relayReadHeaders,
+  relayStreamUrl,
 } from './relaySign.js';
 
 const bridge = createRequire(import.meta.url)('../../rig-bridge/lib/relay-sign.js');
+
+describe('relay read token (browser)', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    vi.unstubAllGlobals();
+  });
+
+  it('matches Rig Bridge’s derivation, with Web Crypto and with the fallback', async () => {
+    const key = generateCommandKey();
+    const viaSubtle = await deriveReadToken(key, 'sess0001');
+    expect(viaSubtle).toBe(bridge.deriveReadToken(key, 'sess0001'));
+    vi.stubGlobal('crypto', { subtle: undefined, getRandomValues: () => {} });
+    try {
+      expect(await deriveReadToken(key, 'sess0001')).toBe(viaSubtle);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('buys a one-time stream ticket with the read token; no secret in the URL', async () => {
+    const key = generateCommandKey();
+    setCommandKey(key);
+    const fetchMock = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ ticket: 'abc123' }) }));
+    vi.stubGlobal('fetch', fetchMock);
+    const { url } = await relayStreamUrl('sess0002');
+    expect(url).toBe('/api/rig-bridge/relay/stream?session=sess0002&ticket=abc123');
+    const [ticketUrl, opts] = fetchMock.mock.calls[0];
+    expect(ticketUrl).toBe('/api/rig-bridge/relay/stream-ticket?session=sess0002');
+    expect(opts.headers['X-Relay-Read']).toBe(bridge.deriveReadToken(key, 'sess0002'));
+    expect(url).not.toContain(opts.headers['X-Relay-Read']);
+    expect(await relayReadHeaders('sess0002')).toEqual({ 'X-Relay-Read': bridge.deriveReadToken(key, 'sess0002') });
+  });
+
+  it('without a key uses the plain stream URL and sends no read header', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    expect(await relayStreamUrl('sess0003')).toEqual({ url: '/api/rig-bridge/relay/stream?session=sess0003' });
+    expect(await relayReadHeaders('sess0003')).toEqual({});
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('reports a refused ticket', async () => {
+    setCommandKey(generateCommandKey());
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: false, status: 401, json: async () => ({}) })),
+    );
+    expect(await relayStreamUrl('sess0004')).toMatchObject({ url: null, status: 401 });
+  });
+});
 
 const hex = (u8) => Array.from(u8, (b) => b.toString(16).padStart(2, '0')).join('');
 const bytes = (s) => new TextEncoder().encode(s);

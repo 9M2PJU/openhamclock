@@ -48,7 +48,7 @@ const http = require('http');
 const https = require('https');
 const { URL } = require('url');
 const { nextLongPollDelay, heartbeatDue } = require('../lib/relay-timing');
-const { createCommandVerifier, isValidKey } = require('../lib/relay-sign');
+const { createCommandVerifier, isValidKey, deriveReadToken, readTokenHash } = require('../lib/relay-sign');
 
 // Unsigned commands a bridge that has not been re-paired still accepts during
 // the grace period: they tune, they never transmit.
@@ -89,6 +89,15 @@ const descriptor = {
       const t = Date.parse(cfg.unsignedGraceUntil || DEFAULT_UNSIGNED_GRACE_UNTIL);
       return Number.isFinite(t) ? t : Date.parse(DEFAULT_UNSIGNED_GRACE_UNTIL);
     })();
+    // sha256 of the relay read token (lib/relay-sign deriveReadToken); '' unpaired
+    let readHashCache = { key: null, hash: '' };
+    function readHash() {
+      const k = commandKey();
+      if (readHashCache.key !== k) {
+        readHashCache = { key: k, hash: isValidKey(k) ? readTokenHash(deriveReadToken(k, session)) : '' };
+      }
+      return readHashCache.hash;
+    }
     const warnedAt = new Map(); // reason → last log time
     let refusedCommands = 0;
 
@@ -160,6 +169,29 @@ const descriptor = {
     let pendingFldigiRx = null; // { text, reset }
     let pendingFldigiOther = []; // nbems-form / fldigi-cmd-result
     let fldigiPushTimer = null;
+    function schedulePluginPush() {
+      if (fldigiPushTimer) return;
+      fldigiPushTimer = setTimeout(() => {
+        fldigiPushTimer = null;
+        pushState();
+      }, 250);
+    }
+    // Refusals reported back to the browser, at most one per type + reason
+    // every 30 s (indicators repeat every few seconds).
+    const refusalReportedAt = new Map();
+    function reportRefusal(type, reason) {
+      const key = `${type}|${reason}`;
+      const t = Date.now();
+      if (t - (refusalReportedAt.get(key) || 0) < 30000) return;
+      refusalReportedAt.set(key, t);
+      pendingFldigiOther.push({
+        event: 'relay-cmd-refused',
+        source: 'cloud-relay',
+        data: { type: String(type || '').slice(0, 40), reason, at: t },
+      });
+      if (pendingFldigiOther.length > 50) pendingFldigiOther.splice(0, pendingFldigiOther.length - 50);
+      schedulePluginPush();
+    }
     const FLDIGI_RX_MAX = 8000;
 
     function makeRequest(urlStr, method, body, callback, timeoutMs) {
@@ -177,6 +209,10 @@ const descriptor = {
         Authorization: `Bearer ${apiKey}`,
         'X-Relay-Session': session,
       };
+      // Register the read-token hash on every authenticated request, so the
+      // server protects this session's reads even right after it restarts.
+      const rh = readHash();
+      if (rh) headers['X-Relay-Read-Hash'] = rh;
 
       const options = {
         hostname: parsed.hostname,
@@ -273,6 +309,7 @@ const descriptor = {
         ...currentState,
         session,
         commandAuth: isValidKey(commandKey()) ? 'hmac-sha256' : 'none',
+        ...(readHash() ? { readTokenHash: readHash() } : {}),
       };
       if (hasDecodes) {
         payload.decodes = pendingDecodes.splice(0, 50);
@@ -392,6 +429,7 @@ const descriptor = {
       const verdict = authorizeCommand(cmd);
       if (!verdict.ok) {
         refusedCommands++;
+        reportRefusal(cmd?.type, verdict.reason);
         warnOnce(
           `refused-${verdict.reason}`,
           `Refused relay command ${cmd?.type} (${verdict.reason})` +

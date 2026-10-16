@@ -4,7 +4,22 @@ import { getModeFromFreq, mapModeToRig } from '../utils/bandPlan.js';
 import { canTransmit, getLicenseClass, normalizeLicenseClass } from '../utils/privileges.js';
 import { showToast } from '../utils/toast.js';
 import { isRelayConfigured, setRelayConfigured, setRelaySessionId } from '../utils/relaySession.js';
-import { sendRelayCommand } from '../utils/relaySign';
+import { sendRelayCommand, relayReadHeaders, relayStreamUrl } from '../utils/relaySign';
+
+// "Rig Bridge refused the command" — at most once a minute, whatever the
+// command (tune, mode, PTT, indicators, NBEMS).
+let lastRefusalToastAt = 0;
+function notifyRelayRefused() {
+  const now = Date.now();
+  if (now - lastRefusalToastAt < 60000) return;
+  lastRefusalToastAt = now;
+  showToast(
+    i18n.t('app.rigControl.relayRefused', {
+      defaultValue: 'Rig Bridge refused the command — re-pair Cloud Relay in Settings → Rig Bridge',
+    }),
+    { variant: 'warning' },
+  );
+}
 import { setTunedSpot } from '../services/logbookStore.js';
 
 // Default config
@@ -125,6 +140,19 @@ export const RigProvider = ({ children, rigConfig }) => {
     : '';
   const isCloudRelay = !!cloudRelaySession;
 
+  // The bridge reports commands it refused (unsigned, expired, replayed, bad
+  // signature) as a 'relay-cmd-refused' plugin event — tell the user how to fix it.
+  useEffect(() => {
+    if (!isCloudRelay) return undefined;
+    const onData = (e) => {
+      const d = e?.detail;
+      // NBEMS commands report their own refusal in the NBEMS panel
+      if (d?.type === 'plugin' && d.event === 'relay-cmd-refused' && d.data?.type !== 'fldigi') notifyRelayRefused();
+    };
+    window.addEventListener('rig-plugin-data', onData);
+    return () => window.removeEventListener('rig-plugin-data', onData);
+  }, [isCloudRelay]);
+
   // Build auth headers — only set when a token is configured
   const apiToken = rigConfig?.apiToken?.trim() || '';
   const rigHeaders = {
@@ -196,9 +224,19 @@ export const RigProvider = ({ children, rigConfig }) => {
         setError(data.relayActive ? null : 'not-reachable');
       };
 
-      const connectSSE = () => {
+      const connectSSE = async () => {
         if (!active) return;
-        eventSource = new EventSource(`/api/rig-bridge/relay/stream?session=${encodeURIComponent(cloudRelaySession)}`);
+        // A paired browser buys a one-time stream ticket with its relay read
+        // token (utils/relaySign); the stream URL never carries a secret.
+        const { url, status } = await relayStreamUrl(cloudRelaySession);
+        if (!active) return;
+        if (!url) {
+          if (status === 401) setError('relay-read-refused');
+          retryTimeout = setTimeout(connectSSE, retryDelay);
+          retryDelay = Math.min(retryDelay * 2, MAX_RETRY_DELAY);
+          return;
+        }
+        eventSource = new EventSource(url);
 
         eventSource.onmessage = (event) => {
           try {
@@ -236,7 +274,12 @@ export const RigProvider = ({ children, rigConfig }) => {
             fallbackInterval = setInterval(async () => {
               if (!active) return;
               try {
-                const res = await fetch(`/api/rig-bridge/relay/state?session=${encodeURIComponent(cloudRelaySession)}`);
+                const res = await fetch(
+                  `/api/rig-bridge/relay/state?session=${encodeURIComponent(cloudRelaySession)}`,
+                  {
+                    headers: await relayReadHeaders(cloudRelaySession),
+                  },
+                );
                 if (res.ok) {
                   fallbackFailures = 0;
                   applyRelayState({ relayActive: true, ...(await res.json()) });
@@ -354,7 +397,10 @@ export const RigProvider = ({ children, rigConfig }) => {
       if (isCloudRelay) {
         // Route through OHC server relay, signed with this browser's command key
         const r = await sendRelayCommand(cloudRelaySession, type, payload);
-        if (!r.ok) console.error(`[RigContext] Cloud relay command failed: ${r.error}`);
+        if (!r.ok) {
+          console.error(`[RigContext] Cloud relay command failed: ${r.error}`);
+          if (r.status === 401) notifyRelayRefused();
+        }
         return null; // No status code in relay mode
       }
       return null; // Caller handles direct mode
