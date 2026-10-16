@@ -257,6 +257,7 @@ const SYNC_KEYS = [
   'openhamclock_mapSettings',
   'openhamclock_panelZoom',
   'openhamclock_emcommAliases',
+  'openhamclock_emcommPanelSets',
   'openhamclock_pskActiveTab',
   'openhamclock_pskFilters',
   'openhamclock_potaFilters',

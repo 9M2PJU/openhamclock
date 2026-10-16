@@ -545,6 +545,36 @@ module.exports = function (app, ctx) {
     if (!to || !message) return res.status(400).json({ error: 'Missing to or message' });
     if (message.length > 67) return res.status(400).json({ error: 'Message exceeds 67 char APRS limit' });
 
+    const recordSent = () => {
+      aprsMessages.push({
+        type: 'message',
+        from: (CONFIG.callsign || 'N0CALL').toUpperCase(),
+        to: String(to).trim().toUpperCase(),
+        text: message,
+        cleanText: message,
+        tokens: [],
+        msgId: null,
+        isShelterReport: false,
+        netCommand: null,
+        direction: 'sent',
+        source: 'local-tnc',
+        timestamp: Date.now(),
+        raw: null,
+      });
+      if (aprsMessages.length > APRS_MAX_MESSAGES) aprsMessages.shift();
+    };
+
+    // The browser already transmitted through its own Rig Bridge (#1243) —
+    // record our side of the conversation for the message history only.
+    // Not on a hosted server: there the history is shared by every visitor and
+    // this endpoint has no auth, so a record-only write would let anyone add
+    // "sent" lines (hosted browsers send through Cloud Relay, not directly).
+    if (req.body.recordOnly === true) {
+      if (TNC_STATUS_HOSTED) return res.status(403).json({ error: 'Not available on a hosted server' });
+      recordSent();
+      return res.json({ ok: true, recorded: true });
+    }
+
     // Try to send via rig-bridge APRS TNC plugin
     try {
       const rigHost = CONFIG.rigControl?.host || 'http://localhost';
@@ -557,22 +587,7 @@ module.exports = function (app, ctx) {
       if (response.ok) {
         // Keep our own side of the conversation so a station's message
         // history shows both directions (#1216). Rig-bridge only transmits.
-        aprsMessages.push({
-          type: 'message',
-          from: (CONFIG.callsign || 'N0CALL').toUpperCase(),
-          to: String(to).trim().toUpperCase(),
-          text: message,
-          cleanText: message,
-          tokens: [],
-          msgId: null,
-          isShelterReport: false,
-          netCommand: null,
-          direction: 'sent',
-          source: 'local-tnc',
-          timestamp: Date.now(),
-          raw: null,
-        });
-        if (aprsMessages.length > APRS_MAX_MESSAGES) aprsMessages.shift();
+        recordSent();
         return res.json({ ok: true, via: 'rig-bridge' });
       }
       const err = await response.text();

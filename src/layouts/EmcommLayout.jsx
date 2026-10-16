@@ -15,7 +15,8 @@ import { esc } from '../utils/escapeHtml.js';
 import { apiFetch } from '../utils/apiFetch.js';
 import { useAprsShelterReports } from '../hooks/useAprsShelterReports.js';
 import { mergeShelters } from '../utils/emcommShelters.js';
-import { sendAprsMessage } from '../utils/aprsMessageSend.js';
+import { sendAprsMessage, directRigUrl } from '../utils/aprsMessageSend.js';
+import { useRigOptional } from '../contexts/RigContext.jsx';
 import { IcsFormsOverlay } from '../components/IcsFormsPanel.jsx';
 import NetControlPanel from '../components/NetControlPanel.jsx';
 import { getNetControlRoster, mergeRosters, NET_CONTROL_ROSTER_EVENT } from '../utils/netControl.js';
@@ -151,6 +152,8 @@ import {
   rosterForAddress,
 } from '../utils/netAliases.js';
 import NetRosterControls from '../components/NetRosterControls.jsx';
+import EmcommPanelChooser, { PanelSetSelect } from '../components/EmcommPanelChooser.jsx';
+import { readPanelSets, writePanelSets } from '../utils/emcommPanelSets.js';
 
 // Net Roster view (#1240): grouping and the one-address filter, per browser.
 const ROSTER_VIEW_KEY = 'openhamclock_emcommRosterView';
@@ -386,6 +389,10 @@ export default function EmcommLayout(props) {
     window.addEventListener('resize', fit);
     return () => window.removeEventListener('resize', fit);
   }, [clampSidebarWidth]);
+  // Which panels are shown, and named sets of them (#1241)
+  const [panelSets, setPanelSets] = useState(readPanelSets);
+  const [panelChooserOpen, setPanelChooserOpen] = useState(false);
+  const updatePanelSets = useCallback((next) => setPanelSets(writePanelSets(next)), []);
   const [textZoom, setTextZoom] = useState(readTextZoom);
   const stepTextZoom = useCallback((delta) => {
     setTextZoom((prev) => {
@@ -401,12 +408,13 @@ export default function EmcommLayout(props) {
   const panels = useMemo(
     () => ({
       zoom: textZoom,
+      hiddenFor: (key) => panelSets.hidden.includes(key),
       collapsedFor: (title) => isPanelCollapsed(panelStates, panelMode, title),
       toggle: (title) =>
         updatePanelStates({ ...panelStates, [title]: !isPanelCollapsed(panelStates, panelMode, title) }),
       setAll: (collapsed) => updatePanelStates({ __all: collapsed }),
     }),
-    [panelStates, panelMode, updatePanelStates, textZoom],
+    [panelStates, panelMode, updatePanelStates, textZoom, panelSets],
   );
   // APRS source filter: 'all' | 'internet' | 'rf'
   const [aprsSource, setAprsSource] = useState('all');
@@ -497,6 +505,13 @@ export default function EmcommLayout(props) {
     });
   }, []);
   const [messageText, setMessageText] = useState('');
+  // Composer state (#1242, #1243): sending in flight, and the last failure
+  const [messageSending, setMessageSending] = useState(false);
+  const [messageError, setMessageError] = useState('');
+  const messageInputRef = useRef(null);
+  const messageBoxRef = useRef(null);
+  const rig = useRigOptional();
+  const rigDirectUrl = directRigUrl(rig);
   // ICS Forms overlay: null (closed) or the form id to open ('309' | '214' | '213' | '205')
   const [icsForm, setIcsForm] = useState(null);
   // Nearby Winlink gateways
@@ -1345,10 +1360,19 @@ export default function EmcommLayout(props) {
 
   // Send an APRS message to the current target (shared by Enter key + button)
   // and record it in the event log.
-  const sendMessageToTarget = useCallback(() => {
+  // Waits for the TNC's answer (#1243): a failed send used to be logged as
+  // sent and the composer closed, so nothing on screen said it never left.
+  const sendMessageToTarget = useCallback(async () => {
     const text = messageText.trim();
-    if (!text || !messageTarget) return;
-    sendAprsMessage({ to: messageTarget, message: text });
+    if (!text || !messageTarget || messageSending) return;
+    setMessageSending(true);
+    setMessageError('');
+    const r = await sendAprsMessage({ to: messageTarget, message: text, rigUrl: rigDirectUrl });
+    setMessageSending(false);
+    if (!r.ok) {
+      setMessageError(r.error || 'Not sent');
+      return;
+    }
     recordEvent('aprs_msg_sent', {
       callsign: config.callsign || 'N0CALL',
       summary: `Message to ${messageTarget}`,
@@ -1356,7 +1380,18 @@ export default function EmcommLayout(props) {
     });
     setMessageText('');
     setMessageTarget(null);
-  }, [messageText, messageTarget, config.callsign]);
+  }, [messageText, messageTarget, messageSending, rigDirectUrl, config.callsign]);
+  // Opening the composer (any MSG button) brings it into view and puts the
+  // cursor in the message line (#1242).
+  useEffect(() => {
+    setMessageError('');
+    if (!messageTarget) return;
+    const id = requestAnimationFrame(() => {
+      messageBoxRef.current?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
+      messageInputRef.current?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(id);
+  }, [messageTarget]);
 
   // ── Event log export handlers ─────────────────────────────────────────────
   const exportEventLogCsv = useCallback(() => {
@@ -1591,8 +1626,9 @@ export default function EmcommLayout(props) {
           <div
             style={{
               display: 'flex',
+              flexWrap: 'wrap',
               alignItems: 'center',
-              gap: '6px',
+              gap: '4px 6px',
               padding: '2px 4px',
               fontSize: '10px',
               color: '#888',
@@ -1618,6 +1654,19 @@ export default function EmcommLayout(props) {
                 </option>
               ))}
             </select>
+            <PanelSetSelect state={panelSets} onChange={updatePanelSets} />
+            <button
+              type="button"
+              onClick={() => setPanelChooserOpen((v) => !v)}
+              aria-expanded={panelChooserOpen}
+              title="Choose which panels the sidebar shows, and save sets of them"
+              style={{
+                ...PANEL_TOOL_BTN,
+                ...(panelChooserOpen ? { color: '#22d3ee', borderColor: '#22d3ee' } : {}),
+              }}
+            >
+              Choose
+            </button>
             <span style={{ flex: 1 }} />
             <button
               type="button"
@@ -1658,6 +1707,13 @@ export default function EmcommLayout(props) {
               Collapse all
             </button>
           </div>
+          {panelChooserOpen && (
+            <EmcommPanelChooser
+              state={panelSets}
+              onChange={updatePanelSets}
+              onClose={() => setPanelChooserOpen(false)}
+            />
+          )}
 
           {/* Shared incident — create / join / leave, board, invite, manual check-in */}
           <PanelSection
@@ -2654,12 +2710,21 @@ export default function EmcommLayout(props) {
           )}
           {messageTarget && (
             <div
+              ref={messageBoxRef}
+              data-testid="aprs-composer"
               style={{
                 background: '#111620',
-                border: '1px solid #2a3040',
+                border: '1px solid #22d3ee',
                 borderRadius: '6px',
                 padding: '10px',
                 marginTop: '8px',
+                // Pinned to the bottom of the visible rail: it is the rail's
+                // last child, below every panel, so it used to open off-screen
+                // (#1242).
+                position: 'sticky',
+                bottom: 0,
+                zIndex: 5,
+                boxShadow: '0 -6px 16px rgba(0,0,0,0.6)',
               }}
             >
               <div
@@ -2678,7 +2743,9 @@ export default function EmcommLayout(props) {
               </div>
               <div style={{ display: 'flex', gap: '6px' }}>
                 <input
+                  ref={messageInputRef}
                   type="text"
+                  aria-label={`Message to ${messageTarget}`}
                   value={messageText}
                   onChange={(e) => setMessageText(e.target.value.slice(0, 67))}
                   placeholder="Type message (67 char max)"
@@ -2694,11 +2761,17 @@ export default function EmcommLayout(props) {
                   }}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') sendMessageToTarget();
+                    if (e.key === 'Escape') {
+                      setMessageTarget(null);
+                      setMessageText('');
+                    }
                   }}
                 />
                 <button
                   onClick={sendMessageToTarget}
+                  disabled={messageSending || !messageText.trim()}
                   style={{
+                    opacity: messageSending || !messageText.trim() ? 0.5 : 1,
                     padding: '6px 12px',
                     background: '#22d3ee',
                     border: 'none',
@@ -2709,11 +2782,17 @@ export default function EmcommLayout(props) {
                     cursor: 'pointer',
                   }}
                 >
-                  Send
+                  {messageSending ? 'Sending…' : 'Send'}
                 </button>
               </div>
+              {messageError && (
+                <div role="alert" style={{ fontSize: '10px', color: '#ef4444', marginTop: '4px' }}>
+                  Not sent: {messageError}
+                </div>
+              )}
               <div style={{ fontSize: '9px', color: '#888', marginTop: '4px' }}>
-                {messageText.length}/67 chars — sent via APRS (requires local TNC)
+                {messageText.length}/67 chars — sent via APRS{' '}
+                {rigDirectUrl ? `through Rig Bridge at ${rigDirectUrl}` : '(requires local TNC)'}
               </div>
             </div>
           )}
@@ -2904,6 +2983,7 @@ function PanelSection({ title, panelKey, count, color, extra, panels, bodyMaxHei
   const [localCollapsed, setLocalCollapsed] = useState(false);
   const collapsed = panels ? panels.collapsedFor(key) : localCollapsed;
   const setCollapsed = panels ? () => panels.toggle(key) : setLocalCollapsed;
+  if (panels?.hiddenFor?.(key)) return null; // switched off in Choose panels (#1241)
   return (
     // flexShrink 0: the rail is a scrolling flex column; without it, once the
     // panels outgrow the rail every section is squashed and its content clipped.

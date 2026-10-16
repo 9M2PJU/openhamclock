@@ -25,7 +25,8 @@ import IcsDraftConflict from './IcsDraftConflict.jsx';
 import { loadNetSchedule } from '../utils/netSchedule.js';
 import { getNetControlRoster } from '../utils/netControl.js';
 import { apiFetch } from '../utils/apiFetch.js';
-import { sendAprsParts } from '../utils/aprsMessageSend.js';
+import { sendAprsParts, directRigUrl } from '../utils/aprsMessageSend.js';
+import { useRigOptional } from '../contexts/RigContext.jsx';
 import { printIcsHtml, downloadCsv } from '../utils/icsPrint.js';
 import {
   ICS_FORM_IDS,
@@ -812,11 +813,16 @@ function Ics213Editor({ t, drafts, patch, config }) {
   const [status, setStatus] = useState(null); // { kind: 'ok'|'error'|'busy', text }
   // Local TNC state: null = unknown (let the server decide), true/false from rig-bridge
   const [tncConnected, setTncConnected] = useState(null);
+  // Transmit through the Rig Bridge this browser uses, and ask it (not the
+  // server, which only sees localhost:5555) whether its TNC is up (#1243).
+  const rigUrl = directRigUrl(useRigOptional());
   useEffect(() => {
     let alive = true;
     const check = async () => {
       try {
-        const res = await apiFetch('/api/aprs/tnc-status', { cache: 'no-store' });
+        const res = rigUrl
+          ? await fetch(`${rigUrl}/api/aprs-tnc/status`, { cache: 'no-store' })
+          : await apiFetch('/api/aprs/tnc-status', { cache: 'no-store' });
         if (!alive || !res?.ok) return;
         const data = await res.json();
         if (alive) setTncConnected(!!data?.connected);
@@ -830,7 +836,7 @@ function Ics213Editor({ t, drafts, patch, config }) {
       alive = false;
       clearInterval(id);
     };
-  }, []);
+  }, [rigUrl]);
   const aprsText = ics213AprsText(f);
   const parts = useMemo(() => splitForAprs(aprsText), [aprsText]);
   const addressee = String(f.toCall || '')
@@ -848,7 +854,7 @@ function Ics213Editor({ t, drafts, patch, config }) {
   const runSend = async (start) => {
     const base = start > 0 && tracked ? tracked : newSendState(addressee, parts);
     setStatus({ kind: 'busy', text: t('icsForms.213.sending', { defaultValue: 'Sending…' }) });
-    const r = await sendAprsParts(addressee, parts.slice(start));
+    const r = await sendAprsParts(addressee, parts.slice(start), undefined, rigUrl);
     const next = applySendResult(base, start, r);
     patch('ics213', { sendState: next });
     if (r.sent > 0) {

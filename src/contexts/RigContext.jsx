@@ -65,6 +65,9 @@ export const buildRigUrl = (rigConfig) => {
   return `${host}:${port}`;
 };
 
+/** The rig context, or null outside a RigProvider (components rendered alone, tests). */
+export const useRigOptional = () => useContext(RigContext);
+
 export const useRig = () => {
   const context = useContext(RigContext);
   if (!context) {

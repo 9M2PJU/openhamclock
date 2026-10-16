@@ -196,13 +196,13 @@ const CHANGELOG = [
       },
       {
         icon: '🖥️',
-        title: 'EmComm Sidebar: Text Size and Width',
+        title: 'EmComm Sidebar: Choose Your Panels, Text Size and Width',
         desc: "The EmComm sidebar toolbar has A− / A+ next to Expand all / Collapse all, scaling every panel from 70% to 200% like the Dockable layout's per-panel buttons; click the percentage to reset (#1232). Drag the divider between the map and the sidebar to make the sidebar wider or narrower (260 to 900 pixels, the map always keeps at least 300), use the arrow keys on it, or double-click it to reset; the width is remembered in that browser (#1233). Both asked for by Michael, KE8PLM.",
       },
       {
         icon: '🩹',
-        title: 'FIX: Sharp APRS on the Globe, Two Crashes, Update Ready, Microphone',
-        desc: 'APRS stations on the 3D globe are now drawn as their own sharp, outlined dots with crisp callsign tags and a hover tooltip, at any zoom; they used to be painted into the world-wide overlay image of the globe and turned into blurry squares when you zoomed in (#1234, KE8PLM). The Propagation panel could take the whole dashboard down with React error #310 when its data finished loading, and switching to the azimuthal view always failed and quietly fell back to the flat map; both are fixed. A first visit gets one prompt instead of a stack. Live streams no longer hold up Update ready → Reload in Chrome. The server had blocked the microphone for every page; OpenHamClock itself may now use it (the Decoder needs it), embedded frames still may not.',
+        title: 'FIX: APRS Sending, Sharp APRS on the Globe, Two Crashes, Update Ready, Microphone',
+        desc: 'APRS messages go straight to the Rig Bridge set in Settings, so a bridge on another port or computer transmits; before, the server always looked on its own port 5555, and a message that never went out was still logged as sent and the box closed. Now a failed message stays in the box with the reason (#1243). Every MSG button opens the message box in view with the cursor in it (#1242). Pick which panels the sidebar shows, or switch the whole sidebar between sets of them: All, Net control, Shelters & resources, or your own saved sets (Panels → Choose, #1241). APRS stations on the 3D globe are now drawn as their own sharp, outlined dots with crisp callsign tags and a hover tooltip, at any zoom; they used to be painted into the world-wide overlay image of the globe and turned into blurry squares when you zoomed in (#1234, KE8PLM). The Propagation panel could take the whole dashboard down with React error #310 when its data finished loading, and switching to the azimuthal view always failed and quietly fell back to the flat map; both are fixed. A first visit gets one prompt instead of a stack. Live streams no longer hold up Update ready → Reload in Chrome. The server had blocked the microphone for every page; OpenHamClock itself may now use it (the Decoder needs it), embedded frames still may not.',
       },
       {
         icon: '📚',
