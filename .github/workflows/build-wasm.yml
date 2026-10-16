@@ -1,4 +1,4 @@
-name: Build WASM (P.533, FT8)
+name: Build WASM
 
 # Builds the ITU-R P.533 and FT8 (ft8_lib) WebAssembly artifacts. Outputs are uploaded as a
 # workflow artifact — we intentionally do not commit the binaries. Changes to
