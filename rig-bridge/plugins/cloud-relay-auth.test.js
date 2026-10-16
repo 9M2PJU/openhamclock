@@ -130,6 +130,24 @@ describe('paired bridge (commandKey set)', () => {
     expect(JSON.stringify(pushes)).not.toContain(signLib.deriveReadToken(KEY, SESSION));
     inst.disconnect();
   });
+
+  it('reports refused commands back as relay-cmd-refused events, rate-limited', async () => {
+    const { inst, pushes } = await setup({ commandKey: KEY });
+    inst._executeCommand({ type: 'setPTT', payload: { ptt: true } });
+    inst._executeCommand({ type: 'setPTT', payload: { ptt: true } }); // same type + reason: not repeated
+    inst._executeCommand({
+      type: 'indicators',
+      payload: {},
+      auth: signCommand('9'.repeat(64), SESSION, 'indicators', {}),
+    });
+    await vi.waitFor(() => expect(pushes.some((p) => p.pluginEvents)).toBe(true));
+    const ev = pushes.flatMap((p) => p.pluginEvents || []);
+    expect(ev.map((e) => [e.event, e.source, e.data.type, e.data.reason])).toEqual([
+      ['relay-cmd-refused', 'cloud-relay', 'setPTT', 'unsigned'],
+      ['relay-cmd-refused', 'cloud-relay', 'indicators', 'bad-signature'],
+    ]);
+    inst.disconnect();
+  });
 });
 
 describe('bridge not yet re-paired (no commandKey)', () => {

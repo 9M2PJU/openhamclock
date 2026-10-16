@@ -94,6 +94,7 @@
   "app.rigControl.error.unauthorized": "Unauthorized — check API token in Settings → Rig Control",
   "app.rigControl.privilegeWarning": "{{freq}} MHz: {{mode}} is outside {{licenseClass}} privileges at this frequency",
   "app.rigControl.ptt": "PTT",
+  "app.rigControl.relayRefused": "Rig Bridge refused the command — re-pair Cloud Relay in Settings → Rig Bridge",
   "app.rigControl.set": "Set",
   "app.rigControl.setFreqPlaceholder": "Freq (MHz)",
   "app.rigControl.title": "Rig Control",

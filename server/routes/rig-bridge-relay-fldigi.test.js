@@ -93,10 +93,18 @@ describe('relay: fldigi plugin events', () => {
       { event: 'fldigi-rx', source: 'fldigi', data: { text: 'CQ CQ ', reset: true } },
       { event: 'fldigi-rx', source: 'fldigi', data: { text: 'de N8TAG' } },
       { event: 'fldigi-cmd-result', source: 'fldigi', data: { requestId: 'r1', ok: true } },
+      { event: 'relay-cmd-refused', source: 'cloud-relay', data: { type: 'setPTT', reason: 'unsigned', at: 1 } },
       { event: 'gpio', source: 'gpio', data: { pin: 1 } },
       { event: 'nbems-form', source: 'fldigi', data: { blob: 'x'.repeat(30000) } },
     ]);
-    expect(early.events().map((e) => e.event)).toEqual(['fldigi', 'fldigi-rx', 'fldigi-rx', 'fldigi-cmd-result']);
+    expect(early.events().map((e) => e.event)).toEqual([
+      'fldigi',
+      'fldigi-rx',
+      'fldigi-rx',
+      'fldigi-cmd-result',
+      'relay-cmd-refused',
+    ]);
+    expect(early.events().find((e) => e.event === 'relay-cmd-refused').source).toBe('cloud-relay');
     early.close();
 
     const late = openStream('sess0001');

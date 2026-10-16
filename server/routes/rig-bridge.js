@@ -148,7 +148,13 @@ module.exports = function (app, ctx) {
   // { event, source, data } shape as its local /stream. Only known events are
   // fanned out, each capped in size; the latest fldigi status and receive-text
   // tail are kept so a browser that opens the stream later starts populated.
-  const RELAYED_PLUGIN_EVENTS = new Set(['fldigi', 'fldigi-rx', 'nbems-form', 'fldigi-cmd-result']);
+  const RELAYED_PLUGIN_EVENTS = new Set([
+    'fldigi',
+    'fldigi-rx',
+    'nbems-form',
+    'fldigi-cmd-result',
+    'relay-cmd-refused',
+  ]);
   const PLUGIN_EVENT_MAX_BYTES = 20000;
   const FLDIGI_RX_TAIL = 4000;
 
@@ -158,7 +164,8 @@ module.exports = function (app, ctx) {
       if (!ev.data || typeof ev.data !== 'object') continue;
       let json;
       try {
-        json = JSON.stringify({ type: 'plugin', event: ev.event, source: 'fldigi', data: ev.data });
+        const source = ev.event === 'relay-cmd-refused' ? 'cloud-relay' : 'fldigi';
+        json = JSON.stringify({ type: 'plugin', event: ev.event, source, data: ev.data });
       } catch {
         continue;
       }

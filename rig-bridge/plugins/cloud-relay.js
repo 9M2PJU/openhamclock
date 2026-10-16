@@ -167,6 +167,29 @@ const descriptor = {
     let pendingFldigiRx = null; // { text, reset }
     let pendingFldigiOther = []; // nbems-form / fldigi-cmd-result
     let fldigiPushTimer = null;
+    function schedulePluginPush() {
+      if (fldigiPushTimer) return;
+      fldigiPushTimer = setTimeout(() => {
+        fldigiPushTimer = null;
+        pushState();
+      }, 250);
+    }
+    // Refusals reported back to the browser, at most one per type + reason
+    // every 30 s (indicators repeat every few seconds).
+    const refusalReportedAt = new Map();
+    function reportRefusal(type, reason) {
+      const key = `${type}|${reason}`;
+      const t = Date.now();
+      if (t - (refusalReportedAt.get(key) || 0) < 30000) return;
+      refusalReportedAt.set(key, t);
+      pendingFldigiOther.push({
+        event: 'relay-cmd-refused',
+        source: 'cloud-relay',
+        data: { type: String(type || '').slice(0, 40), reason, at: t },
+      });
+      if (pendingFldigiOther.length > 50) pendingFldigiOther.splice(0, pendingFldigiOther.length - 50);
+      schedulePluginPush();
+    }
     const FLDIGI_RX_MAX = 8000;
 
     function makeRequest(urlStr, method, body, callback, timeoutMs) {
@@ -395,6 +418,7 @@ const descriptor = {
       const verdict = authorizeCommand(cmd);
       if (!verdict.ok) {
         refusedCommands++;
+        reportRefusal(cmd?.type, verdict.reason);
         warnOnce(
           `refused-${verdict.reason}`,
           `Refused relay command ${cmd?.type} (${verdict.reason})` +
