@@ -45,6 +45,34 @@ const type = (el, value) => {
   });
 };
 
+// Relayed commands are posted after asynchronous signing (Web Crypto HMAC runs
+// off the main thread), so they can land after act() returns, and the answer
+// then updates the panel asynchronously. Poll in small act()-wrapped steps —
+// each step lets pending promises and React updates settle — until the
+// condition holds or a deadline passes. (One long act() would not do: React
+// commits its updates only when act() exits.)
+const settleUntil = async (check, timeoutMs = 4000) => {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 5));
+    });
+    const v = check();
+    if (v) return v;
+    if (Date.now() > deadline) throw new Error('condition not met in time');
+  }
+};
+
+// The relay command with this action — matched by action, so a slow command
+// from one test can never be mistaken for the next test's.
+const relayCommand = (action) =>
+  settleUntil(() =>
+    fetchMock.mock.calls
+      .filter(([u]) => String(u).startsWith('/api/rig-bridge/relay/command'))
+      .map(([u, o]) => ({ url: u, body: JSON.parse(o.body) }))
+      .find((c) => c.body.payload?.action === action),
+  );
+
 const button = (label) => [...container.querySelectorAll('button')].find((b) => b.textContent === label);
 
 const mount = async (props = {}) => {
@@ -191,15 +219,14 @@ describe('NbemsPanel', () => {
     const box = container.querySelector('input[aria-label="Text to transmit through fldigi"]');
     type(box, 'QST');
     await act(async () => box.form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
-    const [url, opts] = fetchMock.mock.calls.find(([u]) => u.startsWith('/api/rig-bridge/relay/command'));
+    const { url, body: sent } = await relayCommand('send');
     expect(url).toBe('/api/rig-bridge/relay/command?session=sess0001');
-    const sent = JSON.parse(opts.body);
     expect(sent).toMatchObject({ type: 'fldigi', payload: { action: 'send', body: { text: 'QST' } } });
     expect(sent.payload.token).toBeUndefined(); // no API token through the server
     expect(sent.auth).toMatchObject({ v: 1, sig: expect.stringMatching(/^[0-9a-f]{64}$/) });
     expect(container.textContent).not.toContain('Queued for transmit'); // still waiting
     emit('fldigi-cmd-result', { requestId: sent.payload.requestId, ok: true, status: 200, id: 3 });
-    await flush();
+    await settleUntil(() => container.textContent.includes('Queued for transmit'));
     expect(container.textContent).toContain('Queued for transmit');
   });
 
@@ -209,9 +236,10 @@ describe('NbemsPanel', () => {
     await mount();
     emit('fldigi', { connected: true, mode: 'BPSK31', trx: 'tx', txActive: true });
     await act(async () => button('Stop TX').click());
-    const sent = JSON.parse(fetchMock.mock.calls.find(([u]) => u.startsWith('/api/rig-bridge/relay'))[1].body);
+    const { body: sent } = await relayCommand('abort');
+    expect(sent.auth).toBeUndefined(); // no key in this browser: unsigned
     emit('fldigi-cmd-result', { requestId: sent.payload.requestId, ok: false, status: 401, error: 'refused' });
-    await flush();
+    await settleUntil(() => /refused an unsigned command/.test(container.textContent));
     expect(container.textContent).toMatch(/refused an unsigned command/);
   });
 });
