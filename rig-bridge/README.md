@@ -813,7 +813,7 @@ Text added with `text.add_tx` goes into fldigi's transmit pane, where `^r` is a 
 
 #### Forms
 
-- **Received or yours?** Everything in `WRAP/recv` was received over the air. `ICS/messages` holds whatever flmsg saved: your drafts, forms you sent, and received forms you opened and saved. flmsg records who sent a form in its header, and only when it is actually sent, so the plugin reads that: a form never sent is a draft, a form last sent by your callsign is yours, a form last sent by another station is received. Only received forms go to Field Reports, unless `flmsgIncludeLocal` is on (then yours show with a LOCAL tag). A received transfer and the copy you saved from it count once.
+- **Received or yours?** Everything in `WRAP/recv` was received over the air. `ICS/messages` holds whatever flmsg saved: your drafts, forms you sent, and received forms you opened and saved. flmsg records who sent a form in its header, and only when it is actually sent, so the plugin reads that: a form never sent is a draft, a form last sent by your callsign is yours, a form last sent by another station is received. Only received forms go to Field Reports, unless `flmsgIncludeLocal` is on (then yours show with a LOCAL tag). This needs your callsign (the plugin's **Your Callsign**, or the one set in flmsg): without it a sent form in `ICS/messages` could be yours or someone else's, so it is forwarded tagged **ORIGIN?**, and the NBEMS panel and the Rig Bridge setup page show a warning. Drafts (never sent) are recognised either way. A received transfer and the copy you saved from it count once.
 - **ICS-213** fields (incident, to/from with positions, subject, date, time, message, approved-by) are read by name. The report's text is the subject and message; the details travel with it. **HICS-213**, **radiograms** and **IARU messages** are read by their own fields (for radiograms the station of origin becomes the report's callsign). Other flmsg forms (ICS-205, ICS-214, plain text, ...) are listed under their form name with their raw fields.
 - **Positions:** an ICS-213 has no position field, so put one in the message: `GRID EM29qb`, `LAT 39.10 LON -94.58`, or a decimal pair such as `39.0997, -94.5786`. Forms without one still appear in the list.
 - **Checksums:** received transfers are checked against their CRC-16 the way flmsg checks them, including transfers whose line ends changed on the air. A mismatch shows in the report's details as `checksum: MISMATCH`; the form is still listed.
@@ -852,22 +852,22 @@ With the [Cloud Relay](#cloud-relay-plugin) running, the NBEMS panel works on a 
 #### Known limitations
 
 - A form's date setting is not part of the form; see [Dates](#form-dates).
-- Without a callsign (in the plugin or in flmsg), forms in `ICS/messages` cannot be told apart and are all treated as yours. Received transfers in `WRAP/recv` are unaffected.
+- Without a callsign (in the plugin or in flmsg), sent forms in `ICS/messages` cannot be attributed and are forwarded tagged ORIGIN?; a warning says so. Received transfers in `WRAP/recv` are unaffected.
 - flmsg's `[b128:...]` and `[b256:...]` encodings are recognised but not decoded; flmsg itself does not use them for forms.
 
 #### Troubleshooting
 
-| Problem                                             | Solution                                                                                                                               |
-| --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| NBEMS panel says _not connected_                    | Is fldigi running? Check `url` and fldigi's XML-RPC port (Configure → Misc → TCP-IP sockets)                                           |
-| Send says the API token was rejected                | Copy the token from the Rig Bridge setup page into OpenHamClock Settings → Rig Bridge                                                  |
-| "No answer from Rig Bridge through the cloud relay" | Check the Cloud Relay is running and `relayFldigi` is not `false`                                                                      |
-| No forms in Field Reports                           | `GET /api/fldigi/status` → `flmsg.dirs` shows which folders exist and `flmsg.byOrigin` what was found; check `ohcUrl` and `postErrors` |
-| Your own forms show in Field Reports                | Set **Your Callsign** (or your callsign in flmsg), and leave `flmsgIncludeLocal` off                                                   |
-| A form shows but has no map marker                  | Add `GRID ...` or `LAT ... LON ...` to the message — ICS-213 has no position field                                                     |
-| A form shows the wrong day                          | Set `flmsgDateFormat` to the date order your net uses                                                                                  |
-| Log says the LZMA decoder is missing                | Run `npm install` in the `rig-bridge` folder                                                                                           |
-| Transmission cut off after a few minutes            | The watchdog (`maxTxSeconds`) stopped it — raise it for long messages in slow modes                                                    |
+| Problem                                                   | Solution                                                                                                                               |
+| --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| NBEMS panel says _not connected_                          | Is fldigi running? Check `url` and fldigi's XML-RPC port (Configure → Misc → TCP-IP sockets)                                           |
+| Send says the API token was rejected                      | Copy the token from the Rig Bridge setup page into OpenHamClock Settings → Rig Bridge                                                  |
+| "No answer from Rig Bridge through the cloud relay"       | Check the Cloud Relay is running and `relayFldigi` is not `false`                                                                      |
+| No forms in Field Reports                                 | `GET /api/fldigi/status` → `flmsg.dirs` shows which folders exist and `flmsg.byOrigin` what was found; check `ohcUrl` and `postErrors` |
+| Forms tagged ORIGIN?, or your own forms, in Field Reports | Set **Your Callsign** (or your callsign in flmsg), and leave `flmsgIncludeLocal` off                                                   |
+| A form shows but has no map marker                        | Add `GRID ...` or `LAT ... LON ...` to the message — ICS-213 has no position field                                                     |
+| A form shows the wrong day                                | Set `flmsgDateFormat` to the date order your net uses                                                                                  |
+| Log says the LZMA decoder is missing                      | Run `npm install` in the `rig-bridge` folder                                                                                           |
+| Transmission cut off after a few minutes                  | The watchdog (`maxTxSeconds`) stopped it — raise it for long messages in slow modes                                                    |
 
 ---
 

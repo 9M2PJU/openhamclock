@@ -62,7 +62,8 @@ describe('folders and origin', () => {
     expect(classifyOrigin({ senders: [] }, 'local', 'KE8PLM')).toBe('local');
     expect(classifyOrigin({ senders: ['KE8PLM'] }, 'local', 'ke8plm-1')).toBe('local');
     expect(classifyOrigin({ senders: ['KE8PLM', 'N8TAG'] }, 'local', 'KE8PLM')).toBe('received');
-    expect(classifyOrigin({ senders: ['N8TAG'] }, 'local', '')).toBe('local');
+    expect(classifyOrigin({ senders: ['N8TAG'] }, 'local', '')).toBe('unknown'); // no callsign: can't tell
+    expect(classifyOrigin({ senders: [] }, 'local', '')).toBe('local'); // never sent is always a draft
     expect(classifyOrigin({ senders: ['N8TAG'] }, 'auto', '')).toBe('received');
     expect(classifyOrigin({ senders: [] }, 'received', 'KE8PLM')).toBe('received');
   });
@@ -82,7 +83,7 @@ describe('createFlmsgWatcher', () => {
     expect(w.scan()).toBe(0);
     expect(w.getStatus()).toMatchObject({
       formsFound: 4,
-      byOrigin: { received: 2, local: 2 },
+      byOrigin: { received: 2, local: 2, unknown: 0 },
       skipped: { notForm: 1 },
     });
   });
@@ -98,12 +99,25 @@ describe('createFlmsgWatcher', () => {
   });
 
   it('reports a received copy that turns up after a local one', () => {
-    const { w, got } = make({ stationCall: () => '' }); // unknown call → ICS/messages copy stays local
-    fs.writeFileSync(path.join(messages, 'c.213'), form('Late'));
+    const { w, got } = make();
+    fs.writeFileSync(path.join(messages, 'c.213'), form('Late', 'KE8PLM'));
     w.scan();
-    fs.writeFileSync(path.join(recv, 'extract-2.wrap'), wrapFlmsg(form('Late'), 'c.213'));
+    fs.writeFileSync(path.join(recv, 'extract-2.wrap'), wrapFlmsg(form('Late', 'KE8PLM'), 'c.213'));
     w.scan();
     expect(got.map((g) => g.r.origin)).toEqual(['local', 'received']);
+  });
+
+  it('without a station callsign, sent forms in ICS/messages are of unknown origin (drafts stay local)', () => {
+    fs.writeFileSync(path.join(messages, 'sent.213'), form('Who sent me', 'N8TAG'));
+    fs.writeFileSync(path.join(messages, 'draft.213'), form('Draft', ''));
+    const { w, got } = make({ stationCall: () => '' });
+    w.scan();
+    const by = Object.fromEntries(got.map((g) => [g.r.extra.subject, g.r.origin]));
+    expect(by).toEqual({ 'Who sent me': 'unknown', Draft: 'local' });
+    expect(w.getStatus().byOrigin).toEqual({ received: 0, local: 1, unknown: 1 });
+    // the same form arriving as a transfer is not reported a second time
+    fs.writeFileSync(path.join(recv, 'x.wrap'), wrapFlmsg(form('Who sent me', 'N8TAG'), 'x.213'));
+    expect(w.scan()).toBe(0);
   });
 
   it('picks up new and edited files after the first scan', () => {

@@ -159,6 +159,14 @@ describe('NbemsPanel', () => {
     expect(box.value).toBe('hi');
   });
 
+  it('warns when no station callsign is known, and only then', async () => {
+    await mount();
+    emit('fldigi', { connected: true, mode: 'BPSK31', trx: 'rx', stationCall: 'KE8PLM' });
+    expect(container.textContent).not.toMatch(/No station callsign/);
+    emit('fldigi', { connected: true, mode: 'BPSK31', trx: 'rx', stationCall: '' });
+    expect(container.querySelector('[role="alert"]').textContent).toMatch(/No station callsign.*ORIGIN\?/);
+  });
+
   it('notes the last flmsg form received', async () => {
     await mount();
     emit('fldigi', { connected: true, mode: 'BPSK31', trx: 'rx' });

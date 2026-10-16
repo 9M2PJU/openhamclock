@@ -1234,6 +1234,22 @@ function buildSetupHtml(version, firstRunToken = null) {
           card.appendChild(fields);
         }
 
+        // fldigi: without a station callsign (here or in flmsg) forms saved in
+        // ICS/messages cannot be told apart from your own — say so.
+        if (plugin.key === 'fldigi' && enabled) {
+          const note = document.createElement('div');
+          note.style.cssText = 'display:none; margin-top:8px; padding:8px; border:1px solid #f59e0b; border-radius:4px; color:#f59e0b; font-size:11px; line-height:1.4;';
+          card.appendChild(note);
+          fetch('/api/fldigi/status').then(r => r.json()).then(st => {
+            if (st && st.running && !st.stationCall) {
+              note.textContent = 'No station callsign: set Your Callsign here (or your callsign in flmsg). ' +
+                'Until then, forms in ICS/messages that were sent by a station cannot be told apart from your own ' +
+                'and are forwarded to Field Reports tagged "origin unknown".';
+              note.style.display = 'block';
+            }
+          }).catch(() => {});
+        }
+
         container.appendChild(card);
       });
     }

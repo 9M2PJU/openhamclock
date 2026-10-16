@@ -208,6 +208,18 @@ export default function NbemsPanel({ apiToken = '' }) {
         )}
       </div>
 
+      {status?.stationCall === '' && (
+        <div
+          role="alert"
+          style={{ ...box, color: '#f59e0b', border: '1px solid #78350f', fontSize: '10px', lineHeight: 1.4 }}
+        >
+          {t('nbems.noCallsign', {
+            defaultValue:
+              'No station callsign in Rig Bridge (fldigi plugin) or in flmsg. Forms saved in flmsg that were sent by a station cannot be told apart from your own, so they appear in Field Reports tagged ORIGIN?. Set your callsign to fix this.',
+          })}
+        </div>
+      )}
+
       {/* Receive pane */}
       <pre
         ref={rxRef}
