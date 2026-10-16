@@ -96,6 +96,22 @@ const writeTextZoom = (zoom) => {
   } catch {}
 };
 
+// Sidebar width (#1233): drag the splitter between map and sidebar. Kept per
+// browser (not synced) — the right width depends on that screen.
+const SIDEBAR_WIDTH_KEY = 'openhamclock_emcommSidebarWidth';
+const SIDEBAR_DEFAULT_W = 380;
+const SIDEBAR_MIN_W = 260;
+const SIDEBAR_MAX_W = 900;
+const MAP_MIN_W = 300; // never squeeze the map below this (6 px splitter on top)
+const readSidebarWidth = () => {
+  try {
+    const w = parseInt(localStorage.getItem(SIDEBAR_WIDTH_KEY), 10);
+    return Number.isFinite(w) ? Math.max(SIDEBAR_MIN_W, Math.min(SIDEBAR_MAX_W, w)) : SIDEBAR_DEFAULT_W;
+  } catch {
+    return SIDEBAR_DEFAULT_W;
+  }
+};
+
 const PANEL_TOOL_BTN = {
   background: 'transparent',
   color: '#888',
@@ -293,6 +309,59 @@ export default function EmcommLayout(props) {
     // Apply the new default immediately; 'remember' picks up the saved states
     setPanelStates(mode === 'remember' ? readPanelStates() : {});
   }, []);
+  const [sidebarWidth, setSidebarWidth] = useState(readSidebarWidth);
+  const mainGridRef = useRef(null);
+  const clampSidebarWidth = useCallback((w) => {
+    const total = mainGridRef.current?.clientWidth || window.innerWidth;
+    const max = Math.max(SIDEBAR_MIN_W, Math.min(SIDEBAR_MAX_W, total - MAP_MIN_W - 6));
+    return Math.round(Math.max(SIDEBAR_MIN_W, Math.min(max, w)));
+  }, []);
+  const commitSidebarWidth = useCallback(
+    (w) => {
+      const next = clampSidebarWidth(w);
+      setSidebarWidth(next);
+      try {
+        if (next === SIDEBAR_DEFAULT_W) localStorage.removeItem(SIDEBAR_WIDTH_KEY);
+        else localStorage.setItem(SIDEBAR_WIDTH_KEY, String(next));
+      } catch {}
+    },
+    [clampSidebarWidth],
+  );
+  const startSidebarDrag = useCallback(
+    (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      const grid = mainGridRef.current;
+      if (!grid) return;
+      const handle = e.currentTarget;
+      handle.setPointerCapture?.(e.pointerId);
+      let latest = sidebarWidth;
+      const onMove = (ev) => {
+        latest = clampSidebarWidth(grid.getBoundingClientRect().right - ev.clientX);
+        setSidebarWidth(latest);
+      };
+      const onUp = () => {
+        handle.removeEventListener('pointermove', onMove);
+        handle.removeEventListener('pointerup', onUp);
+        handle.removeEventListener('pointercancel', onUp);
+        document.body.style.cursor = '';
+        commitSidebarWidth(latest);
+      };
+      document.body.style.cursor = 'col-resize';
+      handle.addEventListener('pointermove', onMove);
+      handle.addEventListener('pointerup', onUp);
+      handle.addEventListener('pointercancel', onUp);
+    },
+    [sidebarWidth, clampSidebarWidth, commitSidebarWidth],
+  );
+  // A width saved on a big screen must not squeeze the map on a smaller one;
+  // re-clamp on resize without overwriting the saved preference.
+  useEffect(() => {
+    const fit = () => setSidebarWidth((w) => clampSidebarWidth(Math.max(w, readSidebarWidth())));
+    fit();
+    window.addEventListener('resize', fit);
+    return () => window.removeEventListener('resize', fit);
+  }, [clampSidebarWidth]);
   const [textZoom, setTextZoom] = useState(readTextZoom);
   const stepTextZoom = useCallback((delta) => {
     setTextZoom((prev) => {
@@ -1289,7 +1358,10 @@ export default function EmcommLayout(props) {
       </div>
 
       {/* MAIN: MAP + SIDEBAR */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 380px', overflow: 'hidden' }}>
+      <div
+        ref={mainGridRef}
+        style={{ display: 'grid', gridTemplateColumns: `minmax(0, 1fr) 6px ${sidebarWidth}px`, overflow: 'hidden' }}
+      >
         {/* MAP */}
         <div style={{ position: 'relative', overflow: 'hidden' }}>
           <WorldMap
@@ -1337,11 +1409,41 @@ export default function EmcommLayout(props) {
           />
         </div>
 
+        {/* SPLITTER — drag to resize the sidebar, arrows step it, double-click resets (#1233) */}
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize sidebar"
+          aria-valuenow={sidebarWidth}
+          aria-valuemin={SIDEBAR_MIN_W}
+          aria-valuemax={SIDEBAR_MAX_W}
+          tabIndex={0}
+          title="Drag to resize the sidebar · double-click to reset"
+          onPointerDown={startSidebarDrag}
+          onDoubleClick={() => commitSidebarWidth(SIDEBAR_DEFAULT_W)}
+          onKeyDown={(e) => {
+            if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+              e.preventDefault();
+              commitSidebarWidth(sidebarWidth + (e.key === 'ArrowLeft' ? 20 : -20));
+            }
+          }}
+          style={{
+            cursor: 'col-resize',
+            touchAction: 'none',
+            background: '#1a1a1a',
+            borderLeft: '1px solid #333',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <div style={{ width: '2px', height: '32px', borderRadius: '1px', background: '#444' }} />
+        </div>
+
         {/* SIDEBAR */}
         <div
           style={{
             background: '#111',
-            borderLeft: '1px solid #333',
             overflowY: 'auto',
             padding: '8px',
             display: 'flex',
