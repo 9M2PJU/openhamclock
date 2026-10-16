@@ -55,9 +55,19 @@ const CHANGELOG = [
         desc: 'Connect Cloud Relay now also creates a command key that goes from your browser straight to Rig Bridge and never to the server. Rig Bridge only tunes, keys or transmits for commands signed with it, and only your browser can read your rig state, decodes, APRS, MeshCom and WSJT-X data through the relay; knowing the session id is no longer enough. If you paired before this update, update Rig Bridge to 2.4.0 and re-run Connect Cloud Relay once: Settings → Rig Bridge, press Disconnect, then Connect Cloud Relay, and paste the new settings into Rig Bridge. Until you do, PTT and transmit over the relay stay off; tuning (and reading) keeps working until 31 January 2027. Also fixed: after a server restart or an idle hour, Rig Bridge could poll the relay thousands of times a second and lock itself out; it now backs off and recovers by itself. Restarting the relay no longer piles up duplicate subscriptions (#1228, by adamancini).',
       },
       {
+        icon: '🗺️',
+        title: 'APRS Switches in Settings, WSJT-X Port Sharing',
+        desc: "Settings → Map Layers → Amateur Radio now has APRS Stations and APRS Callsign Labels switches; before, the only way to hide the APRS symbols was the Dockable layout's panel header. Rig Bridge now shares the WSJT-X UDP port with GridTracker, Log4OM and other listeners instead of claiming it (#1224, by adamancini).",
+      },
+      {
+        icon: '🔧',
+        title: 'update.sh Repairs a Half-Finished Update',
+        desc: 'An update cut off part way (a dropped SSH session, or a small Pi running out of memory during the build) left the server unable to start, and running update.sh again only said "Already up to date". The script now checks the install even when there is nothing new to pull and offers to reinstall and rebuild; the automatic updater does this by itself, and ./scripts/update.sh --repair forces it. The list of changes also prints without opening a pager (#1227).',
+      },
+      {
         icon: '🩹',
-        title: 'FIX: First Run, Winlink, Globe Dots',
-        desc: 'Settings opens by itself on a first visit again, and touch devices get the Compact or Tablet layout again; a theme saved on first load had made every visit look like a return visit. The Winlink panel no longer sits on "Loading..." forever when the server cannot answer. Station dots on the 3D globe stay sharp when you zoom in (#1234, KE8PLM). The rotator panel no longer breaks a React rule that could crash it.',
+        title: 'FIX: First Run, Winlink, Globe Dots, Telemetry, Version Badge',
+        desc: 'Settings opens by itself on a first visit again, and touch devices get the Compact or Tablet layout again; a theme saved on first load had made every visit look like a return visit. The Winlink panel no longer sits on "Loading..." forever when the server cannot answer. Station dots on the 3D globe stay sharp when you zoom in (#1234, KE8PLM). The rotator panel no longer breaks a React rule that could crash it. APRS telemetry, broken on every frame since a parser rewrite, is stored again; N3FJP QSOs without a grid are placed by callsign lookup again; a satellite data error no longer hides its own message; and the version badge beside your callsign no longer shows the previous version for up to an hour after an update.',
       },
     ],
   },
