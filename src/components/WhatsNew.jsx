@@ -32,8 +32,63 @@ const CHANGELOG = [
     version: '26.11.0',
     date: '2026-11-03',
     heading:
-      'The big one. Everything a shack display should be able to do, and then the things nobody has: an opportunity feed that ranks what to chase right now, measured beacon SNR through a KiwiSDR, a 27-day outlook on the contest calendar, a station benchmark, spoken alerts, and Home Assistant integration. Twenty-two new panels, seven new map layers, seven Rig Bridge plugins, a write API with a phone remote — and a time scrubber for the whole dashboard.',
+      "The big one, built around EmComm. A served agency's paperwork (ICS 309, 214, 213, 205) filled in from what you already logged, one shared incident picture for several operators and sites, a Net Control panel, fldigi and flmsg in the layout, Winlink gateways ranked by whether you can reach them right now, a map that keeps drawing when the internet is gone, and a lightning guard that can disconnect the antenna. Beyond EmComm: CW and FT8 decoded in the browser, a Mobile layout for the phone in your go-box, a time scrubber for the whole dashboard, an opportunity feed, measured beacon SNR, spoken alerts, Home Assistant and a phone remote. Cloud Relay users: reconnect once in Settings → Rig Bridge to keep PTT over the relay (details below).",
     features: [
+      {
+        icon: '📋',
+        title: 'NEW: ICS Forms (309, 214, 213, 205)',
+        desc: 'The paperwork a served agency asks for at the end of a shift, filled in from what the EmComm layout already recorded. ICS 309 Communications Log from the event log for any operational period, with station message numbers that keep counting across operations; ICS 214 Activity Log; an ICS 213 General Message composer that can also go out over your local TNC as numbered APRS messages, picking up where it left off if the TNC drops; and an ICS 205 Radio Communications Plan built from nearby repeaters, your saved nets, simplex channels or a CHIRP export, downloadable as a CHIRP CSV to program radios. Every row is editable before you print, and Print / PDF gives just the form, black on white with the standard numbered blocks, in FEMA English or your interface language. In the EmComm rail, and as an ICS Forms panel in the Dockable layout.',
+      },
+      {
+        icon: '🤝',
+        title: 'NEW: Shared Incident',
+        desc: 'A new Incident panel at the top of the EmComm rail lets several operators and sites work one operating picture. One station creates the incident and shares its id and key (read them over the air, or scan the QR code); every joined browser then sees the same net roster, event log, field and shelter reports, ICS form drafts, running net and incident board, each entry tagged by site. The creator\'s admin key can correct or delete entries and issue a new join key if one leaks. Two sites working the same net keep both sets of changes, a "your change" chip puts yours back in one click when both touched the same station, and an offline ICS form edit never overwrites a newer one: you see theirs, the differences, and Apply mine. If the connection drops, updates wait in the browser and go out when it returns.',
+      },
+      {
+        icon: '🎙️',
+        title: 'NEW: Net Control for Voice Nets',
+        desc: 'Run a repeater or simplex net from the EmComm rail or a Dockable panel. Start one from your Nets schedule, then type a callsign and Enter to check a station in, with letters for traffic, mobile, short time, relay or in-and-out (W1AW T, W1AW/M). Names fill in from previous nets, your logbook and the callbook; duplicates are caught, and traffic stations queue up for Next and Passed. Read-aloud scripts come ready for an ARES weekly net, a SKYWARN activation and a tactical net, or write your own. Close the net for a report to copy, download as CSV or print; it also goes into the event log, the ICS 309 and the ICS 205.',
+      },
+      {
+        icon: '📨',
+        title: 'NEW: NBEMS — fldigi and flmsg in the EmComm Layout',
+        desc: "A new Rig Bridge plugin talks to fldigi. The EmComm layout gains an NBEMS panel with fldigi's mode (and a picker to change it), dial frequency, TX/RX state, a live tail of the receive pane, and a send box that returns fldigi to receive when done. A compact ICS-213 goes out as a standard flmsg transfer any flmsg accepts. ICS-213s, radiograms and other flmsg forms received over the air, compressed or not, land in Field Reports tagged NBEMS, and on the map when they carry a grid or lat/lon. Works on your network and through the Cloud Relay. Rig Bridge → Plugins → fldigi + flmsg.",
+      },
+      {
+        icon: '📬',
+        title: 'NEW: Reachable Winlink Gateways',
+        desc: "Which RMS gateways can you reach on HF right now? The Winlink panel's new Reachable tab runs an ITU-R P.533 prediction from your station to each HF gateway within range (3,000 km by default) on its own frequencies for this hour, with your power and antenna, and ranks them Good / Marginal / Closed with reliability and SNR margin. Mode thresholds come from Winlink's own simulator tests of PACTOR, VARA, ARDOP and WINMOR, with a PACTOR 4 setting. Gateways outside their published hours show as Off the air. Click one to set it as DX and, with rig control, tune it; one click copies the Pat connect string. The map layer and the EmComm layout show the same status. Works without Rig Bridge.",
+      },
+      {
+        icon: '📦',
+        title: 'NEW: Offline Map Areas',
+        desc: "Settings → Map Layers → Offline map areas (also in the EmComm rail) saves the map around your station (25, 50 or 100 km, or the current view) at a zoom range you pick, showing tile count and size before anything downloads; a cancelled or interrupted download keeps a Resume button. Each area also saves the NWS alerts, nearby shelters, repeaters within 200 km and, in the US, your state's FEMA declarations. When the internet is gone the map draws from your areas (OFFLINE TILES tag) and the EmComm panels show the newest saved copy with its time. Only basemaps whose terms allow it can be saved: USGS Topo, Plan IGN (France), GSI (Japan), Kartverket (Norway), Geoscience Australia, or your own tile server; Esri, Google, CARTO, OpenStreetMap's servers and OpenTopoMap are not offered. Needs HTTPS or localhost. On iPhone and iPad, add the app to the Home Screen or Safari deletes saved areas after 7 days unused. The EmComm rail also lists nearby repeaters with offset and tone.",
+      },
+      {
+        icon: '⚡',
+        title: 'NEW: Lightning Guard and Antenna Relay',
+        desc: 'Settings → Alerts → Lightning guard watches real-time lightning around your station, even with the map layer off: a warning inside 50 km, an alarm inside 25 km (both adjustable), the all-clear after 30 quiet minutes, and a fresh alert when it comes much closer. Tone, speech, notification, Web Push to your phone for strikes near you, a ⚡ header indicator with distance and bearing, a banner and an EmComm log entry; Simulate buttons test the whole chain. It replaces the Lightning Proximity tone and carries your settings over. Optionally a Rig Bridge GPIO relay on a Raspberry Pi disconnects the antenna at the alarm and reconnects at the all-clear; the bridge holds it if the browser goes away, and can run the guard with no browser open. The relay has not yet met a live storm or real hardware. It is a convenience, not lightning protection: keep your grounding and arrestors.',
+      },
+      {
+        icon: '🎧',
+        title: 'NEW: Decoder — CW and FT8 in the Browser',
+        desc: "A new Decoder panel listens to your receiver and decodes it inside OpenHamClock, no extra program. Feed it the rig's USB sound card or a line input and watch the waterfall. In CW, click a trace or press Find and the copy scrolls in with the measured speed (5–45 WPM) and a signal meter; if you are tuned beside a signal it offers Retune instead of printing a string of E's. In FT8 every 15-second slot is decoded on your own computer with dB, DT and audio frequency, CQs highlighted and NEW / BAND badges. It decodes most of what WSJT-X does, but not all. A new KiwiSDR Audio plugin for Rig Bridge feeds it from a remote receiver, on the hosted site too through the Cloud Relay. Needs HTTPS, localhost or the desktop app; set HTTPS_PORT=3443 and a Pi also serves the dashboard over HTTPS on your LAN.",
+      },
+      {
+        icon: '📲',
+        title: 'NEW: Mobile Layout',
+        desc: 'A phone or small tablet as the main display, for go-boxes and the field. A compact header with UTC, local time and solar chips, the map at a usable height, and panel cards you swipe through: DX Cluster, POTA / SOTA, Propagation, Solar, Satellites, Logbook with +QSO, Weather, PSK / WSJT-X, APRS, and an optional EmComm card with nearby NWS alerts, the nearest shelters and the net roster. ☰ picks the cards, ⤢ opens one full screen, and turning the phone sideways puts the map beside a card. On phones and on small or short maps (a Dockable map panel, a 7-inch kiosk) the map controls fold into a menu, a moon button and a Bands chip. Phones get it on their first visit; Settings → Display → Mobile.',
+      },
+      {
+        icon: '🔐',
+        title: 'Cloud Relay: Signed Commands, Private Reads — Reconnect Once',
+        desc: 'Connect Cloud Relay now also creates a command key that goes from your browser straight to Rig Bridge and never to the server. Rig Bridge only tunes, keys or transmits for commands signed with it, and only your browser can read your rig state, decodes and APRS through the relay; knowing the session id is no longer enough. If you paired before this update, re-run Connect Cloud Relay once: Settings → Rig Bridge, press Disconnect, then Connect Cloud Relay, and paste the new settings into Rig Bridge. Until you do, PTT and transmit over the relay stay off; tuning (and reading) keeps working until 31 January 2027. Also fixed: after a server restart or an idle hour, Rig Bridge could poll the relay thousands of times a second and lock itself out; it now backs off and recovers by itself (#1228, by adamancini).',
+      },
+      {
+        icon: '✍️',
+        title: 'QSO Form: DX Follows the Call, NEW / BAND / DUPE at a Glance',
+        desc: "As you type a call into the QSO form, the DX marker moves to that station's country or grid, and goes back if you cancel (#1225). The call field also shows the same NEW, BAND or DUPE label the cluster uses, so you know before you log whether it is a new one or a dupe (#1226). Both by KoenVdH.",
+      },
       {
         icon: '⏱️',
         title: 'NEW: Time Shift',
@@ -138,6 +193,16 @@ const CHANGELOG = [
         icon: '🎯',
         title: 'Prediction Check, Rebuilt Around Your DX',
         desc: 'The panel used to compare the model\'s "best continent" against a count of spots, which told you nothing about the path you were working. It now runs one P.533 prediction for the DE → DX circuit (re-run the moment you change DX), counts spots between your continent and the DX continent, folds in measured beacons near DX when the KiwiSDR monitor is running, and gives each band a plain status: OPEN · confirmed, OPEN · no spots yet, OPEN · model said closed, MARGINAL or CLOSED — with a one-line explanation per row and a "What am I looking at?" block. A race that could leave the old panel on its loading text for ten minutes is gone. History Playback also behaves now: scrubbing into the past hides the live DX paths so only the replayed spots show, and the control tells you when you have scrubbed past the start of the recording.',
+      },
+      {
+        icon: '🗺️',
+        title: 'APRS Switches in Settings, WSJT-X Port Sharing',
+        desc: "Settings → Map Layers → Amateur Radio now has APRS Stations and APRS Callsign Labels switches; before, the only way to hide the APRS symbols was the Dockable layout's panel header. Rig Bridge now shares the WSJT-X UDP port with GridTracker, Log4OM and other listeners instead of claiming it (#1224, by adamancini).",
+      },
+      {
+        icon: '🩹',
+        title: 'FIX: Crashes, Telemetry, First Run, a Lagging Version Badge',
+        desc: 'The Propagation panel could crash with React error #310, and the azimuthal view could crash too; both are fixed. APRS telemetry, broken on every frame since a parser rewrite, is stored again, and N3FJP QSOs without a grid are placed by callsign lookup again. Settings opens on the first visit again, with one prompt instead of a stack. The version badge beside your callsign no longer shows the previous version for up to an hour after an update, and live streams no longer hold up Update ready → Reload in Chrome. The server had blocked the microphone for every page; OpenHamClock itself may now use it (the Decoder needs it), embedded frames still may not.',
       },
       {
         icon: '📚',
