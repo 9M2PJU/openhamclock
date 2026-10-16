@@ -7,6 +7,9 @@ import {
   pulse,
   sanitizeIndicators,
   LightningRelayArbiter,
+  sanitizeGuardSettings,
+  applyGuardSettings,
+  GPIO_FEATURES,
   computeOutputs,
   physicalLevel,
   OUTPUT_NAMES,
@@ -60,6 +63,7 @@ describe('indicators + outputs', () => {
       lightningAllClearMin: null,
       lightningOverride: 'auto',
       displayId: null,
+      lightningGuard: null,
     });
     expect(sanitizeIndicators(null).countdown).toBe('off');
   });
@@ -290,5 +294,53 @@ describe('LightningRelayArbiter', () => {
     expect(a.reporters.size).toBe(0);
     for (let i = 0; i < 5; i++) a.report(`d${i}`, { relay: false }, T + i);
     expect([...a.reporters.keys()]).toEqual(['d2', 'd3', 'd4']);
+  });
+});
+
+describe('guard settings sent by a display (headless guard)', () => {
+  it('sanitizes and clamps; needs a location', () => {
+    expect(
+      sanitizeGuardSettings({
+        lat: '45.12345',
+        lon: 7.5,
+        warnKm: 900,
+        alarmKm: 600,
+        allClearMin: 0,
+        minStrikes: 2.4,
+        hysteresisPct: 33.3,
+        repeatCloser: false,
+        relayOn: 'warn',
+        extra: 'x',
+      }),
+    ).toEqual({
+      lat: 45.123,
+      lon: 7.5,
+      warnKm: 500,
+      alarmKm: 500,
+      allClearMin: 1,
+      minStrikes: 2,
+      hysteresisPct: 33,
+      repeatCloser: false,
+      relayOn: 'warn',
+    });
+    expect(sanitizeGuardSettings({ warnKm: 10 })).toBeNull();
+    expect(sanitizeGuardSettings({ lat: 95, lon: 0 })).toBeNull();
+    expect(sanitizeGuardSettings(null)).toBeNull();
+  });
+
+  it('applyGuardSettings reports only real changes and never touches enabled', () => {
+    const reported = sanitizeGuardSettings({ lat: 45, lon: 7 });
+    const cur = { enabled: true, ...reported };
+    expect(applyGuardSettings(cur, reported)).toBeNull();
+    // Config files store lat/lon as strings: "45" equals 45
+    expect(applyGuardSettings({ ...cur, lat: '45', lon: '7' }, reported)).toBeNull();
+    const next = applyGuardSettings(cur, { ...reported, alarmKm: 15 });
+    expect(next).toEqual({ ...cur, alarmKm: 15 });
+    expect(next.enabled).toBe(true);
+    expect(applyGuardSettings(cur, null)).toBeNull();
+  });
+
+  it('advertises the multi-display arbiter and guard settings for the app', () => {
+    expect(GPIO_FEATURES).toEqual(expect.arrayContaining(['lightning-arbiter', 'lightning-guard-settings']));
   });
 });

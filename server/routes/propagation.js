@@ -3,6 +3,7 @@
  */
 
 const physics = require('../utils/propagationPhysics');
+const { parseMonthParam } = require('../utils/monthParam');
 
 module.exports = function (app, ctx) {
   const {
@@ -341,7 +342,9 @@ module.exports = function (app, ctx) {
       const midLon = mid.lon;
 
       const currentHour = new Date().getUTCHours();
-      const currentMonth = new Date().getMonth() + 1;
+      // Optional ?month=1-12 (the client's display-time month); bounded, and
+      // part of the hourly cache key below, so it caches like the default.
+      const currentMonth = parseMonthParam(req.query.month, new Date().getMonth() + 1);
 
       logDebug('[Propagation] Distance:', Math.round(distance), 'km');
       logDebug('[Propagation] Solar: SFI', sfi, 'SSN', effectiveSSN, 'K', kIndex);
@@ -581,6 +584,7 @@ module.exports = function (app, ctx) {
         luf: Math.round(currentLuf * 10) / 10,
         distance: Math.round(distance),
         currentHour,
+        month: currentMonth,
         currentBands,
         hourlyPredictions: predictions,
         mode: txMode,

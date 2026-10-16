@@ -137,7 +137,9 @@ const WinlinkPanel = ({ deLocation, propConfig, solarIndices, units, onSelectGat
     }
   }, []);
 
-  if (loading) {
+  // Only block on the rig-bridge status for tabs that need it; the Reachable
+  // view runs from the gateway list alone.
+  if (loading && activeTab !== 'reach') {
     return (
       <div style={{ padding: '20px', color: 'var(--text-muted)', fontSize: '13px', textAlign: 'center' }}>
         Loading...

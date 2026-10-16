@@ -26,6 +26,16 @@ function sanitizeRelayIndicators(p) {
   }
   if (['auto', 'on', 'off'].includes(p.lightningOverride)) out.lightningOverride = p.lightningOverride;
   if (typeof p.displayId === 'string' && /^[A-Za-z0-9_-]{1,40}$/.test(p.displayId)) out.displayId = p.displayId;
+  const g = p.lightningGuard;
+  if (g && typeof g === 'object' && !Array.isArray(g)) {
+    const guard = {};
+    for (const k of ['lat', 'lon', 'warnKm', 'alarmKm', 'allClearMin', 'minStrikes', 'hysteresisPct']) {
+      if (Number.isFinite(g[k])) guard[k] = g[k];
+    }
+    if (typeof g.repeatCloser === 'boolean') guard.repeatCloser = g.repeatCloser;
+    if (g.relayOn === 'alarm' || g.relayOn === 'warn') guard.relayOn = g.relayOn;
+    out.lightningGuard = guard;
+  }
   return out;
 }
 
@@ -35,15 +45,18 @@ function sanitizeRelayIndicators(p) {
  * everything else is appended. The queue is capped at MAX_QUEUED_COMMANDS.
  * Returns the new queue.
  */
-function queueRelayCommand(commands, type, payload, now) {
+function queueRelayCommand(commands, type, payload, now, auth = null) {
   let next = Array.isArray(commands) ? commands.slice() : [];
   if (type === 'indicators') {
     const clean = sanitizeRelayIndicators(payload);
     if (!clean) return next;
     next = next.filter((c) => c.type !== 'indicators');
-    next.push({ type, payload: clean, timestamp: now });
+    // A signed command is forwarded byte-for-byte: the bridge verifies the
+    // HMAC over the browser's own payload (and sanitizes it again itself), so
+    // rewriting it here would break the signature.
+    next.push(auth ? { type, payload, auth, timestamp: now } : { type, payload: clean, timestamp: now });
   } else {
-    next.push({ type, payload, timestamp: now });
+    next.push({ type, payload, ...(auth ? { auth } : {}), timestamp: now });
   }
   return next.length > MAX_QUEUED_COMMANDS ? next.slice(-MAX_QUEUED_COMMANDS) : next;
 }

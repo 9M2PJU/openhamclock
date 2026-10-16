@@ -303,6 +303,12 @@ module.exports = function (app, ctx) {
       if (!sessionId) return res.status(400).json({ error: 'Missing session ID' });
 
       const session = getRelaySession(sessionId);
+      // A bridge holding a command key says so; from then on this server
+      // refuses unsigned commands for the session (the bridge would refuse
+      // them anyway — this just tells the browser straight away).
+      if (req.body.commandAuth === 'hmac-sha256' || req.body.commandAuth === 'none') {
+        session.commandAuth = req.body.commandAuth;
+      }
       session.state = {
         connected: req.body.connected ?? session.state.connected,
         freq: req.body.freq ?? session.state.freq,
@@ -559,16 +565,49 @@ module.exports = function (app, ctx) {
       if (!sessionId || !relaySessions.has(sessionId)) {
         return res.status(404).json({ error: 'No active relay session' });
       }
-      const { type, payload } = req.body;
-      if (!type) return res.status(400).json({ error: 'Missing command type' });
+      const { type, payload, auth } = req.body;
+      if (!type || typeof type !== 'string' || type.length > 40) {
+        return res.status(400).json({ error: 'Missing command type' });
+      }
+      let payloadJson = '';
+      try {
+        payloadJson = JSON.stringify(payload ?? {});
+      } catch {
+        return res.status(400).json({ error: 'Invalid payload' });
+      }
+      if (payloadJson.length > 16384) return res.status(413).json({ error: 'Command too large' });
+
+      // End-to-end command signature (rig-bridge/lib/relay-sign.js). This
+      // server cannot check it — only the browser and the bridge hold the key
+      // — so it only checks the shape and passes it on.
+      let cleanAuth = null;
+      if (auth != null) {
+        const ok =
+          typeof auth === 'object' &&
+          auth.v === 1 &&
+          Number.isFinite(auth.ts) &&
+          typeof auth.nonce === 'string' &&
+          /^[0-9a-f]{16,64}$/.test(auth.nonce) &&
+          typeof auth.sig === 'string' &&
+          /^[0-9a-f]{64}$/.test(auth.sig);
+        if (!ok) return res.status(400).json({ error: 'Malformed command signature' });
+        cleanAuth = { v: 1, ts: auth.ts, nonce: auth.nonce, sig: auth.sig };
+      }
 
       const session = relaySessions.get(sessionId);
       if (type === 'indicators' && !sanitizeRelayIndicators(payload)) {
         return res.status(400).json({ error: 'Invalid indicators payload' });
       }
+      if (session.commandAuth === 'hmac-sha256' && !cleanAuth) {
+        return res.status(401).json({
+          error:
+            'Rig Bridge requires signed commands — re-run Connect Cloud Relay in Settings → Rig Bridge on this browser',
+        });
+      }
       // Display indicators (incl. the lightning relay request) are state, not
-      // actions: only the newest is kept queued, whitelisted (see utils).
-      session.commands = queueRelayCommand(session.commands, type, payload, Date.now());
+      // actions: only the newest is kept queued, whitelisted (see utils). The
+      // end-to-end signature travels with the command, untouched.
+      session.commands = queueRelayCommand(session.commands, type, payload, Date.now(), cleanAuth);
 
       // Wake any long-polling rig-bridge connection — delivers command immediately
       // instead of waiting for the next poll tick (up to pollInterval ms).

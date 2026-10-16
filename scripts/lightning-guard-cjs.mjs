@@ -1,15 +1,18 @@
 /**
- * Generate rig-bridge/lib/lightning-guard-logic.js (CommonJS) from the single
- * source of the lightning guard logic, src/utils/lightningGuard.js (ESM).
+ * Generate CommonJS copies of the single source of the lightning guard logic,
+ * src/utils/lightningGuard.js (ESM), for the two Node consumers:
+ *   rig-bridge/lib/lightning-guard-logic.js   Rig Bridge's headless guard
+ *   server/utils/lightning-guard-logic.js     the server's strike verification
  *
- * Rig Bridge is packaged on its own (pkg binaries, standalone installs), so it
- * cannot require files from src/, and Vite cannot serve a CommonJS source file
- * to the browser — so the bridge gets a mechanically generated copy instead of
- * a hand-maintained duplicate. rig-bridge/lib/lightning-guard-logic.test.js
- * regenerates in memory and fails when the committed copy is stale.
+ * Rig Bridge is packaged on its own (pkg binaries, standalone installs) and the
+ * server image ships neither src/ nor rig-bridge/, and Vite cannot serve a
+ * CommonJS source file to the browser — so each gets a mechanically generated
+ * copy instead of a hand-maintained duplicate.
+ * rig-bridge/lib/lightning-guard-logic.test.js regenerates in memory and fails
+ * when a committed copy is stale.
  *
  *   npm run lightning:sync      write the copy
- *   npm run lightning:sync -- --check   exit 1 when it is stale
+ *   npm run lightning:sync -- --check   exit 1 when a copy is stale
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -19,6 +22,7 @@ import prettier from 'prettier';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const SOURCE = path.join(ROOT, 'src/utils/lightningGuard.js');
 export const TARGET = path.join(ROOT, 'rig-bridge/lib/lightning-guard-logic.js');
+export const TARGETS = [TARGET, path.join(ROOT, 'server/utils/lightning-guard-logic.js')];
 
 const HEADER = `'use strict';
 /**
@@ -44,27 +48,31 @@ export function toCommonJs(source) {
   return `${HEADER}\n${body.trimEnd()}\n\nmodule.exports = {\n${names.map((n) => `  ${n},`).join('\n')}\n};\n`;
 }
 
-/** The exact text the generated file should contain (prettier-formatted). */
-export async function generate() {
+/** The exact text a generated file should contain (prettier-formatted). */
+export async function generate(target = TARGET) {
   const cjs = toCommonJs(fs.readFileSync(SOURCE, 'utf8'));
-  const options = (await prettier.resolveConfig(TARGET)) || {};
-  return prettier.format(cjs, { ...options, filepath: TARGET });
+  const options = (await prettier.resolveConfig(target)) || {};
+  return prettier.format(cjs, { ...options, filepath: target });
 }
 
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isMain) {
-  const text = await generate();
-  const current = fs.existsSync(TARGET) ? fs.readFileSync(TARGET, 'utf8') : '';
-  if (process.argv.includes('--check')) {
-    if (current !== text) {
-      console.error('❌ rig-bridge/lib/lightning-guard-logic.js is stale — run `npm run lightning:sync`');
-      process.exit(1);
+  let stale = false;
+  for (const target of TARGETS) {
+    const rel = path.relative(ROOT, target);
+    const text = await generate(target);
+    const current = fs.existsSync(target) ? fs.readFileSync(target, 'utf8') : '';
+    if (process.argv.includes('--check')) {
+      if (current !== text) {
+        console.error(`❌ ${rel} is stale — run \`npm run lightning:sync\``);
+        stale = true;
+      } else console.log(`✅ ${rel} is up to date`);
+    } else if (current !== text) {
+      fs.writeFileSync(target, text);
+      console.log(`Wrote ${rel}`);
+    } else {
+      console.log(`${rel} already up to date`);
     }
-    console.log('✅ rig-bridge/lib/lightning-guard-logic.js is up to date');
-  } else if (current !== text) {
-    fs.writeFileSync(TARGET, text);
-    console.log('Wrote rig-bridge/lib/lightning-guard-logic.js');
-  } else {
-    console.log('rig-bridge/lib/lightning-guard-logic.js already up to date');
   }
+  if (stale) process.exit(1);
 }

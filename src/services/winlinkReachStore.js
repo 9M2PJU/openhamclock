@@ -55,6 +55,7 @@ const SSN_REFRESH_MS = 60 * 60 * 1000;
 const HOUR_TICK_MS = 60 * 1000;
 const RANGE_KEY = 'ohc_winlinkReachRangeKm';
 const THRESHOLDS_KEY = 'ohc_winlinkReachThresholds';
+const PACTOR4_KEY = 'ohc_winlinkReachPactor4';
 
 /** Consumer priorities: whose parameters win when several are registered. */
 export const REACH_PRIORITY = { panel: 3, emcomm: 2, layer: 1 };
@@ -65,6 +66,14 @@ function loadRange() {
     return RANGE_OPTIONS_KM.includes(v) ? v : DEFAULT_RANGE_KM;
   } catch {
     return DEFAULT_RANGE_KM;
+  }
+}
+
+function loadPactor4() {
+  try {
+    return localStorage.getItem(PACTOR4_KEY) === '1';
+  } catch {
+    return false;
   }
 }
 
@@ -104,7 +113,7 @@ let currentLocal = new Map();
 let forceNext = false;
 let nonce = 0;
 
-let state = makeState({ rangeKm: loadRange(), thresholds: loadThresholds() });
+let state = makeState({ rangeKm: loadRange(), thresholds: loadThresholds(), pactor4: loadPactor4() });
 
 function makeState(over = {}) {
   return {
@@ -124,6 +133,7 @@ function makeState(over = {}) {
     byCall: null,
     rangeKm: DEFAULT_RANGE_KM,
     thresholds: { ...DEFAULT_THRESHOLDS },
+    pactor4: false,
     ...over,
   };
 }
@@ -186,6 +196,24 @@ export function setReachThresholds(t) {
   }
   setState({ thresholds: next });
   recompose(); // classification only — no engine work
+}
+
+/**
+ * "My modem supports PACTOR 4": P4-capable gateways are then scored against
+ * the SCS −19 dB floor instead of PACTOR 3's. Changes the engine input, so
+ * it re-runs (cached per setting — toggling back costs nothing).
+ */
+export function setReachPactor4(on) {
+  const v = !!on;
+  try {
+    localStorage.setItem(PACTOR4_KEY, v ? '1' : '0');
+  } catch {
+    /* storage unavailable */
+  }
+  if (v !== state.pactor4) {
+    setState({ pactor4: v });
+    scheduleReconcile();
+  }
 }
 
 export function refreshReach() {
@@ -306,7 +334,7 @@ function serialRest(fn) {
   return p;
 }
 
-async function restPredict(cand, job, de, power, antenna, hour) {
+async function restPredict(cand, job, de, power, antenna, hour, month) {
   return serialRest(async () => {
     const params = new URLSearchParams({
       deLat: de.lat.toFixed(2),
@@ -316,6 +344,9 @@ async function restPredict(cand, job, de, power, antenna, hour) {
       mode: restFallbackMode(job.requiredSNR),
       power: String(power),
       antenna,
+      // Display-time month: the server runs (and caches) that month's model;
+      // the hour is read from the returned 24-hour series.
+      month: String(month),
     });
     const res = await apiFetch(`/api/propagation?${params}`);
     if (!res) throw new Error('rate limited');
@@ -414,7 +445,9 @@ function reconcile() {
   const antenna = propConfig?.antenna || 'isotropic';
   const ssnBucket = Math.round((Number.isFinite(ssn) ? ssn : 100) / 10) * 10;
   const rangeKm = state.rangeKm;
+  const pactor4 = !!state.pactor4;
   const runKey = [
+    pactor4 ? 'p4' : 'p3',
     de.lat.toFixed(1),
     de.lon.toFixed(1),
     rangeKm,
@@ -439,6 +472,7 @@ function reconcile() {
   const sel = selectCandidates(gateways, de, {
     rangeKm,
     hour,
+    pactor4,
     maxPredictions: restOnly ? MAX_PREDICTIONS_REST : MAX_PREDICTIONS_PER_REFRESH,
   });
   const txGain = (ANTENNA_PROFILES[antenna] || ANTENNA_PROFILES.isotropic).gain;
@@ -486,7 +520,7 @@ function reconcile() {
       try {
         const result = await predictInWorker(buildPredictionParams(cand, job, de, ctx));
         entry = {
-          scored: scoreChannels(job.channels, result.frequencies, job.requiredSNR),
+          scored: scoreChannels(job.channels, result.frequencies, job.requiredSNR, { muf: result.muf }),
           engine: 'wasm',
           updatedAt: Date.now(),
         };
@@ -498,7 +532,7 @@ function reconcile() {
     if (!entry) {
       if (restUsed >= MAX_PREDICTIONS_REST) return null;
       restUsed++;
-      entry = await restPredict(cand, job, de, power, antenna, hour);
+      entry = await restPredict(cand, job, de, power, antenna, hour, month);
     }
     if (entry) {
       cachePut(resultCache, job.key, entry);
@@ -539,5 +573,5 @@ export function __resetWinlinkReachStoreForTests() {
   currentLocal = new Map();
   forceNext = false;
   nonce = 0;
-  state = makeState({ rangeKm: loadRange(), thresholds: loadThresholds() });
+  state = makeState({ rangeKm: loadRange(), thresholds: loadThresholds(), pactor4: loadPactor4() });
 }

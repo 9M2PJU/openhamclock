@@ -13,9 +13,10 @@
  *   - direct: POST straight to the bridge, like rig tuning, with the bridge
  *     API token when one is set.
  *   - cloud relay: queued on the hosted server as a 'fldigi' relay command
- *     carrying the same token; the bridge runs it against its own routes with
- *     that token (never its own) and answers with a 'fldigi-cmd-result' event,
- *     which this hook waits for.
+ *     signed with this browser's relay command key; the bridge checks the
+ *     signature, runs it against its own routes and answers with a
+ *     'fldigi-cmd-result' event, which this hook waits for. No API token
+ *     passes through the server.
  *
  * @param {object} [opts]
  * @param {string} [opts.apiToken]        Rig Bridge API token (config.rigControl.apiToken)
@@ -24,6 +25,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRig } from '../contexts/RigContext.jsx';
+import { sendRelayCommand } from '../utils/relaySign';
 
 const FETCH_TIMEOUT_MS = 5000;
 
@@ -100,26 +102,20 @@ export function useFldigi({ apiToken = '', rxMax = 4000, relayTimeoutMs = 20000 
           if (waiters.current.delete(requestId)) resolve({ ok: false, error: 'relay-timeout' });
         }, relayTimeoutMs);
       });
-      try {
-        const res = await fetch(`/api/rig-bridge/relay/command?session=${encodeURIComponent(cloudRelaySession)}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ type: 'fldigi', payload: { action, body: body || {}, token: apiToken, requestId } }),
-          signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-        });
-        if (!res.ok) {
-          waiters.current.delete(requestId);
-          return { ok: false, status: res.status, error: res.status === 404 ? 'relay-inactive' : `HTTP ${res.status}` };
-        }
-      } catch {
+      // Signed with this browser's relay command key (utils/relaySign); no
+      // Rig Bridge API token travels through the server.
+      const sent = await sendRelayCommand(cloudRelaySession, 'fldigi', { action, body: body || {}, requestId });
+      if (!sent.ok) {
         waiters.current.delete(requestId);
-        return { ok: false, error: 'unreachable' };
+        if (sent.status === 404) return { ok: false, status: 404, error: 'relay-inactive' };
+        if (sent.status === 401) return { ok: false, status: 401, error: 'relay-unsigned' };
+        return { ok: false, status: sent.status, error: sent.error };
       }
       const r = await result;
       if (r.ok) return r;
       return { ...r, ok: false, error: r.error || `HTTP ${r.status}` };
     },
-    [cloudRelaySession, apiToken, relayTimeoutMs],
+    [cloudRelaySession, relayTimeoutMs],
   );
 
   const post = useCallback(

@@ -17,8 +17,10 @@
  *       last hdr_fm call = this station  → this station sent it
  *       last hdr_fm call = someone else  → received, then saved here
  *
- * Every record gets `origin`: 'received' or 'local'. Folders other than
- * these two are classified by the same hdr_fm rule.
+ * Every record gets `origin`: 'received', 'local', or 'unknown' — a form
+ * that was sent by someone but we do not know this station's callsign, so
+ * we cannot say whether it was us. Folders other than these two are
+ * classified by the same hdr_fm rule.
  *
  * Files are read as raw bytes (WRAP checksums count bytes), tracked by
  * path + mtime + size, and de-duplicated by the form id from flmsg-format, so a
@@ -62,9 +64,10 @@ function classifyOrigin(record, kind, stationCall) {
     .toUpperCase()
     .split('-')[0];
   if (me) return last.split('-')[0] === me ? 'local' : 'received';
-  // No callsign known: in ICS/messages we cannot tell sent from received — stay
-  // conservative; in another folder the operator chose, a sender means received.
-  return kind === 'local' ? 'local' : 'received';
+  // No callsign known: in ICS/messages a sent form may be ours or someone
+  // else's — say so rather than guess; in another folder the operator chose,
+  // a sender means received.
+  return kind === 'local' ? 'unknown' : 'received';
 }
 
 /**
@@ -98,7 +101,7 @@ function createFlmsgWatcher(opts) {
   let firstScanDone = false;
   let running = false;
   let formsFound = 0;
-  const byOrigin = { received: 0, local: 0 };
+  const byOrigin = { received: 0, local: 0, unknown: 0 };
   let lastScan = null;
   let lastError = null;
   const skipped = { compressed: 0, corrupt: 0, unreadable: 0, notForm: 0 };
@@ -143,8 +146,9 @@ function createFlmsgWatcher(opts) {
     }
     const origin = classifyOrigin(record, kind, stationCall());
     const prev = seen.get(record.id);
-    // Already reported as received, or as the same origin → nothing new.
-    if (prev === 'received' || prev === origin) return;
+    // Already reported as received / unknown (both forwarded), or with the
+    // same origin → nothing new.
+    if (prev === 'received' || prev === 'unknown' || prev === origin) return;
     remember(record.id, origin);
     if (initial && maxAgeMs > 0 && Date.now() - st.mtimeMs > maxAgeMs) return; // old traffic
     formsFound++;

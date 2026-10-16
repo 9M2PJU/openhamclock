@@ -1043,6 +1043,8 @@ function buildSetupHtml(version, firstRunToken = null) {
         { id: 'session', label: 'Session ID', type: 'text', default: '' },
         { id: 'pushInterval', label: 'Push Interval (ms)', type: 'number', default: 2000 },
         { id: 'pollInterval', label: 'Poll Interval (ms)', type: 'number', default: 1000 },
+        { id: 'commandKey', label: 'Command Key (from Connect Cloud Relay)', type: 'text', default: '' },
+        { id: 'allowUnsigned', label: 'Accept unsigned commands (unsafe)', type: 'checkbox', default: false },
       ]},
       { key: 'meshcom', name: 'MeshCom UDP', maturity: 'beta', desc: 'Receive MeshCom LoRa mesh node positions, messages and telemetry via UDP JSON (port 1799)', fields: [
         { id: 'bindPort', label: 'UDP Listen Port', type: 'number', default: 1799 },
@@ -1237,6 +1239,22 @@ function buildSetupHtml(version, firstRunToken = null) {
           });
 
           card.appendChild(fields);
+        }
+
+        // fldigi: without a station callsign (here or in flmsg) forms saved in
+        // ICS/messages cannot be told apart from your own — say so.
+        if (plugin.key === 'fldigi' && enabled) {
+          const note = document.createElement('div');
+          note.style.cssText = 'display:none; margin-top:8px; padding:8px; border:1px solid #f59e0b; border-radius:4px; color:#f59e0b; font-size:11px; line-height:1.4;';
+          card.appendChild(note);
+          fetch('/api/fldigi/status').then(r => r.json()).then(st => {
+            if (st && st.running && !st.stationCall) {
+              note.textContent = 'No station callsign: set Your Callsign here (or your callsign in flmsg). ' +
+                'Until then, forms in ICS/messages that were sent by a station cannot be told apart from your own ' +
+                'and are forwarded to Field Reports tagged "origin unknown".';
+              note.style.display = 'block';
+            }
+          }).catch(() => {});
         }
 
         container.appendChild(card);
@@ -2735,6 +2753,23 @@ function createServer(registry, version) {
   // plugins such as GPIO can drive LEDs and relays. Any
   // plugin may subscribe with pluginBus.on('indicators', fn).
   let lastIndicators = null;
+  const GUARD_KEYS = [
+    'lat',
+    'lon',
+    'warnKm',
+    'alarmKm',
+    'allClearMin',
+    'minStrikes',
+    'hysteresisPct',
+    'repeatCloser',
+    'relayOn',
+  ];
+  const pickGuardSettings = (g) =>
+    Object.fromEntries(
+      GUARD_KEYS.filter((k) => typeof g[k] === 'number' || typeof g[k] === 'boolean' || typeof g[k] === 'string').map(
+        (k) => [k, typeof g[k] === 'string' ? g[k].slice(0, 16) : g[k]],
+      ),
+    );
   app.post('/api/indicators', requireAuth, indicatorLimiter, (req, res) => {
     const body = req.body && typeof req.body === 'object' ? req.body : {};
     const clean = {
@@ -2750,6 +2785,10 @@ function createServer(registry, version) {
         ? { lightningAllClearMin: Math.min(240, Math.max(1, Math.round(body.lightningAllClearMin))) }
         : {}),
       ...(['auto', 'on', 'off'].includes(body.lightningOverride) ? { lightningOverride: body.lightningOverride } : {}),
+      // Guard settings + location for the headless guard (sanitized again by the GPIO plugin)
+      ...(body.lightningGuard && typeof body.lightningGuard === 'object' && !Array.isArray(body.lightningGuard)
+        ? { lightningGuard: pickGuardSettings(body.lightningGuard) }
+        : {}),
       // Stable per-display id so several displays can each hold a claim on the relay
       ...(typeof body.displayId === 'string' && /^[A-Za-z0-9_-]{1,40}$/.test(body.displayId)
         ? { displayId: body.displayId }

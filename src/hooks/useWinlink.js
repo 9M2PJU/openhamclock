@@ -22,7 +22,12 @@ export function useWinlink() {
   const fetchStatus = useCallback(async () => {
     try {
       const res = await apiFetch('/api/winlink/status');
-      if (!res || !res.ok) return;
+      if (!res || !res.ok) {
+        // No status endpoint (or rate-limited): stop "loading" — the panel's
+        // Reachable view works from the gateway list alone.
+        if (mountedRef.current) setLoading(false);
+        return;
+      }
       const data = await res.json();
       if (mountedRef.current) {
         setStatus(data);

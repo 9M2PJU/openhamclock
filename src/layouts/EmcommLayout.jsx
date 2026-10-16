@@ -86,7 +86,8 @@ const PANEL_TOOL_BTN = {
 };
 import { winlinkModeLabel, winlinkModeColor } from '../utils/winlinkModes.js';
 import { useWinlinkReach, REACH_PRIORITY } from '../hooks/useWinlinkReach.js';
-import { STATUS_COLORS, STATUS_ORDER, reachColorKey } from '../utils/winlinkReach.js';
+import { STATUS_COLORS, STATUS_ORDER, reachColorKey, reachMarkerStyle } from '../utils/winlinkReach.js';
+import { reachPopupLine } from '../utils/winlinkReachPopup.js';
 import { stationAgeMinutes, formatStationAge } from '../utils/aprsStationAge.js';
 import { requestMapFocus } from '../utils/mapFocus.js';
 import {
@@ -919,48 +920,6 @@ export default function EmcommLayout(props) {
       overlayLayersRef.current.push(marker);
     });
 
-    // Winlink gateway markers — match the panel data exactly. Closest 25 get
-    // a thin EMCOMM-aware ring; the rest are small mode-coloured dots so the
-    // dashboard shows full coverage without drowning out APRS/shelter pins.
-    winlinkGateways.forEach((gw, idx) => {
-      const channelsByFreq = gw.channels.slice().sort((a, b) => a.frequency - b.frequency);
-      const dominantMode = channelsByFreq[0]?.mode;
-      const color = winlinkModeColor(dominantMode);
-      const isNearby = idx < 25;
-      const marker = L.circleMarker([gw.lat, gw.lon], {
-        radius: isNearby ? 5 : 3,
-        color: gw.hasEmcomm ? '#ef4444' : color,
-        fillColor: color,
-        fillOpacity: isNearby ? 0.7 : 0.45,
-        weight: gw.hasEmcomm ? 2 : 1,
-      });
-      const channelRows = channelsByFreq
-        .slice(0, 6)
-        .map(
-          (c) =>
-            `<tr><td style="padding:1px 6px 1px 0;color:#aaa">${(c.frequency / 1e6).toFixed(3)}</td>` +
-            `<td style="padding:1px 6px 1px 0;color:${winlinkModeColor(c.mode)};font-weight:600">${esc(c.modeLabel)}</td>` +
-            `<td style="padding:1px 0;color:#888;font-size:9px">${esc(c.serviceCode)}</td></tr>`,
-        )
-        .join('');
-      const moreCount = channelsByFreq.length - 6;
-      const distanceLine =
-        gw.distance != null
-          ? `<br><span style="color:#888">${formatDistance(gw.distance, config.allUnits?.dist || 'imperial')} away</span>`
-          : '';
-      const popupHtml = `
-        <div style="font-family:var(--font-mono);font-size:11px;min-width:180px">
-          <b style="color:#3b82f6">📬 ${esc(gw.callsign)}</b>
-          ${gw.hasEmcomm ? ' <span style="color:#ef4444;font-size:9px;font-weight:700">EMCOMM</span>' : ''}
-          <br><span style="color:#888;font-size:10px">Grid ${esc(gw.gridsquare)}</span>${distanceLine}
-          <table style="border-collapse:collapse;font-size:10px;margin-top:4px">${channelRows}</table>
-          ${moreCount > 0 ? `<div style="color:#666;font-size:9px;margin-top:3px">+${moreCount} more channel${moreCount === 1 ? '' : 's'}</div>` : ''}
-        </div>`;
-      marker.bindPopup(popupHtml);
-      marker.addTo(map);
-      overlayLayersRef.current.push(marker);
-    });
-
     // Field report markers (Winlink Express forms via rig-bridge) — clipboard icon
     displayFieldReports.forEach((r) => {
       if (r.lat == null || r.lon == null) return;
@@ -994,7 +953,74 @@ export default function EmcommLayout(props) {
       });
       overlayLayersRef.current = [];
     };
-  }, [config.location, alerts, mergedShelters, emcommStationsWithDistance, winlinkGateways, displayFieldReports]);
+  }, [config.location, alerts, mergedShelters, emcommStationsWithDistance, displayFieldReports]);
+
+  // Winlink gateway markers — their own layer set so reachability updates
+  // (throttled to 1/s while predictions stream in) redraw only these, not the
+  // alert/shelter/station overlays. Coloured like the Winlink Gateways map
+  // layer: predicted status when the shared runner has results (grey, faded
+  // dots for gateways it did not predict), mode family otherwise. The
+  // EMCOMM red ring and the nearest-25 emphasis are kept.
+  const winlinkLayersRef = useRef([]);
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!map || typeof window.L === 'undefined') return undefined;
+    const L = window.L;
+    const byCall = winlinkReach.byCall;
+    const units = config.allUnits?.dist || 'imperial';
+
+    winlinkGateways.forEach((gw, idx) => {
+      const channelsByFreq = gw.channels.slice().sort((a, b) => a.frequency - b.frequency);
+      const modeColor = winlinkModeColor(channelsByFreq[0]?.mode);
+      const isNearby = idx < 25;
+      const style = reachMarkerStyle(byCall, gw.callsign, { opacity: 1, modeColor });
+      const radius = byCall ? (style.dim ? 3 : isNearby ? 6 : 5) : isNearby ? 5 : 3;
+      const fillOpacity = byCall ? (style.dim ? 0.35 : 0.8) : isNearby ? 0.7 : 0.45;
+      const marker = L.circleMarker([gw.lat, gw.lon], {
+        radius,
+        color: gw.hasEmcomm ? '#ef4444' : style.fillColor,
+        fillColor: style.fillColor,
+        fillOpacity,
+        weight: gw.hasEmcomm ? 2 : 1,
+      });
+      const channelRows = channelsByFreq
+        .slice(0, 6)
+        .map(
+          (c) =>
+            `<tr><td style="padding:1px 6px 1px 0;color:#aaa">${(c.frequency / 1e6).toFixed(3)}</td>` +
+            `<td style="padding:1px 6px 1px 0;color:${winlinkModeColor(c.mode)};font-weight:600">${esc(c.modeLabel)}</td>` +
+            `<td style="padding:1px 0;color:#888;font-size:9px">${esc(c.serviceCode)}</td></tr>`,
+        )
+        .join('');
+      const moreCount = channelsByFreq.length - 6;
+      const distanceLine =
+        gw.distance != null ? `<br><span style="color:#888">${formatDistance(gw.distance, units)} away</span>` : '';
+      const reachHtml = byCall ? reachPopupLine(byCall[gw.callsign], t) : '';
+      const popupHtml = `
+        <div style="font-family:var(--font-mono);font-size:11px;min-width:180px">
+          <b style="color:#3b82f6">📬 ${esc(gw.callsign)}</b>
+          ${gw.hasEmcomm ? ' <span style="color:#ef4444;font-size:9px;font-weight:700">EMCOMM</span>' : ''}
+          <br><span style="color:#888;font-size:10px">Grid ${esc(gw.gridsquare)}</span>${distanceLine}
+          ${reachHtml ? `<div style="margin-top:4px">${reachHtml}</div>` : ''}
+          <table style="border-collapse:collapse;font-size:10px;margin-top:4px">${channelRows}</table>
+          ${moreCount > 0 ? `<div style="color:#666;font-size:9px;margin-top:3px">+${moreCount} more channel${moreCount === 1 ? '' : 's'}</div>` : ''}
+        </div>`;
+      marker.bindPopup(popupHtml);
+      marker.addTo(map);
+      winlinkLayersRef.current.push(marker);
+    });
+
+    return () => {
+      winlinkLayersRef.current.forEach((layer) => {
+        try {
+          map.removeLayer(layer);
+        } catch (e) {
+          /* ignore */
+        }
+      });
+      winlinkLayersRef.current = [];
+    };
+  }, [winlinkGateways, winlinkReach.byCall, config.allUnits?.dist, t]);
 
   // Click shelter to pan map
   // Bring a panel row's target (shelter, station, gateway, roster op, field
@@ -1874,6 +1900,17 @@ export default function EmcommLayout(props) {
                           style={{ marginLeft: '4px', fontSize: '8px', fontWeight: 700, color: '#888' }}
                         >
                           {t('emcomm.fieldReports.local', { defaultValue: 'LOCAL' })}
+                        </span>
+                      )}
+                      {r?.extra?.origin === 'unknown' && (
+                        <span
+                          title={t('emcomm.fieldReports.originUnknownTitle', {
+                            defaultValue:
+                              'Saved in flmsg after being sent by a station; with no callsign set, Rig Bridge cannot tell whether that was you',
+                          })}
+                          style={{ marginLeft: '4px', fontSize: '8px', fontWeight: 700, color: '#f59e0b' }}
+                        >
+                          {t('emcomm.fieldReports.originUnknown', { defaultValue: 'ORIGIN?' })}
                         </span>
                       )}
                     </div>

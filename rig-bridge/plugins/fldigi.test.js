@@ -408,6 +408,23 @@ describe('fldigi plugin — flmsg forms', () => {
     b.inst.disconnect();
   });
 
+  it('forwards forms of unknown origin, tagged, and reports the missing callsign in status', async () => {
+    vi.useFakeTimers();
+    const watcher = { start() {}, stop() {}, getStatus: () => ({}) };
+    const { inst, posted, events, watcherOpts } = make({}, { watcher }); // no callsign anywhere
+    inst.connect();
+    watcherOpts().onForm(
+      { id: 'u', callsign: 'N8TAG', formType: 'ICS-213 (NBEMS)', extra: {}, origin: 'unknown' },
+      'f',
+    );
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(posted[0]).toMatchObject({ id: 'u', receivedVia: 'nbems-flmsg', extra: { origin: 'unknown' } });
+    expect(events.some((e) => e.ev === 'nbems-form')).toBe(true);
+    await inst.pollOnce();
+    expect(events.filter((e) => e.ev === 'fldigi').pop().d.stationCall).toBe('');
+    inst.disconnect();
+  });
+
   it('gives the watcher the station call and date order (flmsg prefs, then locale)', () => {
     const watcher = { start() {}, stop() {}, getStatus: () => ({}) };
     const a = make({}, { watcher, prefs: { dtformat: 2, mycall: 'W1AW' } });

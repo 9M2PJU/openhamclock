@@ -55,6 +55,7 @@ const mount = async (props = {}) => {
 beforeEach(() => {
   rig.isCloudRelay = false;
   rig.cloudRelaySession = '';
+  localStorage.removeItem('ohc-relay-command-key');
   fetchMock = vi.fn(async (url) => {
     if (url.endsWith('/api/fldigi/status')) {
       return { ok: true, json: async () => ({ enabled: true, running: true, modes: ['BPSK31', 'MT63-2KL'] }) };
@@ -158,6 +159,14 @@ describe('NbemsPanel', () => {
     expect(box.value).toBe('hi');
   });
 
+  it('warns when no station callsign is known, and only then', async () => {
+    await mount();
+    emit('fldigi', { connected: true, mode: 'BPSK31', trx: 'rx', stationCall: 'KE8PLM' });
+    expect(container.textContent).not.toMatch(/No station callsign/);
+    emit('fldigi', { connected: true, mode: 'BPSK31', trx: 'rx', stationCall: '' });
+    expect(container.querySelector('[role="alert"]').textContent).toMatch(/No station callsign.*ORIGIN\?/);
+  });
+
   it('notes the last flmsg form received', async () => {
     await mount();
     emit('fldigi', { connected: true, mode: 'BPSK31', trx: 'rx' });
@@ -173,9 +182,10 @@ describe('NbemsPanel', () => {
     expect(container.textContent).toMatch(/through the cloud relay/);
   });
 
-  it('in cloud-relay mode, sends through the hosted server with the token and waits for the result', async () => {
+  it('in cloud-relay mode, sends a signed command through the hosted server and waits for the result', async () => {
     rig.isCloudRelay = true;
     rig.cloudRelaySession = 'sess0001';
+    localStorage.setItem('ohc-relay-command-key', 'e'.repeat(64));
     await mount({ apiToken: 'tok' });
     emit('fldigi', { connected: true, mode: 'BPSK31', trx: 'rx' });
     const box = container.querySelector('input[aria-label="Text to transmit through fldigi"]');
@@ -184,22 +194,24 @@ describe('NbemsPanel', () => {
     const [url, opts] = fetchMock.mock.calls.find(([u]) => u.startsWith('/api/rig-bridge/relay/command'));
     expect(url).toBe('/api/rig-bridge/relay/command?session=sess0001');
     const sent = JSON.parse(opts.body);
-    expect(sent).toMatchObject({ type: 'fldigi', payload: { action: 'send', body: { text: 'QST' }, token: 'tok' } });
+    expect(sent).toMatchObject({ type: 'fldigi', payload: { action: 'send', body: { text: 'QST' } } });
+    expect(sent.payload.token).toBeUndefined(); // no API token through the server
+    expect(sent.auth).toMatchObject({ v: 1, sig: expect.stringMatching(/^[0-9a-f]{64}$/) });
     expect(container.textContent).not.toContain('Queued for transmit'); // still waiting
     emit('fldigi-cmd-result', { requestId: sent.payload.requestId, ok: true, status: 200, id: 3 });
     await flush();
     expect(container.textContent).toContain('Queued for transmit');
   });
 
-  it('in cloud-relay mode, shows the bridge’s refusal of a bad token', async () => {
+  it('in cloud-relay mode, explains a command Rig Bridge refused', async () => {
     rig.isCloudRelay = true;
     rig.cloudRelaySession = 'sess0001';
     await mount();
     emit('fldigi', { connected: true, mode: 'BPSK31', trx: 'tx', txActive: true });
     await act(async () => button('Stop TX').click());
     const sent = JSON.parse(fetchMock.mock.calls.find(([u]) => u.startsWith('/api/rig-bridge/relay'))[1].body);
-    emit('fldigi-cmd-result', { requestId: sent.payload.requestId, ok: false, status: 401, error: 'Unauthorized' });
+    emit('fldigi-cmd-result', { requestId: sent.payload.requestId, ok: false, status: 401, error: 'refused' });
     await flush();
-    expect(container.textContent).toMatch(/rejected the API token/);
+    expect(container.textContent).toMatch(/refused an unsigned command/);
   });
 });

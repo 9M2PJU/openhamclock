@@ -1,13 +1,18 @@
 /**
  * Cloud relay — NBEMS over the relay: fldigi status / receive text / forms go
- * up as `pluginEvents`, and 'fldigi' commands run against the local plugin
- * routes with the browser's own API token, answering with a result event.
+ * up as `pluginEvents`, and signed 'fldigi' commands run against the local
+ * plugin routes, answering with a result event.
  * Real loopback HTTP servers stand in for the hosted OHC and the local bridge.
  */
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import EventEmitter from 'events';
 import http from 'http';
 import relay from './cloud-relay.js';
+import signLib from '../lib/relay-sign.js';
+
+// Relay commands are signed with the key shared by the paired browser
+const KEY = 'c'.repeat(64);
+const signed = (cmd) => ({ ...cmd, auth: signLib.signCommand(KEY, 's1', cmd.type, cmd.payload) });
 
 const servers = [];
 const listen = (handler) =>
@@ -47,7 +52,7 @@ async function setup({ relayFldigi } = {}) {
   const bridgePort = await listen(async (req, res) => {
     const body = await readBody(req);
     local.push({ url: req.url, token: req.headers['x-rigbridge-token'], body: JSON.parse(body || '{}') });
-    if (req.headers['x-rigbridge-token'] !== 'browser-token') {
+    if (req.headers['x-rigbridge-token'] !== 'relay-side-token') {
       res.writeHead(401, { 'Content-Type': 'application/json' });
       return res.end('{"error":"Unauthorized"}');
     }
@@ -58,7 +63,14 @@ async function setup({ relayFldigi } = {}) {
   const config = {
     port: bridgePort,
     apiToken: 'relay-side-token',
-    cloudRelay: { url: `http://127.0.0.1:${hostedPort}`, apiKey: 'k', session: 's1', pushInterval: 60000, relayFldigi },
+    cloudRelay: {
+      url: `http://127.0.0.1:${hostedPort}`,
+      apiKey: 'k',
+      session: 's1',
+      pushInterval: 60000,
+      relayFldigi,
+      commandKey: KEY,
+    },
   };
   const inst = relay.create(config, { state: {}, pluginBus: bus });
   inst.connect();
@@ -83,28 +95,41 @@ describe('cloud relay — fldigi', () => {
     inst.disconnect();
   });
 
-  it('runs a relayed send with the browser’s token and reports the result', async () => {
+  it('runs a signed relayed send with the bridge’s own token and reports the result', async () => {
     const { inst, bus, local } = await setup();
     const results = [];
     bus.on('fldigi-cmd-result', (r) => results.push(r));
-    inst._executeCommand({
-      type: 'fldigi',
-      payload: { action: 'send', body: { text: 'QST' }, token: 'browser-token', requestId: 'r-1' },
-    });
+    inst._executeCommand(
+      signed({ type: 'fldigi', payload: { action: 'send', body: { text: 'QST' }, requestId: 'r-1' } }),
+    );
     await vi.waitFor(() => expect(results).toHaveLength(1));
-    expect(local[0]).toEqual({ url: '/api/fldigi/send', token: 'browser-token', body: { text: 'QST' } });
+    expect(local[0]).toEqual({ url: '/api/fldigi/send', token: 'relay-side-token', body: { text: 'QST' } });
     expect(results[0]).toMatchObject({ requestId: 'r-1', ok: true, status: 200, id: 7 });
     inst.disconnect();
   });
 
-  it('never substitutes the relay’s own token: a missing or wrong token is refused locally', async () => {
+  it('refuses an unsigned or forged fldigi command before it reaches fldigi', async () => {
     const { inst, bus, local } = await setup();
     const results = [];
     bus.on('fldigi-cmd-result', (r) => results.push(r));
-    inst._executeCommand({ type: 'fldigi', payload: { action: 'abort', requestId: 'r-2' } });
-    await vi.waitFor(() => expect(results).toHaveLength(1));
-    expect(local[0].token).toBe('');
-    expect(results[0]).toMatchObject({ requestId: 'r-2', ok: false, status: 401, error: 'Unauthorized' });
+    inst._executeCommand({ type: 'fldigi', payload: { action: 'send', body: { text: 'x' }, requestId: 'r-2' } });
+    const forged = signed({ type: 'fldigi', payload: { action: 'abort', requestId: 'r-3' } });
+    forged.payload = { action: 'send', body: { text: 'forged' }, requestId: 'r-3' };
+    inst._executeCommand(forged);
+    await vi.waitFor(() => expect(results).toHaveLength(2));
+    expect(local).toEqual([]);
+    expect(results[0]).toMatchObject({
+      requestId: 'r-2',
+      ok: false,
+      status: 401,
+      error: expect.stringMatching(/unsigned/),
+    });
+    expect(results[1]).toMatchObject({
+      requestId: 'r-3',
+      ok: false,
+      status: 401,
+      error: expect.stringMatching(/bad-signature/),
+    });
     inst.disconnect();
   });
 
@@ -112,7 +137,7 @@ describe('cloud relay — fldigi', () => {
     const a = await setup();
     const r1 = [];
     a.bus.on('fldigi-cmd-result', (r) => r1.push(r));
-    a.inst._executeCommand({ type: 'fldigi', payload: { action: '../config', requestId: 'x' } });
+    a.inst._executeCommand(signed({ type: 'fldigi', payload: { action: '../config', requestId: 'x' } }));
     expect(r1[0]).toMatchObject({ ok: false, status: 400 });
     expect(a.local).toHaveLength(0);
     a.inst.disconnect();
@@ -120,7 +145,7 @@ describe('cloud relay — fldigi', () => {
     const b = await setup({ relayFldigi: false });
     const r2 = [];
     b.bus.on('fldigi-cmd-result', (r) => r2.push(r));
-    b.inst._executeCommand({ type: 'fldigi', payload: { action: 'send', requestId: 'y', token: 'browser-token' } });
+    b.inst._executeCommand(signed({ type: 'fldigi', payload: { action: 'send', requestId: 'y' } }));
     expect(r2[0]).toMatchObject({ ok: false, status: 403 });
     b.bus.emit('fldigi', { connected: true });
     await new Promise((r) => setTimeout(r, 400));

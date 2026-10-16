@@ -7,18 +7,20 @@
  */
 import fs from 'node:fs';
 import { describe, it, expect } from 'vitest';
-import { generate, toCommonJs, TARGET } from '../../scripts/lightning-guard-cjs.mjs';
+import { generate, toCommonJs, TARGETS } from '../../scripts/lightning-guard-cjs.mjs';
 import * as esm from '../../src/utils/lightningGuard.js';
 
 const cjs = require('./lightning-guard-logic.js');
 
 describe('lightning-guard-logic.js (generated)', () => {
-  it('is up to date with src/utils/lightningGuard.js', async () => {
-    expect(fs.readFileSync(TARGET, 'utf8')).toBe(await generate());
+  it('both copies (bridge, server) are up to date with src/utils/lightningGuard.js', async () => {
+    expect(TARGETS).toHaveLength(2);
+    for (const target of TARGETS) expect(fs.readFileSync(target, 'utf8')).toBe(await generate(target));
   });
 
   it('exports exactly what the ESM source exports', () => {
     expect(Object.keys(cjs).sort()).toEqual(Object.keys(esm).sort());
+    expect(Object.keys(require('../../server/utils/lightning-guard-logic.js')).sort()).toEqual(Object.keys(esm).sort());
   });
 
   it('behaves the same (state machine sample)', () => {

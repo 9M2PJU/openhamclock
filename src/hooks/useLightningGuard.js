@@ -23,7 +23,7 @@
  * (or detail { lat, lon }). Simulated strikes go through the same feed, so
  * the map layer shows them too.
  */
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import i18next from 'i18next';
 import { subscribeStrikes, injectStrike } from '../utils/lightningFeed.js';
 import {
@@ -296,6 +296,22 @@ export function lightningPushPrefsFor({ active, settings, lat, lon, imperial }) 
   };
 }
 
+/** Guard settings + location for Rig Bridge's headless guard. */
+export function guardSettingsForBridge(settings, lat, lon) {
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  return {
+    lat: Math.round(lat * 1000) / 1000,
+    lon: Math.round(lon * 1000) / 1000,
+    warnKm: settings.warnKm,
+    alarmKm: settings.alarmKm,
+    allClearMin: settings.allClearMin,
+    minStrikes: settings.minStrikes,
+    hysteresisPct: settings.hysteresisPct,
+    repeatCloser: settings.repeatCloser,
+    relayOn: settings.relay.on,
+  };
+}
+
 // ── Engine ─────────────────────────────────────────────────────────────────
 export default function useLightningGuard({ location, allUnits, layout } = {}) {
   const [settings, setSettings] = useState(readGuardSettings);
@@ -427,10 +443,15 @@ export default function useLightningGuard({ location, allUnits, layout } = {}) {
   }, []);
 
   const live = useLightningGuardStatus();
+  // What Rig Bridge's headless guard should use (sent with the indicators)
+  const guard = active ? guardSettingsForBridge(settings, lat, lon) : null;
+  const guardJson = guard ? JSON.stringify(guard) : '';
+  const guardStable = useMemo(() => (guardJson ? JSON.parse(guardJson) : null), [guardJson]);
   return {
     level: live.level,
     relay: live.relayReport,
     allClearMin: live.settings?.allClearMin ?? settings.allClearMin,
     override: live.override,
+    guard: guardStable,
   };
 }

@@ -11,7 +11,10 @@
  *
  * Settings (config.gpio.lightningHeadless):
  *   enabled, lat, lon, warnKm, alarmKm, allClearMin, minStrikes, hysteresisPct,
- *   relayOn: 'alarm' | 'warn'
+ *   repeatCloser, relayOn: 'alarm' | 'warn'
+ * Everything but `enabled` follows the displays: each one that drives the relay
+ * sends its guard settings and location with its indicators, and the GPIO
+ * plugin applies changes (setSettings) and saves them.
  */
 
 const core = require('./lightning-guard-logic');
@@ -69,6 +72,17 @@ class HeadlessLightningGuard {
     this.settings = core.normalizeGuardSettings({ ...h, enabled: true, relay: { enabled: true, on: this.relayOn } });
     if (this.runner) this.runner.setSettings(this.settings);
     else this.runner = new core.GuardRunner(this.settings);
+    // A location arriving later (from a display's report) starts the watch
+    if (this.running && this.de && !this.ws) this.connect();
+    if (this.running && !this.de && this.ws) {
+      const ws = this.ws;
+      this.ws = null;
+      this.connected = false;
+      ws.onclose = ws.onerror = ws.onmessage = null;
+      try {
+        ws.close();
+      } catch (e) {}
+    }
   }
 
   start() {
@@ -217,6 +231,9 @@ class HeadlessLightningGuard {
       warnKm: this.settings.warnKm,
       alarmKm: this.settings.alarmKm,
       allClearMin: this.settings.allClearMin,
+      minStrikes: this.settings.minStrikes,
+      hysteresisPct: this.settings.hysteresisPct,
+      repeatCloser: this.settings.repeatCloser,
       relayOn: this.relayOn,
     };
   }

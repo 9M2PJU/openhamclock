@@ -27,7 +27,7 @@ import {
   winlinkModeLabel,
   winlinkModeFamily,
 } from '../../utils/winlinkModes.js';
-import { STATUS_COLORS, passesReachFilter, reachColorKey, reachMarkerStyle } from '../../utils/winlinkReach.js';
+import { STATUS_COLORS, passesReachFilter, reachMarkerStyle } from '../../utils/winlinkReach.js';
 import {
   REACH_PRIORITY,
   getReachState,
@@ -36,6 +36,7 @@ import {
   subscribeReach,
 } from '../../services/winlinkReachStore.js';
 import { loadConfig } from '../../utils/config.js';
+import { reachPopupLine } from '../../utils/winlinkReachPopup.js';
 import i18n from '../../lang/i18n';
 import { makeDraggable } from './makeDraggable.js';
 import { addMinimizeToggle } from './addMinimizeToggle.js';
@@ -105,36 +106,8 @@ const REACH_LEGEND = [
 /** Redraw at most once a second while predictions stream in. */
 const REACH_REDRAW_MS = 1000;
 
-function reachColor(entry) {
-  return STATUS_COLORS[reachColorKey(entry)];
-}
-
 function reachLine(entry) {
-  if (!entry) return '';
-  if (entry.status === 'offair') {
-    const label = i18n.t('winlinkReach.status.offair', { defaultValue: 'Off the air' });
-    return `<div style="margin-bottom:4px;color:${reachColor(entry)};font-weight:600;">${esc(label)}</div>`;
-  }
-  if (entry.kind === 'packet') {
-    const label = {
-      los: i18n.t('winlinkReach.los.los', { defaultValue: 'Line of sight' }),
-      extended: i18n.t('winlinkReach.los.extended', { defaultValue: 'Needs height / good antenna' }),
-      beyond: i18n.t('winlinkReach.los.beyond', { defaultValue: 'Beyond line of sight' }),
-    }[entry.los];
-    return label
-      ? `<div style="margin-bottom:4px;color:${reachColor(entry)};font-weight:600;">${esc(label)}</div>`
-      : '';
-  }
-  const status = {
-    good: i18n.t('winlinkReach.status.good', { defaultValue: 'Good' }),
-    marginal: i18n.t('winlinkReach.status.marginal', { defaultValue: 'Marginal' }),
-    closed: i18n.t('winlinkReach.status.closed', { defaultValue: 'Closed' }),
-  }[entry.status];
-  if (!status) return '';
-  const rel = Number.isFinite(entry.reliability) ? ` · ${entry.reliability}%` : '';
-  const snr = Number.isFinite(entry.snrMargin) ? ` · ${entry.snrMargin >= 0 ? '+' : ''}${entry.snrMargin} dB` : '';
-  const where = entry.freqHz ? ` · ${(entry.freqHz / 1e6).toFixed(3)} ${entry.modeLabel || ''}` : '';
-  return `<div style="margin-bottom:4px;color:${reachColor(entry)};font-weight:600;">${esc(status + rel + snr + where)}</div>`;
+  return reachPopupLine(entry, (k, o) => i18n.t(k, o));
 }
 
 function popupHtml(gw, reachEntry = null) {
