@@ -250,12 +250,44 @@ export function useSharedIncident({
       body: { clientId, call: callsignRef.current, site: s.site || '', ...batch },
     });
     if (sessionRef.current?.id !== s.id) return; // left or switched while in flight
-    if (res.ok) {
-      // Re-read: this or another tab may have queued more while we were sending.
-      outboxRef.current = ackOutbox(readSharedOutbox(), batch);
+    // What the server took: ack it (re-read — this or another tab may have
+    // queued more meanwhile), and base any document queued on top of ours
+    // on the revision ours just got.
+    const settle = (data) => {
+      let next = ackOutbox(readSharedOutbox(), batch);
+      for (const [docId, rev] of Object.entries(data?.docRevs || {})) {
+        incidentDocs.noteAccepted(docId, rev);
+        const sent = (batch.docs || []).find((d) => d.id === docId);
+        const queued = next.docs?.[docId];
+        if (queued && sent && queued.baseRev === sent.baseRev) {
+          next = { ...next, docs: { ...next.docs, [docId]: { ...queued, baseRev: rev } } };
+        }
+      }
+      outboxRef.current = next;
       saveOutbox();
       retryAttemptRef.current = 0;
       if (outboxSize(outboxRef.current)) scheduleFlush();
+    };
+    if (res.ok) {
+      settle(res.data);
+    } else if (res.status === 409 && Array.isArray(res.data?.conflicts)) {
+      // Everything else in the batch was applied. A document we wrote on top
+      // of an older revision was refused: show theirs, keep ours aside.
+      settle(res.data);
+      for (const c of res.data.conflicts) {
+        const sent = (batch.docs || []).find((d) => d.id === c.id);
+        let mine = sent?.data;
+        const queued = outboxRef.current.docs?.[c.id];
+        if (queued) {
+          // A newer local copy, made from the same stale base: that is "mine" now.
+          mine = queued.data;
+          const { [c.id]: _gone, ...rest } = outboxRef.current.docs;
+          outboxRef.current = { ...outboxRef.current, docs: rest };
+          saveOutbox();
+        }
+        setState((st) => applyIncidentDelta(st, { docs: [c.current] }));
+        incidentDocs.docConflict(c.id, mine, c.current);
+      }
     } else if (res.status === 413) {
       // A shared document is too large for this server: keep everything else.
       outboxRef.current = dropOutboxDocs(readSharedOutbox());
@@ -531,8 +563,9 @@ export function useSharedIncident({
   // Attach once the server's copy is known, so a local running net never
   // overwrites the incident's own.
   const publishDoc = useCallback(
-    (id, data) => {
-      const doc = { id, data, updatedAt: Date.now(), by: callsignRef.current || '' };
+    (id, data, extra = {}) => {
+      // extra.baseRev: the server revision this copy was made from (conditional write)
+      const doc = { id, data, updatedAt: Date.now(), by: callsignRef.current || '', ...extra };
       setState((s) => applyIncidentDelta(s, { docs: [doc] }));
       enqueue({ docs: [doc] });
     },

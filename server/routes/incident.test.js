@@ -256,6 +256,26 @@ describe('incident routes', () => {
     b.req.emit('close');
   });
 
+  it('a stale shared-document write gets 409 with the current copy; the rest of the batch is applied', () => {
+    const { id, joinKey } = create();
+    const first = sync(id, joinKey, { docs: [{ id: 'ics-drafts', data: { v: 1 } }] }).body;
+    expect(first.docRevs).toEqual({ 'ics-drafts': 1 });
+    sync(id, joinKey, { docs: [{ id: 'ics-drafts', data: { v: 2 }, baseRev: 1 }] });
+    const stale = sync(id, joinKey, {
+      docs: [{ id: 'ics-drafts', data: { v: 'old' }, baseRev: 1 }],
+      events: [{ id: 'e1', type: 'incident_note', summary: 'kept' }],
+    });
+    expect(stale.code).toBe(409);
+    expect(stale.body.accepted.events).toBe(1);
+    expect(stale.body.conflicts).toEqual([
+      expect.objectContaining({
+        id: 'ics-drafts',
+        baseRev: 1,
+        current: expect.objectContaining({ data: { v: 2 }, docRev: 2 }),
+      }),
+    ]);
+  });
+
   it('operators cannot change the board; admins can', () => {
     const { id, joinKey, adminKey } = create();
     const board = { name: 'New', ic: 'W1AW', netFreq: '', notes: '', updatedAt: Date.now() + 1000 };

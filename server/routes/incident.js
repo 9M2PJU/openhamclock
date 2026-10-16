@@ -407,8 +407,8 @@ module.exports = function (app, ctx) {
         scheduleSave();
       }
       broadcastPresence(auth.id);
-      res.json({
-        ok: true,
+      const out = {
+        ok: !result.docConflicts.length,
         seq: result.seq,
         accepted: {
           roster: result.changes.roster.length,
@@ -417,8 +417,20 @@ module.exports = function (app, ctx) {
           docs: result.changes.docs.length,
           board: !!result.changes.board,
         },
+        // The revision each accepted document now has (the writer bases its next write on it).
+        docRevs: Object.fromEntries(result.changes.docs.map((d) => [d.id, d.docRev])),
         denied: result.denied,
-      });
+      };
+      // A document written on top of an older revision was refused; the rest
+      // of the batch was applied. 409 with the current copy of each refused one.
+      if (result.docConflicts.length) {
+        return res.status(409).json({
+          ...out,
+          error: 'A shared document was changed by someone else since this copy was made',
+          conflicts: result.docConflicts.map((c) => ({ id: c.id, baseRev: c.baseRev, current: c.current })),
+        });
+      }
+      res.json(out);
     } catch (err) {
       sendError(res, err);
     }

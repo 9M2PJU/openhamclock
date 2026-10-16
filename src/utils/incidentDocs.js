@@ -50,6 +50,26 @@ const state = {
   publish: null,
   docs: {}, // id → { data, updatedAt, by }
   known: {}, // id → JSON last seen or sent
+  serverRev: {}, // id → the server revision our next write is based on
+  conflicts: {}, // id → { mine, theirs, theirsRev, by, at } — a write the server refused
+};
+
+/** Refused writes survive a reload, so the operator can still put theirs/ours right. */
+export const DOC_CONFLICTS_KEY = 'openhamclock_incidentDocConflicts';
+const saveConflicts = () => {
+  try {
+    if (Object.keys(state.conflicts).length) localStorage.setItem(DOC_CONFLICTS_KEY, JSON.stringify(state.conflicts));
+    else localStorage.removeItem(DOC_CONFLICTS_KEY);
+  } catch {
+    /* storage unavailable: the conflict lives for this page load */
+  }
+};
+const loadConflicts = () => {
+  try {
+    return JSON.parse(localStorage.getItem(DOC_CONFLICTS_KEY) || '{}') || {};
+  } catch {
+    return {};
+  }
 };
 const listeners = new Set();
 
@@ -92,11 +112,87 @@ export function saveDoc(id, value) {
   if (state.known[id] === json) return true;
   state.known[id] = json;
   state.docs[id] = { data: JSON.parse(json), updatedAt: Date.now() };
-  state.publish?.(id, value ?? null);
+  // Conditional write: made from the revision this browser last saw. If
+  // someone else saved since, the server refuses it (409) instead of letting
+  // an old copy overwrite newer edits — see docConflict().
+  const baseRev = state.serverRev[id];
+  state.publish?.(id, value ?? null, Number.isFinite(baseRev) ? { baseRev } : {});
   return true;
 }
 
-/** Listen for document changes: fn(id, reason) — reason 'remote' or 'mode' (joined / left). → unsubscribe */
+/** The server took our write of `id`; it is now at revision `rev`. */
+export function noteAccepted(id, rev) {
+  if (!DOC_SPECS[id] || !Number.isFinite(rev)) return;
+  state.serverRev[id] = Math.max(state.serverRev[id] ?? 0, rev);
+}
+
+/**
+ * The server refused our write of `id`: someone saved a newer revision
+ * (`current`) since our copy was made. Theirs is what everyone sees now;
+ * ours is kept here so the operator can look at the difference and put it
+ * back (applyMineDoc) or drop it (dismissDocConflict).
+ */
+export function docConflict(id, mine, current) {
+  if (!DOC_SPECS[id] || !current) return;
+  state.conflicts[id] = {
+    mine,
+    theirs: current.data ?? null,
+    theirsRev: current.docRev ?? null,
+    by: current.by || '',
+    at: Date.now(),
+  };
+  saveConflicts();
+  notify(id, 'conflict');
+}
+
+/** A refused write waiting for the operator, or null. */
+export const getDocConflict = (id) => state.conflicts[id] || null;
+
+/** Put our refused copy back, on top of theirs (a write made from their revision). */
+export function applyMineDoc(id) {
+  const c = state.conflicts[id];
+  if (!c) return false;
+  if (Number.isFinite(c.theirsRev)) state.serverRev[id] = Math.max(state.serverRev[id] ?? 0, c.theirsRev);
+  delete state.conflicts[id];
+  saveConflicts();
+  const ok = saveDoc(id, c.mine);
+  notify(id, 'remote'); // the panel shows ours again
+  return ok;
+}
+
+/** Keep theirs: forget our refused copy. */
+export function dismissDocConflict(id) {
+  if (!state.conflicts[id]) return;
+  delete state.conflicts[id];
+  saveConflicts();
+  notify(id, 'conflict');
+}
+
+/**
+ * Differences between two copies of a document, as { path, mine, theirs }
+ * for each leaf that differs (e.g. "ics214.rows.2.text"), at most `limit`.
+ */
+export function diffDocs(mine, theirs, limit = 50) {
+  const out = [];
+  const walk = (a, b, path) => {
+    if (out.length >= limit) return;
+    const isObj = (v) => v && typeof v === 'object';
+    if (isObj(a) && isObj(b)) {
+      const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+      for (const k of keys) walk(a[k], b[k], path ? `${path}.${k}` : k);
+      return;
+    }
+    if (JSON.stringify(a ?? null) !== JSON.stringify(b ?? null)) out.push({ path, mine: a ?? null, theirs: b ?? null });
+  };
+  walk(mine, theirs, '');
+  return out;
+}
+
+/**
+ * Listen for document changes: fn(id, reason) — 'remote' (someone else's
+ * copy arrived), 'mode' (joined / left) or 'conflict' (our write was refused,
+ * or that refusal was dealt with). → unsubscribe
+ */
 export function subscribeDocs(fn) {
   listeners.add(fn);
   return () => listeners.delete(fn);
@@ -111,10 +207,13 @@ export function attach({ docs = {}, publish, origin = null }) {
   state.publish = publish;
   state.docs = {};
   state.known = {};
+  state.serverRev = {};
+  state.conflicts = loadConflicts();
   for (const [id, doc] of Object.entries(docs || {})) {
     if (!DOC_SPECS[id] || !doc) continue;
     state.docs[id] = doc;
     state.known[id] = JSON.stringify(doc.data ?? null);
+    if (Number.isFinite(doc.docRev)) state.serverRev[id] = doc.docRev;
   }
   for (const id of DOC_IDS) notify(id, 'mode');
   netBridge.attach({ docs: docs || {}, publish, origin });
@@ -131,6 +230,7 @@ export function receive(docs) {
       continue;
     }
     if (!DOC_SPECS[doc.id]) continue;
+    if (Number.isFinite(doc.docRev)) state.serverRev[doc.id] = Math.max(state.serverRev[doc.id] ?? 0, doc.docRev);
     const cur = state.docs[doc.id];
     if (!newerDoc(cur, doc)) continue;
     const json = JSON.stringify(doc.data ?? null);
@@ -148,6 +248,9 @@ export function detach() {
   state.publish = null;
   state.docs = {};
   state.known = {};
+  state.serverRev = {};
+  state.conflicts = {};
+  saveConflicts();
   for (const id of DOC_IDS) notify(id, 'mode');
   netBridge.detach();
 }
@@ -158,6 +261,8 @@ export function _resetForTests() {
   state.publish = null;
   state.docs = {};
   state.known = {};
+  state.serverRev = {};
+  state.conflicts = {};
   listeners.clear();
   netBridge._resetForTests();
 }

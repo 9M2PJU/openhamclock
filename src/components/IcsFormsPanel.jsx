@@ -21,6 +21,7 @@ import {
   resetMessageNumbers,
 } from '../utils/emcommEventLog.js';
 import { loadDoc, saveDoc, subscribeDocs } from '../utils/incidentDocs.js';
+import IcsDraftConflict from './IcsDraftConflict.jsx';
 import { loadNetSchedule } from '../utils/netSchedule.js';
 import { getNetControlRoster } from '../utils/netControl.js';
 import { apiFetch } from '../utils/apiFetch.js';
@@ -262,6 +263,9 @@ export default function IcsFormsPanel({ config, initialForm, onClose, sharedEven
         fontFamily: 'var(--font-mono)',
       }}
     >
+      {/* Shared incident: our draft was refused as older than someone else's */}
+      <IcsDraftConflict />
+
       {/* Title row: form tabs + actions */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
         <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--accent-primary, #f59e0b)' }}>
