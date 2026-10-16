@@ -8,7 +8,7 @@ const crypto = require('crypto');
 
 const { parseAprsPacket: parseAprsPosition, parseResourceTokens } = require('../utils/aprsParser');
 const { identifyDevice } = require('../utils/aprsDeviceId');
-const { parseAprsMessage, messagesForStation } = require('../utils/aprsMessage');
+const { parseAprsMessage, messagesForStation, isDuplicateMessage } = require('../utils/aprsMessage');
 
 module.exports = function (app, ctx) {
   const { CONFIG, APP_VERSION, logDebug, logInfo, logWarn, logErrorOnce } = ctx;
@@ -268,7 +268,7 @@ module.exports = function (app, ctx) {
 
           // Try parsing as a message (addressed message or bulletin)
           const msg = parseAprsMessage(trimmed);
-          if (msg) {
+          if (msg && !isDuplicateMessage(aprsMessages, msg)) {
             aprsMessages.push(msg);
             if (aprsMessages.length > APRS_MAX_MESSAGES) aprsMessages.shift();
             if (msg.isShelterReport) {
@@ -643,7 +643,7 @@ module.exports = function (app, ctx) {
         }
         // Try as message
         const msg = parseAprsMessage(rawLine);
-        if (msg) {
+        if (msg && !isDuplicateMessage(aprsMessages, msg)) {
           msg.source = 'local-tnc';
           aprsMessages.push(msg);
           if (aprsMessages.length > APRS_MAX_MESSAGES) aprsMessages.shift();

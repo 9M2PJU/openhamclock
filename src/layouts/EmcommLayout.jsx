@@ -1610,7 +1610,7 @@ export default function EmcommLayout(props) {
             count={emcommStationsWithDistance.length}
             color="#22d3ee"
             extra={
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', marginLeft: '6px' }}>
+              <span style={{ display: 'inline-flex', flexWrap: 'wrap', alignItems: 'center', gap: '4px' }}>
                 <select value={aprsSource} onChange={(e) => setAprsSource(e.target.value)} style={EMCOMM_APRS_SELECT}>
                   <option value="all">All Sources</option>
                   <option value="rf">RF Only</option>
@@ -1673,6 +1673,7 @@ export default function EmcommLayout(props) {
                   style={{
                     ...EMCOMM_APRS_SELECT,
                     cursor: 'pointer',
+                    whiteSpace: 'nowrap',
                     ...(emcommOnly ? { color: '#a855f7', borderColor: '#a855f7' } : {}),
                   }}
                 >
@@ -2390,6 +2391,7 @@ function SourceBadge({ source }) {
 
 /** Token pill badge */
 function TokenPill({ token }) {
+  // Label always shown: an icon alone left "100" and "12/20" ambiguous (#1236)
   const meta = TOKEN_META[token.key] || { icon: '📦', color: '#888', label: token.key };
   let display;
   if (token.type === 'capacity') display = `${token.current}/${token.max}`;
@@ -2417,7 +2419,7 @@ function TokenPill({ token }) {
         whiteSpace: 'nowrap',
       }}
     >
-      {meta.icon} {display}
+      {meta.icon} {meta.label} {display}
     </span>
   );
 }
@@ -2552,7 +2554,9 @@ function PanelSection({ title, panelKey, count, color, extra, panels, bodyMaxHei
         }}
         onClick={() => setCollapsed(!collapsed)}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+        {/* wraps + minWidth 0: on a narrow rail the header tools (APRS "EmComm
+            only" etc.) were pushed past the edge and clipped (#1231) */}
+        <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '4px 8px', minWidth: 0 }}>
           <span style={{ color: '#888', fontSize: '10px' }}>{collapsed ? '▶' : '▼'}</span>
           <span
             style={{
