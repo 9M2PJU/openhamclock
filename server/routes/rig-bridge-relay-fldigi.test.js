@@ -94,6 +94,7 @@ describe('relay: fldigi plugin events', () => {
       { event: 'fldigi-rx', source: 'fldigi', data: { text: 'de N8TAG' } },
       { event: 'fldigi-cmd-result', source: 'fldigi', data: { requestId: 'r1', ok: true } },
       { event: 'relay-cmd-refused', source: 'cloud-relay', data: { type: 'setPTT', reason: 'unsigned', at: 1 } },
+      { event: 'relay-cmd-result', source: 'cloud-relay', data: { requestId: 'ind-1', type: 'indicators', ok: true } },
       { event: 'gpio', source: 'gpio', data: { pin: 1 } },
       { event: 'nbems-form', source: 'fldigi', data: { blob: 'x'.repeat(30000) } },
     ]);
@@ -103,6 +104,7 @@ describe('relay: fldigi plugin events', () => {
       'fldigi-rx',
       'fldigi-cmd-result',
       'relay-cmd-refused',
+      'relay-cmd-result',
     ]);
     expect(early.events().find((e) => e.event === 'relay-cmd-refused').source).toBe('cloud-relay');
     early.close();

@@ -154,6 +154,7 @@ module.exports = function (app, ctx) {
     'nbems-form',
     'fldigi-cmd-result',
     'relay-cmd-refused',
+    'relay-cmd-result',
   ]);
   const PLUGIN_EVENT_MAX_BYTES = 20000;
   const FLDIGI_RX_TAIL = 4000;
@@ -164,7 +165,7 @@ module.exports = function (app, ctx) {
       if (!ev.data || typeof ev.data !== 'object') continue;
       let json;
       try {
-        const source = ev.event === 'relay-cmd-refused' ? 'cloud-relay' : 'fldigi';
+        const source = ev.event === 'relay-cmd-refused' || ev.event === 'relay-cmd-result' ? 'cloud-relay' : 'fldigi';
         json = JSON.stringify({ type: 'plugin', event: ev.event, source, data: ev.data });
       } catch {
         continue;
@@ -353,6 +354,11 @@ module.exports = function (app, ctx) {
     if (verdict === 'ok' || verdict === 'legacy') return next();
     return refuseRead(res, verdict);
   }
+
+  // Other routes that serve a relay session's data (MeshCom, WSJT-X relay)
+  // apply the same rule through ctx.relayRead (they load before this module,
+  // so they look it up per request).
+  ctx.relayRead = { check: checkRelayRead, require: requireRelayRead };
 
   // One-time stream tickets: the read token goes in a header to POST
   // /relay/stream-ticket, only the short-lived ticket goes in the stream URL.
