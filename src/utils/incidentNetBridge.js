@@ -36,7 +36,7 @@ import {
   NET_CONTROL_KEY,
   NET_CONTROL_HISTORY_KEY,
 } from './netControl.js';
-import { reconcileNet, netTag } from './incidentNetMerge.js';
+import { reconcileNet, netTag, conflictRecord, mergeConflictRecords, removeConflictEntry } from './incidentNetMerge.js';
 
 export const BRIDGE_ID = 'shared-incident';
 export const STASH_KEY = 'openhamclock_netControlBeforeIncident';
@@ -48,6 +48,40 @@ export const NET_DOC_MAX_BYTES = 60 * 1024;
  * at the same time: detail { calls, fields, site }. Net Control shows it.
  */
 export const NET_REMOTE_CONFLICT_EVENT = 'ohc-net-control-remote-conflict';
+/** Our losing versions after a conflict ("your change" chips): see conflictRecord(). */
+export const CONFLICTS_KEY = 'openhamclock_netControlConflicts';
+/** Fired on window when the pending "your change" entries change. */
+export const NET_CONFLICTS_CHANGED_EVENT = 'ohc-net-control-conflicts';
+
+function saveConflicts(rec) {
+  try {
+    if (rec) localStorage.setItem(CONFLICTS_KEY, JSON.stringify(rec));
+    else localStorage.removeItem(CONFLICTS_KEY);
+  } catch {
+    /* ignore */
+  }
+  try {
+    window.dispatchEvent(new Event(NET_CONFLICTS_CHANGED_EVENT));
+  } catch {
+    /* no window */
+  }
+}
+
+/** Pending "your change" entries for net `netId` (or any net when omitted), or null. */
+export function loadNetConflicts(netId) {
+  try {
+    const rec = JSON.parse(localStorage.getItem(CONFLICTS_KEY) || 'null');
+    if (!rec || (netId && rec.netId !== netId)) return null;
+    return rec;
+  } catch {
+    return null;
+  }
+}
+
+/** Forget one pending entry: kind 'call' | 'field'. */
+export function dismissNetConflict(kind, key) {
+  saveConflicts(removeConflictEntry(loadNetConflicts(), kind, key));
+}
 const HISTORY_MAX = 30;
 
 const state = {
@@ -151,6 +185,11 @@ export function receiveNet(data, { force = false } = {}) {
       return false;
     }
     if (r.action === 'adopt' || r.action === 'conflict') {
+      if (r.action === 'conflict') {
+        // Keep what we had for those lines, so the operator can put it back.
+        const site = data.origin?.site || data.origin?.call || '';
+        saveConflicts(mergeConflictRecords(loadNetConflicts(), conflictRecord(local, r, site)));
+      }
       writeNet(r.net, data.rev);
       state.head = data.tag;
       announce('net');
@@ -318,6 +357,7 @@ export function detach() {
   } catch {
     /* ignore */
   }
+  saveConflicts(null);
   announce('net');
   announce('history');
   detachListeners();

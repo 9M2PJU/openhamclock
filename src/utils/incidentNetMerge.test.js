@@ -1,5 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { reconcileNet, mergeNets, netTag, sameNetContent, orderStations } from './incidentNetMerge.js';
+import {
+  reconcileNet,
+  mergeNets,
+  netTag,
+  sameNetContent,
+  orderStations,
+  conflictRecord,
+  mergeConflictRecords,
+  removeConflictEntry,
+  applyMineStation,
+  applyMineField,
+} from './incidentNetMerge.js';
 
 const st = (call, extra = {}) => ({ call, flags: [], checkinTime: 1, checkoutTime: null, ...extra });
 const base = {
@@ -97,6 +108,37 @@ describe('reconcileNet (shared net across sites)', () => {
     expect(atA.stations.map((s) => s.call)).toEqual(atB.stations.map((s) => s.call));
     expect(atA.stations.map((s) => s.call)).toEqual(['KD0ABC', 'N0XYZ', 'K1ABC', 'W1AW']); // newest first, then call
     expect(sameNetContent(atA, atB)).toBe(true);
+  });
+
+  it('keeps our losing version for "apply mine", per net', () => {
+    const mine = { ...base, frequency: '147.00', stations: [st('W1AW', { flags: ['T'] })] };
+    const rec = conflictRecord(mine, { calls: ['W1AW', 'K1ABC'], fields: ['frequency'] }, 'South', 9);
+    expect(rec).toEqual({
+      netId: 'n1',
+      calls: {
+        W1AW: { mine: st('W1AW', { flags: ['T'] }), site: 'South', at: 9 },
+        K1ABC: { mine: null, site: 'South', at: 9 },
+      },
+      fields: { frequency: { mine: '147.00', site: 'South', at: 9 } },
+    });
+    const later = conflictRecord(mine, { calls: ['N0XYZ'] }, 'East', 10);
+    expect(Object.keys(mergeConflictRecords(rec, later).calls)).toEqual(['W1AW', 'K1ABC', 'N0XYZ']);
+    expect(mergeConflictRecords(rec, { ...later, netId: 'other' }).netId).toBe('other');
+    let left = removeConflictEntry(rec, 'call', 'W1AW');
+    left = removeConflictEntry(left, 'call', 'K1ABC');
+    expect(removeConflictEntry(left, 'field', 'frequency')).toBeNull();
+  });
+
+  it('apply mine puts our station line or field back (or removes the station)', () => {
+    const theirs = { ...base, stations: [st('W1AW', { flags: ['M'] }), st('K1ABC')] };
+    const fixed = applyMineStation(theirs, 'W1AW', st('W1AW', { flags: ['T'] }));
+    expect(fixed.stations.map((s) => [s.call, s.flags])).toEqual([
+      ['W1AW', ['T']],
+      ['K1ABC', []],
+    ]);
+    expect(applyMineStation(theirs, 'K1ABC', null).stations.map((s) => s.call)).toEqual(['W1AW']);
+    expect(applyMineStation(theirs, 'N0NEW', st('N0NEW')).stations[0].call).toBe('N0NEW');
+    expect(applyMineField(theirs, 'frequency', '147.00').frequency).toBe('147.00');
   });
 
   it('orderStations: newest check-in first, ties by callsign', () => {
