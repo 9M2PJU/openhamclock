@@ -30,6 +30,7 @@ import {
 } from '../../src/utils/icsForms.js';
 
 const mountAprsRoutes = require('../../server/routes/aprs.js');
+const { buildAx25Frame, encodeKissFrame } = require('../lib/kiss-protocol');
 
 // ── Independent KISS / AX.25 decoder (deliberately not kiss-protocol.js) ─────
 const FEND = 0xc0;
@@ -97,7 +98,7 @@ const listen = (srv) =>
 async function waitFor(fn, ms = 3000) {
   const t0 = Date.now();
   while (Date.now() - t0 < ms) {
-    if (fn()) return;
+    if (await fn()) return;
     await new Promise((r) => setTimeout(r, 10));
   }
   throw new Error('timed out waiting for condition');
@@ -122,6 +123,9 @@ describe('ICS 213 over APRS: panel send path → server → rig-bridge aprs-tnc 
       ssid: 9,
       beaconInterval: 0,
       serverForward: false,
+      // These tests are about splitting and ordering; retries (#1247) are
+      // covered in their own test below, which switches them on live.
+      messageRetry: false,
     },
   };
   const frames = () => splitKiss(received).map(decodeAx25);
@@ -281,5 +285,35 @@ describe('ICS 213 over APRS: panel send path → server → rig-bridge aprs-tnc 
     await waitFor(() => frames().length === parts.length);
     // Each part on the air exactly once, in order
     expect(frames().map((f) => f.info.slice(11))).toEqual(parts);
+  });
+
+  it('requests an ack from a callsign, marks it delivered, and acks a message sent to us (#1244, #1247)', async () => {
+    config.aprs.messageRetry = true; // live setting — no restart
+    received = Buffer.alloc(0);
+    const bridgeBase = `http://127.0.0.1:${bridgeHttp.address().port}`;
+    const post = await fetch(`${bridgeBase}/aprs/message`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ to: 'ke8plm-9', message: 'Status?' }),
+    }).then((r) => r.json());
+    expect(post).toMatchObject({ success: true, ackRequested: true });
+    const id = post.msgId;
+    await waitFor(() => frames().length === 1);
+    expect(frames()[0].info).toBe(`:KE8PLM-9 :Status?{${id}`);
+
+    // KE8PLM-9 acks over the air
+    const sock = tncSockets[tncSockets.length - 1];
+    sock.write(encodeKissFrame(buildAx25Frame('KE8PLM-9', 'APY400', ['WIDE1-1'], `:K0CJH-9  :ack${id}`)));
+    await waitFor(async () => {
+      const list = await fetch(`${bridgeBase}/aprs/messages`).then((r) => r.json());
+      return list.messages[0]?.state === 'acked';
+    });
+
+    // ...and sends us a message with an id: we ack it
+    received = Buffer.alloc(0);
+    sock.write(encodeKissFrame(buildAx25Frame('KE8PLM-9', 'APY400', ['WIDE1-1'], ':K0CJH-9  :Roger{77')));
+    await waitFor(() => frames().length === 1);
+    expect(frames()[0].info).toBe(':KE8PLM-9 :ack77');
+    config.aprs.messageRetry = false;
   });
 });

@@ -124,6 +124,7 @@ function messagesForStation(messages, call, limit = 200) {
       to: m.to,
       text: m.text,
       msgId: m.msgId ?? null,
+      delivery: m.delivery ?? null,
       timestamp: m.timestamp,
       direction: m.direction || 'received',
       source: m.source || null,
@@ -162,4 +163,47 @@ function isDuplicateMessage(messages, msg) {
   return false;
 }
 
-module.exports = { parseAprsMessage, messagesForStation, isDuplicateMessage };
+/**
+ * An ack or rej frame (#1247): "SRC>DEST::ADDRESSEE:ack12".
+ * @returns {null | { from, to, msgId, state: 'acked' | 'rejected' }}
+ */
+function parseAprsAck(line) {
+  if (typeof line !== 'string') return null;
+  const headerEnd = line.indexOf(':');
+  if (headerEnd < 0) return null;
+  const from = line.substring(0, headerEnd).split('>')[0].trim().toUpperCase();
+  const payload = line.substring(headerEnd + 1);
+  if (payload.charAt(0) !== ':' || payload.charAt(10) !== ':') return null;
+  const to = payload.slice(1, 10).trim().toUpperCase();
+  const m = payload
+    .slice(11)
+    .replace(/[\s\x00-\x1f\x7f]+$/, '')
+    .match(/^(ack|rej)([A-Za-z0-9]{1,5})(?:\}.*)?$/);
+  if (!m || !from) return null;
+  return { from, to, msgId: m[2], state: m[1] === 'ack' ? 'acked' : 'rejected' };
+}
+
+/**
+ * Mark the sent message an ack/rej answers (#1247): same message id, sent to
+ * the station that answered. Returns the message, or null when none matches.
+ */
+function applyAprsAck(messages, ack) {
+  if (!ack) return null;
+  const base = (c) =>
+    String(c || '')
+      .toUpperCase()
+      .replace(/-0$/, '');
+  for (let i = (messages || []).length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m?.direction === 'sent' && m.msgId === ack.msgId && base(m.to) === base(ack.from)) {
+      if (m.delivery !== 'acked') {
+        m.delivery = ack.state;
+        m.deliveredAt = Date.now();
+      }
+      return m;
+    }
+  }
+  return null;
+}
+
+module.exports = { parseAprsMessage, messagesForStation, isDuplicateMessage, parseAprsAck, applyAprsAck };

@@ -33,6 +33,7 @@ const http = require('http');
 const https = require('https');
 const { URL } = require('url');
 const { parseAprsPacket } = require('../lib/aprs-parser');
+const { createMessenger } = require('../lib/aprs-messaging');
 const {
   decodeKissFrame,
   encodeKissFrame,
@@ -69,15 +70,29 @@ const descriptor = {
     });
 
     // Send an APRS message
+    // Without a caller-supplied msgId the message is tracked: a callsign
+    // addressee gets an id and is re-sent until it acks (#1247); the reply
+    // carries the id so the browser can show when it was delivered.
     app.post('/aprs/message', (req, res) => {
       if (!_currentInstance) return res.status(503).json({ error: 'APRS TNC not running' });
       const { to, message, msgId } = req.body;
       if (!to || !message) return res.status(400).json({ error: 'Missing to or message' });
       if (message.length > 67) return res.status(400).json({ error: 'Message exceeds 67 character APRS limit' });
-      if (!_currentInstance.sendMessage(to, message, msgId)) {
-        return res.status(503).json({ error: 'TNC not connected' });
+      if (msgId) {
+        if (!_currentInstance.sendMessage(to, message, msgId)) {
+          return res.status(503).json({ error: 'TNC not connected' });
+        }
+        return res.json({ success: true, msgId });
       }
-      res.json({ success: true });
+      const r = _currentInstance.sendTracked(to, message);
+      if (!r.ok) return res.status(503).json({ error: 'TNC not connected' });
+      res.json({ success: true, msgId: r.msgId, ackRequested: r.ackRequested });
+    });
+
+    // Outgoing messages and their delivery state (pending / acked / rejected / expired)
+    app.get('/aprs/messages', (req, res) => {
+      if (!_currentInstance) return res.json({ messages: [] });
+      res.json({ messages: _currentInstance.listMessages() });
     });
 
     // Send a message acknowledgment
@@ -236,6 +251,15 @@ const descriptor = {
         if (cfg.verbose) {
           console.log(`[APRS-TNC] RX: ${packet.source}>${packet.destination}: ${packet.info}`);
         }
+        // Ack messages addressed to us; match acks for messages we sent
+        try {
+          const handled = messenger.handleIncoming(packet.source, packet.info);
+          if (handled && cfg.verbose && handled.type !== 'message') {
+            console.log(`[APRS-TNC] ${handled.type} ${handled.msgId || ''}`);
+          }
+        } catch (e) {
+          console.error(`[APRS-TNC] message handling: ${e.message}`);
+        }
 
         // Parse position fields here so the SSE path delivers a fully-formed
         // station object and the browser needs no server round-trip.
@@ -327,6 +351,18 @@ const descriptor = {
       }
       return ok;
     }
+
+    // Acks in and out, retries until acked (#1244, #1247). Settings are read
+    // live from config.aprs: autoAck, messageRetry, messageMaxTries.
+    const messenger = createMessenger({
+      transmit: (to, text, id) => sendMessage(to, text, id),
+      transmitAck: (to, id) => sendAck(to, id),
+      myCall: myCallNow,
+      settings: live,
+      emit: (status) => {
+        if (bus) bus.emit('aprs-msg', status);
+      },
+    });
 
     function connectTcp() {
       const host = cfg.host || '127.0.0.1';
@@ -433,6 +469,7 @@ const descriptor = {
         connection = null;
       }
       connected = false;
+      messenger.stop();
       _currentInstance = null;
       console.log(`[APRS-TNC] Stopped (RX: ${packetsRx}, TX: ${packetsTx})`);
     }
@@ -451,6 +488,8 @@ const descriptor = {
         port: protocol === 'kiss-tcp' ? cfg.port || 8001 : undefined,
         serialPort: protocol === 'kiss-serial' ? cfg.serialPort : undefined,
         serverForward: forwardEnabled(),
+        autoAck: live().autoAck !== false,
+        messageRetry: live().messageRetry !== false,
         ohcUrl: forwardEnabled() ? String(forwardUrl()?.origin || '') : undefined,
       };
     }
@@ -462,6 +501,8 @@ const descriptor = {
       sendBeacon,
       sendMessage,
       sendAck,
+      sendTracked: (to, message) => messenger.send(to, message),
+      listMessages: () => messenger.list(),
       addPacketListener,
       removePacketListener,
     };

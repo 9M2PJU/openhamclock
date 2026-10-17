@@ -531,14 +531,17 @@ Receives MeshCom LoRa mesh network packets and forwards them to OHC. See [MeshCo
 
 If you have a traditional hardware TNC connected via serial port:
 
-| Setting         | Default     | Description                                             |
-| --------------- | ----------- | ------------------------------------------------------- |
-| Protocol        | `kiss-tcp`  | `kiss-tcp` for Direwolf, `kiss-serial` for hardware TNC |
-| Host            | `127.0.0.1` | Direwolf KISS TCP host                                  |
-| Port            | `8001`      | Direwolf KISS TCP port                                  |
-| Callsign        | (required)  | Your callsign for TX                                    |
-| SSID            | `0`         | APRS SSID                                               |
-| Beacon Interval | `600`       | Seconds between position beacons (0 = disabled)         |
+| Setting                                     | Default     | Description                                             |
+| ------------------------------------------- | ----------- | ------------------------------------------------------- |
+| Protocol                                    | `kiss-tcp`  | `kiss-tcp` for Direwolf, `kiss-serial` for hardware TNC |
+| Host                                        | `127.0.0.1` | Direwolf KISS TCP host                                  |
+| Port                                        | `8001`      | Direwolf KISS TCP port                                  |
+| Callsign                                    | (required)  | Your callsign for TX                                    |
+| SSID                                        | `0`         | APRS SSID                                               |
+| Beacon Interval                             | `600`       | Seconds between position beacons (0 = disabled)         |
+| Acknowledge messages (`autoAck`)            | `true`      | Ack messages sent to your exact callsign-SSID           |
+| Re-send until acknowledged (`messageRetry`) | `true`      | Re-send your messages to a callsign until it acks       |
+| Maximum transmissions (`messageMaxTries`)   | `6`         | Tries per message, 1–10                                 |
 
 **With Direwolf:**
 
@@ -548,6 +551,12 @@ If you have a traditional hardware TNC connected via serial port:
 4. APRS packets from nearby stations appear in OHC's APRS panel
 
 The APRS TNC runs alongside APRS-IS (internet) for dual-path coverage. When internet goes down, local RF keeps working.
+
+**Message acknowledgements.** DireWolf passes messages through but leaves acknowledging them to the software using it, so Rig Bridge does it:
+
+- **Incoming:** a message addressed to your exact callsign-SSID that carries a message id (`hello{42`) is acknowledged (`ack42`), every copy, since the sender keeps re-sending until one of the acks gets through. Turn **Acknowledge messages** off when several operators share a callsign and only one of them should answer.
+- **Outgoing:** a message to a callsign goes out with a message id and is re-sent after 30 s, 60 s, 120 s … (up to 8 minutes apart) until the station acks or rejects it, or **Maximum transmissions** have gone out. Messages to an alias, a net address or a bulletin (`EMCOMM`, `BLN1`) can never be acknowledged, so they go out once without an id. OpenHamClock shows the state next to the message: ✓ delivered, ↻ 2/6 while re-sending, ✕ no ack.
+- All three settings apply as soon as you save; no restart needed. `GET /aprs/messages` lists recent outgoing messages and their state; each change is also sent on the `/stream` as an `aprs-msg` event.
 
 ### MeshCom UDP Plugin _(Beta)_
 

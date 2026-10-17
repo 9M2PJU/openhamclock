@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseAprsMessage, messagesForStation, isDuplicateMessage } from './aprsMessage.js';
+import { parseAprsMessage, messagesForStation, isDuplicateMessage, parseAprsAck, applyAprsAck } from './aprsMessage.js';
 
 const line = (body) => `N8TAG-7>APY5D1,WIDE1-1:${body}`;
 
@@ -154,5 +154,33 @@ describe('isDuplicateMessage (#1230)', () => {
 
   it('ignores our own sent messages', () => {
     expect(isDuplicateMessage([{ ...base, direction: 'sent' }], { ...base, timestamp: t0 + 1 })).toBe(false);
+  });
+});
+
+describe('acks mark sent messages delivered (#1247)', () => {
+  it('parses ack and rej frames, nothing else', () => {
+    expect(parseAprsAck('KE8PLM-9>APY400,WIDE1-1::K0CJH-9  :ack12')).toEqual({
+      from: 'KE8PLM-9',
+      to: 'K0CJH-9',
+      msgId: '12',
+      state: 'acked',
+    });
+    expect(parseAprsAck('KE8PLM-9>APY400::K0CJH-9  :rej7\r')).toMatchObject({ msgId: '7', state: 'rejected' });
+    expect(parseAprsAck('KE8PLM-9>APY400::K0CJH-9  :hello{12')).toBeNull();
+    expect(parseAprsAck('KE8PLM-9>APY400:!3900.11N/08411.80W-')).toBeNull();
+  });
+
+  it('matches the id and the station it was sent to', () => {
+    const sent = { direction: 'sent', to: 'KE8PLM-9', msgId: '12', delivery: 'pending', text: 'x' };
+    const other = { direction: 'sent', to: 'N8TAG', msgId: '12', delivery: 'pending', text: 'y' };
+    const msgs = [sent, other];
+    expect(applyAprsAck(msgs, parseAprsAck('KE8PLM-9>APY400::K0CJH-9  :ack12'))).toBe(sent);
+    expect(sent.delivery).toBe('acked');
+    expect(other.delivery).toBe('pending');
+    expect(applyAprsAck(msgs, parseAprsAck('W1AW>APY400::K0CJH-9  :ack99'))).toBeNull();
+    // A later rej never downgrades a delivered message
+    applyAprsAck(msgs, parseAprsAck('KE8PLM-9>APY400::K0CJH-9  :rej12'));
+    expect(sent.delivery).toBe('acked');
+    expect(messagesForStation(msgs, 'KE8PLM-9')[0]).toMatchObject({ msgId: '12', delivery: 'acked' });
   });
 });

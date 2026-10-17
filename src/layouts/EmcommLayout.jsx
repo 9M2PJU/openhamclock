@@ -17,6 +17,7 @@ import { useAprsShelterReports } from '../hooks/useAprsShelterReports.js';
 import { mergeShelters } from '../utils/emcommShelters.js';
 import { sendAprsMessage, directRigUrl } from '../utils/aprsMessageSend.js';
 import { useRigOptional } from '../contexts/RigContext.jsx';
+import { useAprsMsgStatus, deliveryLabel } from '../utils/aprsMsgStatus.js';
 import { IcsFormsOverlay } from '../components/IcsFormsPanel.jsx';
 import NetControlPanel from '../components/NetControlPanel.jsx';
 import { getNetControlRoster, mergeRosters, NET_CONTROL_ROSTER_EVENT } from '../utils/netControl.js';
@@ -514,6 +515,7 @@ export default function EmcommLayout(props) {
   const messageInputRef = useRef(null);
   const messageBoxRef = useRef(null);
   const rig = useRigOptional();
+  const msgStatus = useAprsMsgStatus(); // live delivery state of what we sent (#1247)
   const rigDirectUrl = directRigUrl(rig);
   // ICS Forms overlay: null (closed) or the form id to open ('309' | '214' | '213' | '205')
   const [icsForm, setIcsForm] = useState(null);
@@ -1383,9 +1385,13 @@ export default function EmcommLayout(props) {
       summary: `Message to ${messageTarget}`,
       details: text,
     });
+    // The open list for this station shows the new message and its delivery state
+    if (historyTarget && historyTarget.toUpperCase() === messageTarget.toUpperCase()) {
+      setTimeout(() => openHistory(historyTarget), 300);
+    }
     setMessageText('');
     setMessageTarget(null);
-  }, [messageText, messageTarget, messageSending, rigDirectUrl, config.callsign]);
+  }, [messageText, messageTarget, messageSending, rigDirectUrl, config.callsign, historyTarget, openHistory]);
   // Opening the composer (any MSG button) brings it into view and puts the
   // cursor in the message line (#1242).
   useEffect(() => {
@@ -2743,6 +2749,19 @@ export default function EmcommLayout(props) {
                           <span style={{ color: '#ddd', wordBreak: 'break-word' }}>
                             <span style={{ color: '#aaa', marginRight: '4px' }}>{sent ? m.to : m.from}</span>
                             {m.text}
+                            {sent &&
+                              (() => {
+                                const d = deliveryLabel(m, msgStatus(m.msgId));
+                                return d ? (
+                                  <span
+                                    data-testid="delivery"
+                                    title={d.title}
+                                    style={{ color: d.color, marginLeft: '6px', whiteSpace: 'nowrap' }}
+                                  >
+                                    {d.text}
+                                  </span>
+                                ) : null;
+                              })()}
                           </span>
                         </div>
                       );

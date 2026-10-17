@@ -11,7 +11,7 @@ describe('sendAprsMessage', () => {
   it('posts the addressee (upper-cased) and text to the server', async () => {
     const fetchImpl = vi.fn(async () => okRes());
     const r = await sendAprsMessage({ to: 'ke8plm-9', message: ' Hello ' }, fetchImpl);
-    expect(r).toEqual({ ok: true });
+    expect(r).toEqual({ ok: true, msgId: null });
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     const [url, opts] = fetchImpl.mock.calls[0];
     expect(url).toBe('/api/aprs/message');
@@ -76,7 +76,7 @@ describe('direct Rig Bridge path (#1243)', () => {
   it('transmits through the bridge, then records our side on the server', async () => {
     const fetchImpl = vi.fn(async () => okRes());
     const r = await sendAprsMessage({ to: 'n8tag', message: 'hi', rigUrl: 'http://192.168.1.50:5556' }, fetchImpl);
-    expect(r).toEqual({ ok: true });
+    expect(r).toEqual({ ok: true, msgId: null });
     expect(fetchImpl.mock.calls.map((c) => c[0])).toEqual([
       'http://192.168.1.50:5556/aprs/message',
       '/api/aprs/message',
@@ -107,5 +107,21 @@ describe('direct Rig Bridge path (#1243)', () => {
     expect(fetchImpl.mock.calls.filter((c) => c[0].endsWith('/aprs/message') && c[0].startsWith('http'))).toHaveLength(
       2,
     );
+  });
+});
+
+describe('message ids for delivery tracking (#1247)', () => {
+  it('passes the id Rig Bridge assigns back to the caller and to the server record', async () => {
+    const fetchImpl = vi.fn(async (url) =>
+      url.startsWith('http') ? { ok: true, status: 200, json: async () => ({ success: true, msgId: '612' }) } : okRes(),
+    );
+    const r = await sendAprsMessage({ to: 'KE8PLM-9', message: 'hi', rigUrl: 'http://localhost:5556' }, fetchImpl);
+    expect(r).toEqual({ ok: true, msgId: '612' });
+    expect(JSON.parse(fetchImpl.mock.calls[1][1].body)).toEqual({
+      to: 'KE8PLM-9',
+      message: 'hi',
+      recordOnly: true,
+      msgId: '612',
+    });
   });
 });

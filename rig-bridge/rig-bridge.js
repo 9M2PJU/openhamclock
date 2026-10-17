@@ -235,6 +235,10 @@ pluginBus.on('decode-update', (msg) => {
   });
 });
 
+// Delivery state of messages we sent: pending / acked / rejected / expired (#1247)
+pluginBus.on('aprs-msg', (status) => {
+  broadcast({ type: 'plugin', event: 'aprs-msg', source: 'aprs-tnc', data: status });
+});
 pluginBus.on('aprs', (pkt) => {
   broadcast({ type: 'plugin', event: 'aprs', source: 'aprs-tnc', data: pkt });
 });

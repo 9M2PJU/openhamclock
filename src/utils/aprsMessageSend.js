@@ -55,20 +55,35 @@ export async function sendAprsMessage({ to, message, rigUrl = null }, fetchImpl 
         body,
       });
       if (!res?.ok) return { ok: false, error: await errorFrom(res, 'Rig Bridge: ') };
+      // Rig Bridge answers with a message id when it will wait for an ack (#1247)
+      let msgId = null;
+      try {
+        msgId = (await res.json())?.msgId || null;
+      } catch {
+        /* older Rig Bridge: no body */
+      }
       // History only — a failure here must not report the transmission as failed
       fetchImpl('/api/aprs/message', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ to: addressee, message: text, recordOnly: true }),
+        body: JSON.stringify({ to: addressee, message: text, recordOnly: true, ...(msgId ? { msgId } : {}) }),
       }).catch?.(() => {});
-      return { ok: true };
+      return { ok: true, msgId };
     }
     const res = await fetchImpl('/api/aprs/message', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body,
     });
-    if (res?.ok) return { ok: true };
+    if (res?.ok) {
+      let msgId = null;
+      try {
+        msgId = (await res.json())?.msgId || null;
+      } catch {
+        /* no body */
+      }
+      return { ok: true, msgId };
+    }
     return { ok: false, error: await errorFrom(res) };
   } catch (e) {
     return {

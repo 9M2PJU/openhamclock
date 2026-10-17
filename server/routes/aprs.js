@@ -8,7 +8,13 @@ const crypto = require('crypto');
 
 const { parseAprsPacket: parseAprsPosition, parseResourceTokens } = require('../utils/aprsParser');
 const { identifyDevice } = require('../utils/aprsDeviceId');
-const { parseAprsMessage, messagesForStation, isDuplicateMessage } = require('../utils/aprsMessage');
+const {
+  parseAprsMessage,
+  messagesForStation,
+  isDuplicateMessage,
+  parseAprsAck,
+  applyAprsAck,
+} = require('../utils/aprsMessage');
 
 module.exports = function (app, ctx) {
   const { CONFIG, APP_VERSION, logDebug, logInfo, logWarn, logErrorOnce } = ctx;
@@ -287,6 +293,8 @@ module.exports = function (app, ctx) {
             logDebug(`[APRS] Telemetry from ${telem.call}: seq ${telem.seq} [${telem.values.join(', ')}]`);
           }
 
+          // An ack/rej marks the message we sent as delivered (#1247)
+          applyAprsAck(aprsMessages, parseAprsAck(trimmed));
           // Try parsing as a message (addressed message or bulletin)
           const msg = parseAprsMessage(trimmed);
           if (msg && !isDuplicateMessage(aprsMessages, msg)) {
@@ -545,7 +553,7 @@ module.exports = function (app, ctx) {
     if (!to || !message) return res.status(400).json({ error: 'Missing to or message' });
     if (message.length > 67) return res.status(400).json({ error: 'Message exceeds 67 char APRS limit' });
 
-    const recordSent = () => {
+    const recordSent = (msgId = null) => {
       aprsMessages.push({
         type: 'message',
         from: (CONFIG.callsign || 'N0CALL').toUpperCase(),
@@ -553,7 +561,8 @@ module.exports = function (app, ctx) {
         text: message,
         cleanText: message,
         tokens: [],
-        msgId: null,
+        msgId: msgId ? String(msgId).slice(0, 5) : null,
+        delivery: msgId ? 'pending' : null,
         isShelterReport: false,
         netCommand: null,
         direction: 'sent',
@@ -571,7 +580,7 @@ module.exports = function (app, ctx) {
     // "sent" lines (hosted browsers send through Cloud Relay, not directly).
     if (req.body.recordOnly === true) {
       if (TNC_STATUS_HOSTED) return res.status(403).json({ error: 'Not available on a hosted server' });
-      recordSent();
+      recordSent(req.body.msgId);
       return res.json({ ok: true, recorded: true });
     }
 
@@ -586,9 +595,14 @@ module.exports = function (app, ctx) {
       });
       if (response.ok) {
         // Keep our own side of the conversation so a station's message
-        // history shows both directions (#1216). Rig-bridge only transmits.
-        recordSent();
-        return res.json({ ok: true, via: 'rig-bridge' });
+        // history shows both directions (#1216). Rig-bridge only transmits;
+        // it answers with the message id when it will wait for an ack (#1247).
+        let msgId = null;
+        try {
+          msgId = (await response.json())?.msgId || null;
+        } catch {}
+        recordSent(msgId);
+        return res.json({ ok: true, via: 'rig-bridge', msgId });
       }
       const err = await response.text();
       return res.status(response.status).json({ error: `Rig Bridge: ${err}` });
@@ -690,6 +704,8 @@ module.exports = function (app, ctx) {
           }
           continue;
         }
+        // An ack/rej marks the message we sent as delivered (#1247)
+        applyAprsAck(aprsMessages, parseAprsAck(rawLine));
         // Try as message
         const msg = parseAprsMessage(rawLine);
         if (msg && !isDuplicateMessage(aprsMessages, msg)) {

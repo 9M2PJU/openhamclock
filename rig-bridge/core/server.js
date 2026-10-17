@@ -1016,6 +1016,9 @@ function buildSetupHtml(version, firstRunToken = null) {
         { id: 'beaconInterval', label: 'Beacon Interval (sec)', type: 'number', default: 600 },
         { id: 'serverForward', label: 'Forward RF frames to OpenHamClock server', type: 'checkbox', default: true },
         { id: 'ohcUrl', label: 'OpenHamClock server URL', type: 'text', default: 'http://localhost:3000' },
+        { id: 'autoAck', label: 'Acknowledge messages sent to my callsign-SSID', type: 'checkbox', default: true },
+        { id: 'messageRetry', label: 'Re-send my messages until acknowledged', type: 'checkbox', default: true },
+        { id: 'messageMaxTries', label: 'Maximum transmissions per message (1-10)', type: 'number', default: 6 },
         { id: 'verbose', label: 'Verbose logging', type: 'checkbox', default: false },
       ]},
       { key: 'rotator', name: 'Rotator (rotctld)', maturity: 'alpha', desc: 'Antenna rotator control via Hamlib rotctld', fields: [

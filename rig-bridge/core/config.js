@@ -166,6 +166,11 @@ const DEFAULT_CONFIG = {
     // attached to this rig-bridge (#1221).
     serverForward: true,
     ohcUrl: 'http://localhost:3000',
+    // Messages (#1244, #1247): ack messages addressed to this callsign-SSID;
+    // re-send messages to a callsign until acked, up to messageMaxTries times.
+    autoAck: true,
+    messageRetry: true,
+    messageMaxTries: 6,
   },
   // Rotator control via rotctld (Hamlib)
   rotator: {
