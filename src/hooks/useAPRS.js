@@ -5,6 +5,7 @@
  * separate in-memory store fed directly by SSE events — no server round-trip.
  * Manages watchlist groups stored in localStorage.
  */
+import { cleanRfStation } from '../utils/aprsMiceClean.js';
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { apiFetch } from '../utils/apiFetch';
 
@@ -270,10 +271,12 @@ export const useAPRS = (options = {}) => {
       if (pkt.lat == null || pkt.lon == null) return;
 
       const key = pkt.ssid ?? pkt.source;
+      // Mic-E type bytes off the comment, as the server does for its stations (#1245)
+      const clean = cleanRfStation(pkt);
       setRfStations((prev) => {
         const next = new Map(prev);
         next.set(key, {
-          ...pkt,
+          ...clean,
           source: 'local-tnc', // use the standard source tag the UI expects
           timestamp: pkt.timestamp ?? Date.now(),
           lastUpdate: Date.now(),

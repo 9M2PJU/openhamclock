@@ -2632,8 +2632,10 @@ export default function EmcommLayout(props) {
               every panel (#1242). A hover-opened history stays in place. */}
           <div
             data-testid="message-dock"
-            style={
-              messageTarget || (historyTarget && historyPinned)
+            style={{
+              // The A−/A+ text size covers the message list and box too (#1232)
+              ...(textZoom !== 1 ? { zoom: textZoom } : {}),
+              ...(messageTarget || (historyTarget && historyPinned)
                 ? {
                     position: 'sticky',
                     bottom: 0,
@@ -2644,8 +2646,8 @@ export default function EmcommLayout(props) {
                     boxShadow: '0 -6px 16px rgba(0,0,0,0.6)',
                     flexShrink: 0,
                   }
-                : { flexShrink: 0 }
-            }
+                : { flexShrink: 0 }),
+            }}
           >
             {historyTarget && (
               <div
