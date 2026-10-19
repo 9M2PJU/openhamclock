@@ -1,4 +1,37 @@
-# OpenHamClock — Penn Wireless Association (W3SK) (Monday, October 19, 2026, 7:00 PM ET)
+# OpenHamClock: Guided Tour — Penn Wireless Association (W3SK) (Monday, October 19, 2026, 7:00 PM ET)
+
+**`index.html` is a ~35-minute guided tour of the Modern layout:** every pane,
+what it shows, where the data comes from and how to read the numbers (SFI, K,
+A, solar wind, X-ray classes, MUF/LUF, path prediction vs. general band
+conditions, spots, PSKReporter, activations). Rig control is mentioned once.
+Screenshots in `img/` were captured from the live openhamclock.com (v26.10.5)
+on the morning of the talk with W3SK in FN20, so the numbers are real but will
+differ from the live demo. Script and Q&A in [`speaker-notes.md`](./speaker-notes.md).
+
+The original 40-minute full tour is kept as [`full-tour.html`](./full-tour.html)
+with its script in [`full-tour-speaker-notes.md`](./full-tour-speaker-notes.md).
+
+## Guided-tour timing
+
+| #     | Slide                                    | Length   |
+| ----- | ---------------------------------------- | -------- |
+| 1–3   | Title · what it is · getting started     | 3:00     |
+| 4     | The eight areas of the Modern layout     | 1:00     |
+| 5–6   | Header: clocks · space-weather strip     | 3:30     |
+| 7–8   | DE and DX panes                          | 3:00     |
+| 9–10  | Map · projections                        | 3:00     |
+| 11–12 | Solar · X-ray and flares                 | 3:00     |
+| 13–15 | Propagation chart · MUF/LUF/bars · bands | 5:00     |
+| 16–17 | DX cluster · PSKReporter                 | 4:00     |
+| 18–19 | Parks & summits · DXpeditions & contests | 2:30     |
+| 20    | Ten-second routine                       | 1:00     |
+| 21–22 | Settings icons · other layouts           | 2:00     |
+| 23    | **LIVE DEMO**                            | **5:00** |
+| 24–25 | Install like an app · thanks & questions | rest     |
+
+---
+
+## Full tour (`full-tour.html`)
 
 A ~40-minute Reveal.js deck about OpenHamClock for a general ham radio club
 audience: what it is, why you would run it, how to shape it to the way you
@@ -16,7 +49,7 @@ A single self-contained HTML file with Reveal.js loaded from CDN. No build step.
 
 ```bash
 cd presentations/pwa-2026-10-19
-open index.html              # macOS
+open index.html              # macOS (guided tour; full-tour.html for the long talk)
 xdg-open index.html          # Linux
 start index.html             # Windows
 ```
