@@ -8,6 +8,11 @@ Screenshots in `img/` were captured from the live openhamclock.com (v26.10.5)
 on the morning of the talk with W3SK in FN20, so the numbers are real but will
 differ from the live demo. Script and Q&A in [`speaker-notes.md`](./speaker-notes.md).
 
+**Handout:** [`handout.pdf`](./handout.pdf) is a 4-page, print-friendly
+(white background) US Letter summary of the slides with ruled note space on
+each page. Regenerate it from [`handout.html`](./handout.html) by printing to
+PDF from Chrome (Letter, default margins, background graphics on).
+
 The original 40-minute full tour is kept as [`full-tour.html`](./full-tour.html)
 with its script in [`full-tour-speaker-notes.md`](./full-tour-speaker-notes.md).
 
