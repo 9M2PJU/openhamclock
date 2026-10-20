@@ -289,6 +289,59 @@ describe('shelter beacons from the aprs.fi app (#1235, #1236)', () => {
   });
 });
 
+describe('spaceless and mixed-case resource tokens (#1254)', () => {
+  it('reads a known key run straight into its value, in any case', () => {
+    const { tokens, cleanComment } = parseResourceTokens('OPEN [BEDS180/200] [water170/190] [Food 50]');
+    expect(tokens).toEqual([
+      { key: 'Beds', current: 180, max: 200, type: 'capacity' },
+      { key: 'Water', current: 170, max: 190, type: 'capacity' },
+      { key: 'Food', value: 50, type: 'quantity' },
+    ]);
+    expect(cleanComment).toBe('OPEN');
+  });
+
+  it('matches the spaced form token for token', () => {
+    const spaced = parseResourceTokens('[Beds 180/200] [Water OK] [Fuel -20] [Med !] [Staff 12]').tokens;
+    const tight = parseResourceTokens('[beds180/200][WATEROK][Fuel-20][MED!][staff12]').tokens;
+    expect(tight).toEqual(spaced);
+    expect(tight.map((t) => t.type)).toEqual(['capacity', 'status', 'need', 'critical', 'quantity']);
+  });
+
+  it('tolerates spaces inside the brackets and around the slash', () => {
+    const { tokens } = parseResourceTokens('[ Beds 180 / 200 ] [  gen OK ]');
+    expect(tokens).toEqual([
+      { key: 'Beds', current: 180, max: 200, type: 'capacity' },
+      { key: 'Gen', value: 'OK', type: 'status' },
+    ]);
+  });
+
+  it('prefers the longest key ("Evacuees" over "Evac")', () => {
+    expect(parseResourceTokens('[EVACUEES12] [evac3]').tokens.map((t) => t.key)).toEqual(['Evacuees', 'Evac']);
+  });
+
+  it('leaves unknown or untyped spaceless text alone', () => {
+    const r = parseResourceTokens('[MRE40] [Generators] [Bedsfull] [Beds] note');
+    expect(r.tokens).toEqual([]);
+    expect(r.cleanComment).toBe('[MRE40] [Generators] [Bedsfull] [Beds] note');
+  });
+
+  it('still parses in a full packet', () => {
+    const p = parseAprsPacket(String.raw`KE8PLM-3>APFII0,WIDE1-1:@165208h3900.11N\08411.80WzOPEN [BEDS4/20][WATER50]`);
+    expect(p.tokens).toEqual([
+      { key: 'Beds', current: 4, max: 20, type: 'capacity' },
+      { key: 'Water', value: 50, type: 'quantity' },
+    ]);
+    expect(p.cleanComment).toBe('OPEN');
+  });
+
+  it('"[" plus long space runs stays fast', () => {
+    const t0 = Date.now();
+    parseResourceTokens('[' + ' '.repeat(50000) + 'Beds');
+    parseResourceTokens('[ '.repeat(25000));
+    expect(Date.now() - t0).toBeLessThan(200);
+  });
+});
+
 describe('position extensions leave the comment once read (#1235)', () => {
   it('altitude and DAO come out of an aprs.fi shelter beacon; adjacent tags still parse', () => {
     const p = parseAprsPacket(

@@ -316,6 +316,26 @@ const RESOURCE_KEY_BY_LOWER = new Map(RESOURCE_KEYS.map((k) => [k.toLowerCase(),
 function canonicalResourceKey(key) {
   return RESOURCE_KEY_BY_LOWER.get(key.toLowerCase()) || key;
 }
+// Longest first, so "[Evacuees12]" reads as Evacuees rather than Evac + "uees".
+const RESOURCE_KEYS_LONGEST_FIRST = [...RESOURCE_KEYS].sort((a, b) => b.length - a.length);
+
+/**
+ * Split a spaceless "[Beds180/200]" / "[WATEROK]" word into a known key plus
+ * the letters that belong to the value (#1254). The comment field is short,
+ * so senders drop the space. Only the fixed key list qualifies, and only when
+ * the value is typed (digits, "-", "!" or "OK"), so "[Generators]" or
+ * "[MRE40]" stay raw text. `next` is the char code after the letter run.
+ */
+function splitSpacelessKey(word, next) {
+  const lower = word.toLowerCase();
+  const typedNext = (next >= 48 && next <= 57) || next === 45 /* - */ || next === 33; /* ! */
+  for (const k of RESOURCE_KEYS_LONGEST_FIRST) {
+    if (!lower.startsWith(k.toLowerCase())) continue;
+    const rest = lower.slice(k.length);
+    if ((rest === '' && typedNext) || (rest === 'ok' && next === 93) /* ] */) return k;
+  }
+  return null;
+}
 
 /**
  * APRS 1.2 !DAO! datum/precision extension: "!" + datum letter + two chars +
@@ -336,7 +356,8 @@ function parseResourceTokens(comment) {
   // regex form kept tripping CodeQL js/polynomial-redos on "[A" followed by
   // a long run of spaces, because the global scan re-enters each candidate.
   // Same grammar: "[" + letters + whitespace + value (first char not a space
-  // or "]") + "]"; the value runs to the first "]".
+  // or "]") + "]"; the value runs to the first "]". Spaces just inside the
+  // "[" are allowed, and a known key may run straight into its value (#1254).
   const n = comment.length;
   const isLetter = (c) => (c >= 65 && c <= 90) || (c >= 97 && c <= 122);
   const isSpace = (c) => c === 32 || (c >= 9 && c <= 13);
@@ -346,14 +367,26 @@ function parseResourceTokens(comment) {
       i++;
       continue;
     }
-    let j = i + 1;
+    let k = i + 1;
+    while (k < n && isSpace(comment.charCodeAt(k))) k++;
+    let j = k;
     while (j < n && isLetter(comment.charCodeAt(j))) j++;
-    if (j === i + 1 || j >= n || !isSpace(comment.charCodeAt(j))) {
+    if (j === k || j >= n) {
       i++;
       continue;
     }
-    const key = canonicalResourceKey(comment.slice(i + 1, j));
-    while (j < n && isSpace(comment.charCodeAt(j))) j++;
+    let key;
+    if (isSpace(comment.charCodeAt(j))) {
+      key = canonicalResourceKey(comment.slice(k, j));
+      while (j < n && isSpace(comment.charCodeAt(j))) j++;
+    } else {
+      key = splitSpacelessKey(comment.slice(k, j), comment.charCodeAt(j));
+      if (!key) {
+        i++;
+        continue;
+      }
+      j = k + key.length; // any trailing "OK" letters are the value
+    }
     if (j >= n || comment.charCodeAt(j) === 93 /* ] */) {
       i++;
       continue;
@@ -361,7 +394,7 @@ function parseResourceTokens(comment) {
     const close = comment.indexOf(']', j);
     if (close < 0) break; // no closing bracket anywhere ahead — nothing more can match
     const val = comment.slice(j, close).trim();
-    const capacityMatch = val.match(/^(\d+)\/(\d+)$/);
+    const capacityMatch = val.match(/^(\d+)\s*\/\s*(\d+)$/);
     if (capacityMatch) {
       tokens.push({ key, current: parseInt(capacityMatch[1]), max: parseInt(capacityMatch[2]), type: 'capacity' });
     } else if (val === '!') {

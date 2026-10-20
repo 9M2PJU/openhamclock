@@ -14,7 +14,7 @@ import { calculateDistance, formatDistance, maidenheadToLatLon, latLonToMaidenhe
 import { esc } from '../utils/escapeHtml.js';
 import { apiFetch } from '../utils/apiFetch.js';
 import { useAprsShelterReports } from '../hooks/useAprsShelterReports.js';
-import { mergeShelters } from '../utils/emcommShelters.js';
+import { aggregateResourceTokens, mergeShelters } from '../utils/emcommShelters.js';
 import { sendAprsMessage, directRigUrl } from '../utils/aprsMessageSend.js';
 import { useRigOptional } from '../contexts/RigContext.jsx';
 import { useAprsMsgStatus, deliveryLabel } from '../utils/aprsMsgStatus.js';
@@ -1633,14 +1633,24 @@ export default function EmcommLayout(props) {
             gap: '8px',
           }}
         >
-          {/* Panel state toolbar (#1188) */}
+          {/* Panel state toolbar (#1188), pinned to the top of the rail so it
+              stays in reach as panels expand below it (#1255). Sticky stops
+              at the rail's 8px padding, so it pulls up over that strip to
+              keep scrolled panels from showing above it. */}
           <div
             style={{
+              position: 'sticky',
+              top: '-8px',
+              zIndex: 5,
+              flexShrink: 0,
+              margin: '-8px 0 0',
+              background: '#111',
+              boxShadow: '0 6px 8px -6px rgba(0,0,0,0.6)',
               display: 'flex',
               flexWrap: 'wrap',
               alignItems: 'center',
               gap: '4px 6px',
-              padding: '2px 4px',
+              padding: '10px 4px 4px',
               fontSize: '10px',
               color: '#888',
             }}
@@ -2933,30 +2943,7 @@ function TokenPill({ token }) {
 
 /** Resource summary dashboard — aggregates tokens from all emcomm stations */
 function ResourceSummary({ stations, panels }) {
-  const aggregated = useMemo(() => {
-    const byKey = {};
-    stations.forEach((s) => {
-      (s.tokens || []).forEach((t) => {
-        if (!byKey[t.key])
-          byKey[t.key] = {
-            key: t.key,
-            capacity: [],
-            needs: 0,
-            quantities: 0,
-            statuses: { ok: 0, critical: 0 },
-            count: 0,
-          };
-        const agg = byKey[t.key];
-        agg.count++;
-        if (t.type === 'capacity') agg.capacity.push({ current: t.current, max: t.max });
-        else if (t.type === 'need') agg.needs += t.value;
-        else if (t.type === 'quantity') agg.quantities += t.value;
-        else if (t.type === 'status') agg.statuses.ok++;
-        else if (t.type === 'critical') agg.statuses.critical++;
-      });
-    });
-    return Object.values(byKey);
-  }, [stations]);
+  const aggregated = useMemo(() => aggregateResourceTokens(stations), [stations]);
 
   if (aggregated.length === 0) return null;
 
