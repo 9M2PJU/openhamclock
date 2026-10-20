@@ -184,3 +184,69 @@ describe('acks mark sent messages delivered (#1247)', () => {
     expect(messagesForStation(msgs, 'KE8PLM-9')[0]).toMatchObject({ msgId: '12', delivery: 'acked' });
   });
 });
+
+// Frames as heard by KE8PLM's DireWolf (#1252, #1253)
+const TH_D75 = 'KE8PLM-9>APK005,W8BLV,WIDE1*,WIDE2-1:';
+const IGATED_ACK = 'W8EH>APU25N,W8BLV,WIDE1*,WIDE2-1:}KE8PLM-9>APFII0,TCPIP,W8EH*::KE8PLM   :ack687\r';
+
+describe('reply-ack ids are not part of the text (#1252)', () => {
+  it('takes "{MM}AA" off the text; the id is MM', () => {
+    expect(parseAprsMessage(TH_D75 + ':KE8PLM   :got it{0D}682')).toMatchObject({ text: 'got it', msgId: '0D' });
+    expect(parseAprsMessage(TH_D75 + ':KE8PLM   :hi{0D}')).toMatchObject({ text: 'hi', msgId: '0D' });
+    expect(parseAprsMessage(TH_D75 + ':KE8PLM   :hi{0D}682\r')).toMatchObject({ text: 'hi', msgId: '0D' });
+    expect(parseAprsMessage(TH_D75 + ':KE8PLM   :hi{687')).toMatchObject({ text: 'hi', msgId: '687' });
+  });
+
+  it('net check-in status and check-out are clean', () => {
+    const cq = parseAprsMessage(TH_D75 + ':EMCOMM   :CQ TESTNET INSERVICE{0C}681');
+    expect(cq.text).toBe('CQ TESTNET INSERVICE');
+    expect(cq.netCommand).toMatchObject({ action: 'checkin', netName: 'TESTNET', status: 'INSERVICE' });
+    const u = parseAprsMessage(TH_D75 + ':EMCOMM   :U Testnet{0E}682');
+    expect(u.text).toBe('U Testnet');
+    expect(u.netCommand).toMatchObject({ action: 'checkout', netName: 'TESTNET' });
+  });
+
+  it('the trailing AA acks our message AA to that station', () => {
+    const sent = { direction: 'sent', to: 'KE8PLM-9', msgId: '682', delivery: 'pending', text: 'x' };
+    const ack = parseAprsAck(TH_D75 + ':KE8PLM   :got it{0D}682');
+    expect(ack).toEqual({ from: 'KE8PLM-9', to: 'KE8PLM', msgId: '682', state: 'acked' });
+    expect(applyAprsAck([sent], ack)).toBe(sent);
+    expect(sent.delivery).toBe('acked');
+    // "{MM}" alone acks nothing
+    expect(parseAprsAck(TH_D75 + ':KE8PLM   :hi{0D}')).toBeNull();
+  });
+});
+
+describe('acks relayed by an igate in a third-party wrapper (#1253)', () => {
+  it('unwraps the frame and trims the CR after the id', () => {
+    expect(parseAprsAck(IGATED_ACK)).toEqual({ from: 'KE8PLM-9', to: 'KE8PLM', msgId: '687', state: 'acked' });
+    expect(parseAprsMessage(IGATED_ACK)).toBeNull();
+  });
+
+  it('marks the sent message delivered', () => {
+    const sent = {
+      direction: 'sent',
+      to: 'KE8PLM-9',
+      msgId: '687',
+      delivery: 'pending',
+      text: 'Test Message for Ack5',
+    };
+    expect(applyAprsAck([sent], parseAprsAck(IGATED_ACK))).toBe(sent);
+    expect(sent.delivery).toBe('acked');
+  });
+
+  it('rejects and messages are unwrapped the same way', () => {
+    expect(parseAprsAck('W8EH>APU25N:}KE8PLM-9>APFII0,TCPIP,W8EH*::ke8plm   :rej687\r')).toMatchObject({
+      from: 'KE8PLM-9',
+      to: 'KE8PLM',
+      msgId: '687',
+      state: 'rejected',
+    });
+    expect(parseAprsMessage('W8EH>APU25N:}KE8PLM-9>APFII0,TCPIP,W8EH*::KE8PLM   :hello{12\r')).toMatchObject({
+      from: 'KE8PLM-9',
+      to: 'KE8PLM',
+      text: 'hello',
+      msgId: '12',
+    });
+  });
+});

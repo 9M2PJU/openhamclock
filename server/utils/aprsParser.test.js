@@ -1,7 +1,14 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import { parseAprsPacket, parseMice, parseResourceTokens, MICE_TYPES } from './aprsParser.js';
+import {
+  parseAprsPacket,
+  parseMice,
+  parseResourceTokens,
+  unwrapThirdParty,
+  parseMessagePayload,
+  MICE_TYPES,
+} from './aprsParser.js';
 
 // Expected values cross-checked with aprslib (the reference Python parser)
 // wherever it supports the format; third-party and item formats follow APRS 1.01.
@@ -196,6 +203,33 @@ describe('parseAprsPacket', () => {
     expect(parseAprsPacket(null)).toBeNull();
     expect(parseAprsPacket('N8TAG-12>AP:`p+5l!![/')).toBeNull(); // Mic-E with a too-short destination
     expect(parseAprsPacket('A>B:!3858.49N/08415.25W-')).toBeNull(); // callsign too short
+  });
+});
+
+describe('message frames (#1252, #1253)', () => {
+  it('unwrapThirdParty returns the inner sender and payload', () => {
+    expect(
+      unwrapThirdParty('W8EH>APU25N,W8BLV,WIDE1*,WIDE2-1:}KE8PLM-9>APFII0,TCPIP,W8EH*::KE8PLM   :ack687\r'),
+    ).toEqual({ src: 'KE8PLM-9', destination: 'APFII0', payload: ':KE8PLM   :ack687', thirdPartyVia: ['W8EH'] });
+    expect(unwrapThirdParty('N8TAG>APRS::W1AW     :hi')).toMatchObject({ src: 'N8TAG', thirdPartyVia: [] });
+    expect(unwrapThirdParty('A>B:' + '}A>B:'.repeat(10) + 'x')).toBeNull(); // depth-limited
+    expect(unwrapThirdParty('garbage')).toBeNull();
+  });
+
+  it('parseMessagePayload splits ids, reply-acks, acks and rejs off the text', () => {
+    expect(parseMessagePayload(':KE8PLM   :got it{0D}682')).toEqual({
+      to: 'KE8PLM',
+      text: 'got it',
+      msgId: '0D',
+      replyAck: '682',
+      ack: null,
+      rej: null,
+    });
+    expect(parseMessagePayload(':KE8PLM   :ack687\r')).toMatchObject({ ack: '687', rej: null, msgId: null });
+    expect(parseMessagePayload(':KE8PLM   :rej687 ')).toMatchObject({ ack: null, rej: '687' });
+    expect(parseMessagePayload(':KE8PLM   :set {verbose} on')).toMatchObject({ text: 'set {verbose} on', msgId: null });
+    expect(parseMessagePayload('!3900.11N/08411.80W-')).toBeNull();
+    expect(parseMessagePayload(':TOOLONGADDRESS:hi')).toBeNull();
   });
 });
 

@@ -116,6 +116,106 @@ function timestampLooksValid(s) {
   return s[6] === 'h' ? a < 24 && b < 60 && c < 60 : a >= 1 && a <= 31 && b < 24 && c < 60;
 }
 
+// ── Third-party wrapper (APRS 1.01 chapter 17) ──────────────────────────
+
+/**
+ * Split "SRC>DEST,PATH:payload" into its parts, unwrapping third-party frames
+ * ("IGATE>APRS:}REAL>DEST,PATH:payload") so the inner sender and payload are
+ * returned. Igates re-transmit internet traffic — messages and acks too — over
+ * RF this way (#1253). Depth-limited; trailing CR/LF is removed.
+ * @returns {{ src, destination, payload, thirdPartyVia } | null}
+ */
+function unwrapThirdParty(line) {
+  if (typeof line !== 'string') return null;
+  const thirdPartyVia = [];
+  for (let depth = 0; ; depth++) {
+    if (depth > MAX_THIRD_PARTY_DEPTH) return null;
+    const headerEnd = line.indexOf(':');
+    const arrow = line.indexOf('>');
+    if (arrow < 1 || headerEnd <= arrow + 1) return null;
+    const src = line.slice(0, arrow).replace(/\0/g, '').trim();
+    const destination = line
+      .slice(arrow + 1, headerEnd)
+      .split(',')[0]
+      .replace(/\0/g, '')
+      .trim();
+    let payload = line.slice(headerEnd + 1);
+    // Trailing CR/LF trimmed by hand — /[\r\n]+$/ is polynomial on long runs of newlines
+    let end = payload.length;
+    while (end > 0 && (payload[end - 1] === '\n' || payload[end - 1] === '\r')) end--;
+    payload = payload.slice(0, end);
+    if (payload.charAt(0) !== '}') return { src, destination, payload, thirdPartyVia };
+    thirdPartyVia.push(src);
+    line = payload.slice(1);
+  }
+}
+
+// ── Messages, acks and rejects (APRS 1.01 chapter 14, 1.1 reply-ack) ────
+
+/**
+ * Parse a message payload ":ADDRESSEE:text{id". The addressee is a 9-character
+ * space-padded field; it comes back trimmed (case kept).
+ *
+ *   text{id        id of 1–5 alphanumerics
+ *   text{MM}       reply-ack capable sender, nothing to ack
+ *   text{MM}AA     reply-ack: also acknowledges OUR message AA (Kenwood TH-D75
+ *                  and others, #1252) — AA echoes our id, so up to 5 chars
+ *   ackNN / rejNN  acknowledgement / rejection of our message NN
+ *
+ * Control characters and spaces radios leave after the id (a trailing CR,
+ * #1212, #1253) are trimmed first.
+ * @returns {null | { to, text, msgId, replyAck, ack, rej }}
+ */
+function parseMessagePayload(payload) {
+  if (typeof payload !== 'string' || payload.charAt(0) !== ':') return null;
+  const addrEnd = payload.indexOf(':', 1);
+  if (addrEnd < 2 || addrEnd > 10) return null;
+  const to = payload.slice(1, addrEnd).trim();
+  if (!to) return null;
+  const body = payload.slice(addrEnd + 1);
+  // Trimmed by hand — /\s+$/ is polynomial on long runs of whitespace
+  let end = body.length;
+  while (end > 0) {
+    const c = body.charCodeAt(end - 1);
+    if (c <= 0x20 || c === 0x7f) end--;
+    else break;
+  }
+  const trimmed = body.slice(0, end);
+  const ackMatch = trimmed.match(/^(ack|rej)([A-Za-z0-9]{1,5})(?:\}.*)?$/);
+  if (ackMatch) {
+    const id = ackMatch[2];
+    return {
+      to,
+      text: '',
+      msgId: null,
+      replyAck: null,
+      ack: ackMatch[1] === 'ack' ? id : null,
+      rej: ackMatch[1] === 'rej' ? id : null,
+    };
+  }
+  const idMatch = trimmed.match(/\{([A-Za-z0-9]{1,5})(?:\}([A-Za-z0-9]{0,5}))?$/);
+  return {
+    to,
+    text: (idMatch ? trimmed.slice(0, idMatch.index) : trimmed).trim(),
+    msgId: idMatch ? idMatch[1] : null,
+    replyAck: (idMatch && idMatch[2]) || null,
+    ack: null,
+    rej: null,
+  };
+}
+
+/**
+ * A message frame "SRC>DEST,PATH::ADDRESSEE:text{id", third-party wrapper
+ * removed: `from` is the inner (real) sender.
+ * @returns {null | { from, to, text, msgId, replyAck, ack, rej, thirdPartyVia }}
+ */
+function parseMessageFrame(line) {
+  const frame = unwrapThirdParty(line);
+  if (!frame || !frame.src) return null;
+  const m = parseMessagePayload(frame.payload);
+  return m ? { from: frame.src, ...m, thirdPartyVia: frame.thirdPartyVia } : null;
+}
+
 // ── Mic-E (APRS 1.01 chapter 10) ─────────────────────────────────────────
 
 /** Destination character → latitude digit (0–9). K, L, Z stand for "space" → 0. */
@@ -301,32 +401,9 @@ function parseAprsPacket(line) {
   try {
     if (typeof line !== 'string' || line.length > 8192) return null;
     const raw = line;
-    const thirdPartyVia = [];
-    let src;
-    let destination;
-    let payload;
-
-    // Unwrap third-party frames: "IGATE>APRS:}REAL>DEST,PATH:payload"
-    for (let depth = 0; ; depth++) {
-      if (depth > MAX_THIRD_PARTY_DEPTH) return null;
-      const headerEnd = line.indexOf(':');
-      const arrow = line.indexOf('>');
-      if (arrow < 1 || headerEnd <= arrow + 1) return null;
-      src = line.slice(0, arrow).replace(/\0/g, '').trim();
-      destination = line
-        .slice(arrow + 1, headerEnd)
-        .split(',')[0]
-        .replace(/\0/g, '')
-        .trim();
-      payload = line.slice(headerEnd + 1);
-      // Trailing CR/LF trimmed by hand — /[\r\n]+$/ is polynomial on long runs of newlines
-      let end = payload.length;
-      while (end > 0 && (payload[end - 1] === '\n' || payload[end - 1] === '\r')) end--;
-      payload = payload.slice(0, end);
-      if (payload.charAt(0) !== '}') break;
-      thirdPartyVia.push(src);
-      line = payload.slice(1);
-    }
+    const frame = unwrapThirdParty(line);
+    if (!frame) return null;
+    const { src, destination, payload, thirdPartyVia } = frame;
 
     const senderCall = src.split('-')[0].trim();
     if (!senderCall || senderCall.length < 3) return null;
@@ -424,4 +501,14 @@ function parseAprsPacket(line) {
   }
 }
 
-module.exports = { parseAprsPacket, parseMice, parsePositionBody, parseResourceTokens, stripDao, MICE_TYPES };
+module.exports = {
+  parseAprsPacket,
+  parseMice,
+  parsePositionBody,
+  parseResourceTokens,
+  stripDao,
+  unwrapThirdParty,
+  parseMessagePayload,
+  parseMessageFrame,
+  MICE_TYPES,
+};
