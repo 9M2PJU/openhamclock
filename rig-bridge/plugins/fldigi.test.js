@@ -240,6 +240,23 @@ describe('fldigi plugin — TX', () => {
     await expect(inst.sendText(42)).rejects.toMatchObject({ status: 400 });
   });
 
+  it('applies the send-box options at send time: new line, DE call, extra line end (#1251)', async () => {
+    const { fl, inst } = make({ callsign: 'ke8plm', txPrependCr: true, txPrependDe: true, txAppendCr: true });
+    await inst.pollOnce();
+    await inst.sendText('  QSL 3 msgs  ');
+    await vi.waitFor(() => expect(fl.trx).toBe('tx'));
+    expect(fl.tx).toBe('\nDE KE8PLM QSL 3 msgs\n\n^r');
+  });
+
+  it('leaves ICS-213 transfers alone whatever the send-box options say', async () => {
+    const { fl, inst } = make({ callsign: 'KE8PLM', txPrependCr: true, txPrependDe: true, txAppendCr: true });
+    await inst.pollOnce();
+    await inst.sendIcs213({ subject: 'Test', message: 'hi' });
+    await vi.waitFor(() => expect(fl.trx).toBe('tx'));
+    expect(fl.tx.startsWith('... start\n')).toBe(true);
+    expect(fl.tx.endsWith('... end\n^r')).toBe(true);
+  });
+
   it('aborts a transmission that outlives maxTxSeconds', async () => {
     vi.useFakeTimers();
     const { fl, inst } = make({ maxTxSeconds: 10 });
@@ -452,6 +469,18 @@ describe('fldigi plugin — flmsg forms', () => {
     await vi.advanceTimersByTimeAsync(1000);
     expect(posted).toEqual([]);
     inst.disconnect();
+  });
+
+  it('formatFldigiTx adds each option on its own and skips DE without a callsign', () => {
+    const { formatFldigiTx } = plugin._internals;
+    expect(formatFldigiTx('hi')).toBe('hi');
+    expect(formatFldigiTx('hi', { prependCr: true })).toBe('\nhi');
+    expect(formatFldigiTx('hi', { prependDe: true, callsign: 'KE8PLM' })).toBe('DE KE8PLM hi');
+    expect(formatFldigiTx('hi', { appendCr: true })).toBe('hi\n');
+    expect(formatFldigiTx('hi', { prependCr: true, prependDe: true, appendCr: true, callsign: 'N8TAG' })).toBe(
+      '\nDE N8TAG hi\n',
+    );
+    expect(formatFldigiTx('hi', { prependCr: true, prependDe: true, callsign: ' ' })).toBe('\nhi');
   });
 
   it('exposes internals for splitting folder lists', () => {

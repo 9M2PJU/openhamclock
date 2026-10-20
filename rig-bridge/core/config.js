@@ -338,6 +338,9 @@ const DEFAULT_CONFIG = {
     rxBufferChars: 4000, // receive text kept for browsers that connect later
     maxTxSeconds: 600, // transmit watchdog — abort and return to RX after this
     callsign: '', // station call written into the flmsg header of sent forms
+    txPrependCr: false, // send box: start the text on a new line
+    txPrependDe: false, // send box: then "DE <callsign> " (callsign above, else flmsg's)
+    txAppendCr: false, // send box: an extra line end after the text
     flmsgEnabled: true, // watch the flmsg folders for received forms
     flmsgDirs: '', // '' = ~/NBEMS.files/WRAP/recv and ~/NBEMS.files/ICS/messages; ';'-separated list otherwise
     flmsgPollInterval: 15, // seconds between folder scans (fs.watch also reacts immediately)

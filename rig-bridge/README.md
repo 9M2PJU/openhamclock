@@ -829,6 +829,8 @@ Leave **Your Callsign** blank and the plugin uses the callsign set in flmsg.
 
 4. Switch OpenHamClock to the EmComm layout. The **NBEMS** panel shows fldigi's state within a second, and forms received in the last 72 hours appear in Field Reports.
 
+The three **Send box** options in the plugin settings (start on a new line, begin with `DE <callsign>`, extra line end after) are added to text from the NBEMS panel's send box as it goes to fldigi; the box itself shows only what you typed. They are off by default and never touch ICS-213 transfers.
+
 Sending (text, ICS-213, mode change, Stop TX) on the same network goes from the browser straight to Rig Bridge, like click-to-tune, with your Rig Bridge API token when one is set (Settings → Rig Bridge). With the Cloud Relay the command travels through your OpenHamClock server, signed with the relay's command key — see [NBEMS over the Cloud Relay](#nbems-over-the-cloud-relay) below.
 
 #### Config reference
@@ -841,6 +843,9 @@ Sending (text, ICS-213, mode change, Stop TX) on the same network goes from the 
 | `rxBufferChars`     | Receive text kept for browsers that connect later                                                                                  | `4000`                  |
 | `maxTxSeconds`      | Transmit watchdog: a transmission still running after this long is aborted and fldigi set to receive                               | `600`                   |
 | `callsign`          | This station's callsign: written into forms you send, and used to tell your own forms from received ones. Blank = flmsg's callsign | `""`                    |
+| `txPrependCr`       | Send box: start each message on a new line                                                                                         | `false`                 |
+| `txPrependDe`       | Send box: then `DE <callsign> ` (`callsign` above, else flmsg's; left out when neither is set)                                     | `false`                 |
+| `txAppendCr`        | Send box: an extra line end after each message (every transmission already ends with one)                                          | `false`                 |
 | `flmsgEnabled`      | Watch the flmsg folders for forms                                                                                                  | `true`                  |
 | `flmsgDirs`         | Folders to watch, separated by `;` — blank means `NBEMS.files/WRAP/recv` and `NBEMS.files/ICS/messages`                            | `""`                    |
 | `flmsgPollInterval` | Seconds between folder scans (file-system events also trigger a scan straight away)                                                | `15`                    |

@@ -159,6 +159,8 @@ function decodeResponse(xml) {
  * @param {object} [opts]
  * @param {number} [opts.timeout] per-call timeout in ms (default 3000)
  * @param {function} [opts.request] injectable http.request-compatible function
+ * @param {string} [opts.label]   prefix for transport errors (default 'XML-RPC'),
+ *                                e.g. 'fldigi XML-RPC main.get_frequency: read ECONNRESET'
  * @returns {{ call(method, params): Promise<any>, url: string }}
  */
 function createXmlRpcClient(url, opts = {}) {
@@ -166,6 +168,14 @@ function createXmlRpcClient(url, opts = {}) {
   const timeout = opts.timeout ?? 3000;
   const mod = target.protocol === 'https:' ? https : http;
   const request = opts.request || mod.request.bind(mod);
+  const label = opts.label || 'XML-RPC';
+
+  // Transport errors name the method that failed; .code (ECONNRESET …) is kept.
+  const transportError = (method, e) => {
+    const err = new Error(`${label} ${method}: ${e?.message || e}`);
+    if (e?.code) err.code = e.code;
+    return err;
+  };
 
   function call(method, params = []) {
     return new Promise((resolve, reject) => {
@@ -182,6 +192,10 @@ function createXmlRpcClient(url, opts = {}) {
           port: target.port || (target.protocol === 'https:' ? 443 : 80),
           path: target.pathname === '/' ? '/RPC2' : target.pathname,
           method: 'POST',
+          // No pooled keep-alive socket: fldigi's XML-RPC server closes each
+          // connection, and reusing one gave every other call ECONNRESET on
+          // Windows / Node 24 even with "Connection: close" (#1250).
+          agent: false,
           headers: {
             'Content-Type': 'text/xml',
             'Content-Length': Buffer.byteLength(body),
@@ -194,7 +208,7 @@ function createXmlRpcClient(url, opts = {}) {
           res.on('end', () => {
             const text = Buffer.concat(chunks).toString('utf8');
             if (res.statusCode < 200 || res.statusCode >= 300) {
-              return done(reject, new Error(`HTTP ${res.statusCode} from ${method}`));
+              return done(reject, transportError(method, `HTTP ${res.statusCode}`));
             }
             try {
               done(resolve, decodeResponse(text));
@@ -202,12 +216,12 @@ function createXmlRpcClient(url, opts = {}) {
               done(reject, e);
             }
           });
-          res.on('error', (e) => done(reject, e));
+          res.on('error', (e) => done(reject, transportError(method, e)));
         },
       );
-      req.on('error', (e) => done(reject, e));
+      req.on('error', (e) => done(reject, transportError(method, e)));
       req.setTimeout(timeout, () => {
-        req.destroy(new Error(`XML-RPC timeout after ${timeout}ms (${method})`));
+        req.destroy(new Error(`timeout after ${timeout}ms`));
       });
       req.write(body);
       req.end();

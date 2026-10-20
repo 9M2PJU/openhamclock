@@ -3,6 +3,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { EventEmitter } from 'events';
+import http from 'http';
 import { encodeCall, encodeValue, decodeResponse, createXmlRpcClient } from './xmlrpc-client.js';
 
 const response = (inner) =>
@@ -128,5 +129,86 @@ describe('createXmlRpcClient transport', () => {
 
     const dead = fakeRequest('', { fail: new Error('ECONNREFUSED') });
     await expect(createXmlRpcClient('http://h:1', { request: dead.request }).call('x')).rejects.toThrow(/ECONNREFUSED/);
+  });
+
+  it('does not pool sockets (agent: false) — #1250', async () => {
+    const { request, seen } = fakeRequest(response('<value><int>1</int></value>'));
+    await createXmlRpcClient('http://127.0.0.1:7362', { request }).call('main.get_frequency');
+    expect(seen[0].options.agent).toBe(false);
+    expect(seen[0].options.headers.Connection).toBe('close');
+  });
+
+  it('names the method in transport errors and keeps the error code', async () => {
+    const reset = Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' });
+    const dead = fakeRequest('', { fail: reset });
+    const client = createXmlRpcClient('http://h:1', { request: dead.request, label: 'fldigi XML-RPC' });
+    const err = await client.call('main.get_frequency').catch((e) => e);
+    expect(err.message).toBe('fldigi XML-RPC main.get_frequency: read ECONNRESET');
+    expect(err.code).toBe('ECONNRESET');
+
+    const bad = fakeRequest('oops', { status: 500 });
+    await expect(createXmlRpcClient('http://h:1', { request: bad.request }).call('text.get_rx')).rejects.toThrow(
+      'XML-RPC text.get_rx: HTTP 500',
+    );
+  });
+});
+
+// A server that answers one request per connection and then closes it, like
+// fldigi's XML-RPC server. Pooled sockets fail against this (#1250).
+describe('createXmlRpcClient over a real socket', () => {
+  async function closingServer(handler) {
+    const server = http.createServer((req, res) => {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', () => handler(req, res, body));
+    });
+    server.keepAliveTimeout = 1;
+    await new Promise((r) => server.listen(0, '127.0.0.1', r));
+    return server;
+  }
+
+  it('makes eight sequential calls without a connection reset', async () => {
+    let sockets = 0;
+    const server = await closingServer((req, res, body) => {
+      const method = body.match(/<methodName>([^<]+)<\/methodName>/)[1];
+      res.writeHead(200, { 'Content-Type': 'text/xml', Connection: 'close' });
+      res.end(response(encodeValue(method)));
+      req.socket.destroy();
+    });
+    server.on('connection', () => sockets++);
+    const { port } = server.address();
+    try {
+      const client = createXmlRpcClient(`http://127.0.0.1:${port}`, { timeout: 2000 });
+      const methods = [
+        'main.get_frequency',
+        'fldigi.version',
+        'modem.get_names',
+        'modem.get_name',
+        'modem.get_carrier',
+        'main.get_trx_status',
+        'text.get_rx_length',
+        'text.get_rx',
+      ];
+      for (const m of methods) await expect(client.call(m)).resolves.toBe(m);
+      expect(sockets).toBe(methods.length); // a fresh connection per call
+    } finally {
+      server.close();
+    }
+  });
+
+  it('names the method when the server drops the connection or does not answer', async () => {
+    const server = await closingServer((req, res, body) => {
+      if (body.includes('main.get_frequency')) return req.socket.destroy();
+      // modem.get_name: never answer
+    });
+    const { port } = server.address();
+    try {
+      const client = createXmlRpcClient(`http://127.0.0.1:${port}`, { timeout: 200, label: 'fldigi XML-RPC' });
+      await expect(client.call('main.get_frequency')).rejects.toThrow(/^fldigi XML-RPC main\.get_frequency: /);
+      await expect(client.call('modem.get_name')).rejects.toThrow('fldigi XML-RPC modem.get_name: timeout after 200ms');
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
   });
 });
