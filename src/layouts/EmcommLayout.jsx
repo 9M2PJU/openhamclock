@@ -1633,14 +1633,24 @@ export default function EmcommLayout(props) {
             gap: '8px',
           }}
         >
-          {/* Panel state toolbar (#1188) */}
+          {/* Panel state toolbar (#1188), pinned to the top of the rail so it
+              stays in reach as panels expand below it (#1255). Sticky stops
+              at the rail's 8px padding, so it pulls up over that strip to
+              keep scrolled panels from showing above it. */}
           <div
             style={{
+              position: 'sticky',
+              top: '-8px',
+              zIndex: 5,
+              flexShrink: 0,
+              margin: '-8px 0 0',
+              background: '#111',
+              boxShadow: '0 6px 8px -6px rgba(0,0,0,0.6)',
               display: 'flex',
               flexWrap: 'wrap',
               alignItems: 'center',
               gap: '4px 6px',
-              padding: '2px 4px',
+              padding: '10px 4px 4px',
               fontSize: '10px',
               color: '#888',
             }}
