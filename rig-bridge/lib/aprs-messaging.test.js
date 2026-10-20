@@ -49,10 +49,17 @@ describe('parseMessageInfo', () => {
       to: 'K0CJH-9',
       text: 'hello',
       msgId: '12',
+      replyAck: null,
       ack: null,
       rej: null,
     });
-    expect(parseMessageInfo(info('K0CJH-9', 'hi{MM}AA'))).toMatchObject({ text: 'hi', msgId: 'MM' });
+    expect(parseMessageInfo(info('K0CJH-9', 'hi{MM}AA'))).toMatchObject({ text: 'hi', msgId: 'MM', replyAck: 'AA' });
+    expect(parseMessageInfo(info('K0CJH-9', 'got it{0D}682'))).toMatchObject({
+      text: 'got it',
+      msgId: '0D',
+      replyAck: '682',
+    });
+    expect(parseMessageInfo(info('K0CJH-9', 'hi{0D}'))).toMatchObject({ text: 'hi', msgId: '0D', replyAck: null });
     expect(parseMessageInfo(info('K0CJH-9', 'ack12\r'))).toMatchObject({ ack: '12', rej: null });
     expect(parseMessageInfo(info('K0CJH-9', 'rej7'))).toMatchObject({ ack: null, rej: '7' });
     expect(parseMessageInfo('!3900.11N/08411.80W-')).toBeNull();
@@ -159,5 +166,58 @@ describe('incoming: auto-acknowledge (#1244)', () => {
     m.handleIncoming('KE8PLM-9', info('W8ROC', 'hi{5'));
     m.handleIncoming('KE8PLM-9', info('W8ROC-0', 'hi{6'));
     expect(s.transmitAck).toHaveBeenCalledTimes(2);
+  });
+});
+
+// KE8PLM's frames (#1252, #1253); our station is KE8PLM here
+describe('acks from a Kenwood reply-ack and from an igate (#1252, #1253)', () => {
+  const setupAs = (call) => {
+    const transmit = vi.fn(() => true);
+    const transmitAck = vi.fn(() => true);
+    const timers = { setTimeout: () => ({}), clearTimeout: () => {} };
+    const m = createMessenger({ transmit, transmitAck, myCall: () => call, settings: () => ({}), timers });
+    return { m, transmit, transmitAck };
+  };
+
+  it('an ack inside a third-party frame, CR after the id, stops the retries', () => {
+    const s = setupAs('KE8PLM');
+    const { msgId } = s.m.send('KE8PLM-9', 'Test Message for Ack5');
+    // W8EH>APU25N,W8BLV,WIDE1*,WIDE2-1:}KE8PLM-9>APFII0,TCPIP,W8EH*::KE8PLM   :ack687<CR>
+    const inner = `}KE8PLM-9>APFII0,TCPIP,W8EH*::KE8PLM   :ack${msgId}\r`;
+    expect(s.m.handleIncoming('W8EH', inner)).toEqual({ type: 'acked', msgId });
+    expect(s.m.list()[0].state).toBe('acked');
+  });
+
+  it('a rej inside a third-party frame stops them too', () => {
+    const s = setupAs('KE8PLM');
+    const { msgId } = s.m.send('KE8PLM-9', 'x');
+    s.m.handleIncoming('W8EH', `}KE8PLM-9>APFII0,TCPIP,W8EH*::ke8plm   :rej${msgId}\r`);
+    expect(s.m.list()[0].state).toBe('rejected');
+  });
+
+  it('a message inside a third-party frame is acked to the inner sender', () => {
+    const s = setupAs('KE8PLM');
+    s.m.handleIncoming('W8EH', '}KE8PLM-9>APFII0,TCPIP,W8EH*::KE8PLM   :hello{12\r');
+    expect(s.transmitAck).toHaveBeenCalledWith('KE8PLM-9', '12');
+  });
+
+  it('"text{MM}AA" acks our message AA and is acked with MM', () => {
+    const s = setupAs('KE8PLM');
+    const { msgId } = s.m.send('KE8PLM-9', 'are you there');
+    expect(s.m.handleIncoming('KE8PLM-9', info('KE8PLM', `got it{0D}${msgId}`))).toEqual({
+      type: 'acked-incoming',
+      msgId: '0D',
+      from: 'KE8PLM-9',
+      replyAcked: msgId,
+    });
+    expect(s.transmitAck).toHaveBeenCalledWith('KE8PLM-9', '0D');
+    expect(s.m.list()[0].state).toBe('acked');
+  });
+
+  it('a reply-ack from another station does not settle our message', () => {
+    const s = setupAs('KE8PLM');
+    const { msgId } = s.m.send('KE8PLM-9', 'x');
+    s.m.handleIncoming('N8TAG', info('KE8PLM', `hi{0D}${msgId}`));
+    expect(s.m.list()[0].state).toBe('pending');
   });
 });

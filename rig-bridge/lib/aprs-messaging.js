@@ -17,6 +17,8 @@
  * them without a restart. Timers and the clock are injectable for tests.
  */
 
+const { unwrapThirdParty, parseMessagePayload } = require('./aprs-parser');
+
 const RETRY_BASE_MS = 30 * 1000;
 const RETRY_MAX_MS = 8 * 60 * 1000;
 const KEEP_DONE_MS = 60 * 60 * 1000; // finished messages stay listed for an hour
@@ -33,29 +35,13 @@ const norm = (c) =>
 
 /**
  * Parse the info field of an APRS message frame (":ADDRESSEE:text{id").
- * @returns {null | { to, text, msgId, ack, rej }} ack/rej hold the acked id
+ * Shared with the server parser (lib/aprs-parser.js): trailing CR trimmed,
+ * reply-ack "{MM}AA" split off the text.
+ * @returns {null | { to, text, msgId, replyAck, ack, rej }} ack/rej/replyAck hold the acked id
  */
 function parseMessageInfo(info) {
-  if (typeof info !== 'string' || info.charAt(0) !== ':' || info.charAt(10) !== ':') return null;
-  const to = info.slice(1, 10).trim().toUpperCase();
-  let body = info.slice(11);
-  // Trailing CR/space some radios leave after the id (#1212)
-  body = body.replace(/[\s\x00-\x1f\x7f]+$/, '');
-  const ackMatch = body.match(/^(ack|rej)([A-Za-z0-9]{1,5})(?:\}.*)?$/);
-  if (ackMatch) {
-    return {
-      to,
-      text: '',
-      msgId: null,
-      ack: ackMatch[1] === 'ack' ? ackMatch[2] : null,
-      rej: ackMatch[1] === 'rej' ? ackMatch[2] : null,
-    };
-  }
-  // "{id" or the APRS 1.2 reply-ack "{MM}AA"
-  const idMatch = body.match(/\{([A-Za-z0-9]{1,5})(?:\}[A-Za-z0-9]{0,2})?$/);
-  const msgId = idMatch ? idMatch[1] : null;
-  const text = (idMatch ? body.slice(0, idMatch.index) : body).trim();
-  return { to, text, msgId, ack: null, rej: null };
+  const m = parseMessagePayload(info);
+  return m ? { ...m, to: m.to.toUpperCase() } : null;
 }
 
 /**
@@ -175,32 +161,45 @@ function createMessenger({
     return { ok: true, msgId, ackRequested: true };
   }
 
+  // Our message `id` to `from` was acked or rejected. True when it was pending.
+  function settle(id, from, state) {
+    const r = outgoing.get(id);
+    if (!r || r.to !== from || r.state !== 'pending') return false;
+    if (r.timer) timers.clearTimeout(r.timer);
+    r.timer = null;
+    r.state = state;
+    publish(r);
+    return true;
+  }
+
   /** Handle a received frame. Returns what it did, for logging/tests. */
   function handleIncoming(source, info) {
-    const m = parseMessageInfo(info);
+    // An igate relays internet traffic over RF as "}SRC>DEST,PATH:payload";
+    // the inner station is the sender — an aprs.fi ack arrives this way (#1253)
+    const inner =
+      typeof info === 'string' && info.charAt(0) === '}' ? unwrapThirdParty(`${source}>APRS:${info}`) : null;
+    const m = parseMessageInfo(inner ? inner.payload : info);
     if (!m) return null;
-    const from = norm(source);
+    const from = norm(inner ? inner.src : source);
     const me = norm(myCall());
     if (!me || norm(m.to) !== me || from === me) return null;
 
     const doneId = m.ack || m.rej;
     if (doneId) {
-      const r = outgoing.get(doneId);
-      if (r && r.to === from && r.state === 'pending') {
-        if (r.timer) timers.clearTimeout(r.timer);
-        r.timer = null;
-        r.state = m.ack ? 'acked' : 'rejected';
-        publish(r);
-        return { type: r.state, msgId: doneId };
-      }
+      const state = m.ack ? 'acked' : 'rejected';
+      if (settle(doneId, from, state)) return { type: state, msgId: doneId };
       return { type: 'ack-unmatched', msgId: doneId };
     }
 
+    // Reply-ack "text{MM}AA": the message also acks our message AA (#1252)
+    const replyAcked = m.replyAck && settle(m.replyAck, from, 'acked') ? m.replyAck : null;
+    const extra = replyAcked ? { replyAcked } : {};
+
     if (m.msgId && cfg().autoAck) {
       transmitAck(from, m.msgId);
-      return { type: 'acked-incoming', msgId: m.msgId, from };
+      return { type: 'acked-incoming', msgId: m.msgId, from, ...extra };
     }
-    return { type: 'message', msgId: m.msgId };
+    return { type: 'message', msgId: m.msgId, ...extra };
   }
 
   function list() {

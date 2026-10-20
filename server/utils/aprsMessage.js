@@ -8,43 +8,19 @@
  * EmComm net commands (`CQ NETNAME status`, `U NETNAME`) to EMCOMM or any other net address
  * come back as `netCommand` so the roster can act on them.
  */
-const { parseResourceTokens } = require('./aprsParser');
+const { parseResourceTokens, parseMessageFrame } = require('./aprsParser');
 
 function parseAprsMessage(line) {
   try {
-    const headerEnd = line.indexOf(':');
-    if (headerEnd < 0) return null;
-
-    const header = line.substring(0, headerEnd);
-    const payload = line.substring(headerEnd + 1);
-    const from = header.split('>')[0].trim();
-
-    // APRS message format: :ADDRESSEE:message{id
-    if (payload.charAt(0) !== ':') return null;
-    const addrEnd = payload.indexOf(':', 1);
-    if (addrEnd < 0) return null;
-
-    const to = payload.substring(1, addrEnd).trim();
-    const body = payload.substring(addrEnd + 1);
-
-    // Message ID: `{id` (1–5 alphanumerics), or the APRS 1.2 reply-ack form
-    // `{MM}` / `{MM}AA`. Radios do not always end the frame right after it —
-    // a Yaesu heard over a KISS TNC arrives with a trailing CR/space, which
-    // used to leave "{02" glued to the text (#1212). Trim control characters
-    // and whitespace first, then take the id off the end.
-    let end = body.length;
-    while (end > 0) {
-      const c = body.charCodeAt(end - 1);
-      if (c <= 0x20 || c === 0x7f) end--;
-      else break;
-    }
-    const trimmedBody = body.slice(0, end);
-    const idMatch = trimmedBody.match(/\{([A-Za-z0-9]{1,5})(?:\}([A-Za-z0-9]{0,2}))?$/);
-    const msgId = idMatch ? idMatch[1] : null;
-    const text = (idMatch ? trimmedBody.slice(0, idMatch.index) : trimmedBody).trim();
-
-    // Skip acks/rejs
-    if (text.startsWith('ack') || text.startsWith('rej')) return null;
+    // Addressee, text and id come from the shared parser, which unwraps
+    // third-party frames from igates (#1253) and takes the id — `{id`, or the
+    // reply-ack `{MM}` / `{MM}AA` a Kenwood TH-D75 sends (#1252) — off the
+    // text after trimming the CR/space radios leave behind (#1212).
+    const m = parseMessageFrame(line);
+    if (!m) return null;
+    // Acks/rejs are not messages (parseAprsAck handles them)
+    if (m.ack || m.rej) return null;
+    const { from, to, text, msgId } = m;
 
     const isBulletin = to.startsWith('BLN');
     const { tokens, cleanComment } = parseResourceTokens(text);
@@ -164,23 +140,18 @@ function isDuplicateMessage(messages, msg) {
 }
 
 /**
- * An ack or rej frame (#1247): "SRC>DEST::ADDRESSEE:ack12".
+ * An ack or rej frame (#1247): "SRC>DEST::ADDRESSEE:ack12". A reply-ack
+ * message "text{MM}AA" acks our message AA too (#1252), and an ack relayed by
+ * an igate arrives inside a third-party wrapper "IGATE>...:}SRC>...::..."
+ * (#1253); `from` is the station that answered.
  * @returns {null | { from, to, msgId, state: 'acked' | 'rejected' }}
  */
 function parseAprsAck(line) {
-  if (typeof line !== 'string') return null;
-  const headerEnd = line.indexOf(':');
-  if (headerEnd < 0) return null;
-  const from = line.substring(0, headerEnd).split('>')[0].trim().toUpperCase();
-  const payload = line.substring(headerEnd + 1);
-  if (payload.charAt(0) !== ':' || payload.charAt(10) !== ':') return null;
-  const to = payload.slice(1, 10).trim().toUpperCase();
-  const m = payload
-    .slice(11)
-    .replace(/[\s\x00-\x1f\x7f]+$/, '')
-    .match(/^(ack|rej)([A-Za-z0-9]{1,5})(?:\}.*)?$/);
-  if (!m || !from) return null;
-  return { from, to, msgId: m[2], state: m[1] === 'ack' ? 'acked' : 'rejected' };
+  const m = parseMessageFrame(line);
+  if (!m) return null;
+  const msgId = m.ack || m.rej || m.replyAck;
+  if (!msgId) return null;
+  return { from: m.from.toUpperCase(), to: m.to.toUpperCase(), msgId, state: m.rej ? 'rejected' : 'acked' };
 }
 
 /**
@@ -191,11 +162,12 @@ function applyAprsAck(messages, ack) {
   if (!ack) return null;
   const base = (c) =>
     String(c || '')
+      .trim()
       .toUpperCase()
       .replace(/-0$/, '');
   for (let i = (messages || []).length - 1; i >= 0; i--) {
     const m = messages[i];
-    if (m?.direction === 'sent' && m.msgId === ack.msgId && base(m.to) === base(ack.from)) {
+    if (m?.direction === 'sent' && String(m.msgId ?? '').trim() === ack.msgId && base(m.to) === base(ack.from)) {
       if (m.delivery !== 'acked') {
         m.delivery = ack.state;
         m.deliveredAt = Date.now();
