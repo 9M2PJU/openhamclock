@@ -203,7 +203,7 @@ const descriptor = {
     try {
       const parsed = new URL(url);
       if (!/^https?:$/.test(parsed.protocol)) throw new Error('fldigi.url must be http:// or https://');
-      client = (services.createClient || createXmlRpcClient)(url, { timeout: 3000 });
+      client = (services.createClient || createXmlRpcClient)(url, { timeout: 3000, label: 'fldigi XML-RPC' });
     } catch (e) {
       clientError = e.message;
     }
