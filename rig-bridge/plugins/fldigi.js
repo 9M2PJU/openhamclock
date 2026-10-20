@@ -44,6 +44,9 @@
  *   rxBufferChars      number   receive text kept for late joiners (default 4000)
  *   maxTxSeconds       number   transmit watchdog (default 600)
  *   callsign           string   station call for flmsg headers on sent forms
+ *   txPrependCr        boolean  send-box text starts on a new line (default false)
+ *   txPrependDe        boolean  …then "DE <callsign> " (default false; skipped without a call)
+ *   txAppendCr         boolean  an extra line end after the text (default false)
  *   flmsgEnabled       boolean  watch the flmsg folders (default true)
  *   flmsgDirs          string[]|string  folders to watch ('' / [] = NBEMS defaults;
  *                               a string may list several separated by ';' or newlines)
@@ -102,6 +105,17 @@ function cleanTx(s) {
     .replace(/\r\n?/g, '\n')
     .replace(/\^/g, ' ')
     .replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '');
+}
+
+/**
+ * Send-box text as it goes to fldigi (#1251): optional new line and
+ * "DE <call> " in front, and an extra line end after. Applied at send time
+ * only — never to ICS-213 transfers, whose framing flmsg expects exactly.
+ * Line ends are '\n', like the rest of the cleaned outgoing text.
+ */
+function formatFldigiTx(text, { prependCr = false, prependDe = false, appendCr = false, callsign = '' } = {}) {
+  const call = String(callsign || '').trim();
+  return `${prependCr ? '\n' : ''}${prependDe && call ? `DE ${call} ` : ''}${text}${appendCr ? '\n' : ''}`;
 }
 
 function splitDirs(v) {
@@ -391,8 +405,9 @@ const descriptor = {
           // autosend uses text.add_tx_queu instead, whose characters bypass
           // that path and end on queue exhaustion — "^r" would go out literally
           // there, so we deliberately use text.add_tx.
-          const body = item.text.endsWith('\n') ? item.text : `${item.text}\n`;
-          await call('text.add_tx', [`${body}^r`]);
+          // Every transmission ends with a line end before ^r; send-box
+          // options may add one more (formatFldigiTx).
+          await call('text.add_tx', [`${item.text}\n^r`]);
           await call('main.tx');
           lastTxError = null;
           log(`Transmitting ${item.label} (${item.text.length} chars)`);
@@ -454,14 +469,14 @@ const descriptor = {
       return e;
     }
 
-    function enqueue(text, label) {
+    function enqueue(text, label, format) {
       if (!client) throw unavailable(clientError || 'fldigi client not configured');
       if (!connected) throw unavailable('fldigi is not connected');
       const clean = cleanTx(text).trim();
       if (!clean) throw badRequest('Nothing to send');
       if (clean.length > MAX_SEND_CHARS) throw badRequest(`Text exceeds ${MAX_SEND_CHARS} characters`);
       const id = ++txSeq;
-      txQueue.push({ id, text: clean, label, queuedAt: Date.now() });
+      txQueue.push({ id, text: format ? format(clean) : clean, label, queuedAt: Date.now() });
       emitStatus();
       // Start right away when fldigi is idle rather than waiting for the next poll
       if (!txActive && trx === 'rx') serviceTx().then(() => emitStatus());
@@ -470,7 +485,14 @@ const descriptor = {
 
     async function sendText(text) {
       if (typeof text !== 'string') throw badRequest('Missing text');
-      return enqueue(text, 'text');
+      return enqueue(text, 'text', (clean) =>
+        formatFldigiTx(clean, {
+          prependCr: cfg().txPrependCr === true,
+          prependDe: cfg().txPrependDe === true,
+          appendCr: cfg().txAppendCr === true,
+          callsign: stationCall(),
+        }),
+      );
     }
 
     async function sendIcs213(input = {}) {
@@ -752,4 +774,4 @@ const descriptor = {
 };
 
 module.exports = descriptor;
-module.exports._internals = { cleanRx, cleanTx, splitDirs };
+module.exports._internals = { cleanRx, cleanTx, splitDirs, formatFldigiTx };
