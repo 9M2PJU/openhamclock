@@ -140,7 +140,7 @@ function registerRelayAudio(app, ctx) {
 
   // ── bridge: upload ──
   app.post('/api/rig-bridge/relay/audio/upload', requireRelayAuth, (req, res) => {
-    const sessionId = req.headers['x-relay-session'] || req.query.session;
+    const sessionId = req.relaySessionId;
     const hub = hubs.get(sessionId);
     if (!hub || hub.listeners.size === 0) {
       req.resume();
