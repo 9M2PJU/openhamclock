@@ -59,6 +59,11 @@ if (fs.existsSync(envPath)) {
 
 const PORT = Number(process.env.PORT) || 3000;
 const HOST = process.env.HOST || '0.0.0.0';
+// Interface the HTTP and LAN HTTPS listeners bind to. HOST only names the
+// address shown in the startup banner; binding has always been every
+// interface, and many installs reach their dashboard from phones that way, so
+// that stays the default. BIND_HOST=127.0.0.1 keeps the server on this machine.
+const BIND_HOST = process.env.BIND_HOST || '0.0.0.0';
 
 // Trust proxy setting
 const TRUST_PROXY =
@@ -299,6 +304,7 @@ module.exports = {
   IS_PACKAGED,
   PORT,
   HOST,
+  BIND_HOST,
   TRUST_PROXY,
   TRUST_CLOUDFLARE,
   API_WRITE_KEY,

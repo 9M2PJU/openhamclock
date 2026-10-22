@@ -32,6 +32,7 @@ const {
   IS_PACKAGED,
   PORT,
   HOST,
+  BIND_HOST,
   API_WRITE_KEY,
   METRICS_AUTH_KEY,
   ITURHFPROP_URL,
@@ -386,7 +387,9 @@ app.use((err, req, res, next) => {
 });
 
 // ── Start server ──
-app.listen(PORT, '0.0.0.0', () => {
+// BIND_HOST (server/config.js): every interface by default; 127.0.0.1 keeps
+// the server on this machine.
+app.listen(PORT, BIND_HOST, () => {
   // The startup banner is ~40 lines; write it straight to stdout so the
   // console rate limiter (20-line burst) cannot drop the "Server running at"
   // line that tells the user where to point their browser.
@@ -413,8 +416,10 @@ app.listen(PORT, '0.0.0.0', () => {
   const displayHost = HOST === '0.0.0.0' ? 'localhost' : HOST;
   say(`  \uD83C\uDF10 OpenHamClock v${APP_VERSION}`);
   say(`  \uD83C\uDF10 Server running at http://${displayHost}:${PORT}`);
-  if (HOST === '0.0.0.0') {
+  if (BIND_HOST === '0.0.0.0' || BIND_HOST === '::') {
     say(`  \uD83D\uDD17 Network access: http://<your-ip>:${PORT}`);
+  } else {
+    say(`  \uD83D\uDD12 Listening on ${BIND_HOST} only (BIND_HOST)`);
   }
   say('  \uD83D\uDCE1 API proxy enabled for NOAA, POTA, SOTA, DX Cluster');
   say(`  \uD83D\uDCCB Log level: ${LOG_LEVEL} (set LOG_LEVEL=debug for verbose)`);
@@ -501,7 +506,7 @@ app.listen(PORT, '0.0.0.0', () => {
   // Optional HTTPS on the LAN (HTTPS_PORT) — a secure context for browsers
   // opening a Pi's dashboard by IP, which microphone access (Decoder panel)
   // requires. See server/utils/lanHttps.js.
-  require('./server/utils/lanHttps').startLanHttps(app, { dataDir: path.join(ROOT_DIR, 'data') });
+  require('./server/utils/lanHttps').startLanHttps(app, { dataDir: path.join(ROOT_DIR, 'data'), host: BIND_HOST });
 });
 
 function openInBrowser(url) {

@@ -671,7 +671,7 @@ Four Rig Bridge plugins bring HamClock's Raspberry Pi hardware features to OpenH
 Decodes from WSJT-X, JTDX, or anything speaking the same UDP protocol appear live in the WSJT-X panel and on the map (when grids are known), including a WSPR sub-tab with SNR, drift, and power.
 
 - **Same machine:** WSJT-X → Settings → Reporting → UDP Server → `127.0.0.1:2237`. Done (`WSJTX_ENABLED=true` is the default).
-- **Another machine on your LAN:** set `HOST=0.0.0.0` in OpenHamClock's `.env` and point WSJT-X at that machine's IP, port 2237.
+- **Another machine on your LAN:** point WSJT-X at the OpenHamClock machine's IP, port 2237 (the UDP listener is not affected by `BIND_HOST`).
 - **Multicast:** running several UDP listeners (GridTracker etc.)? Set `WSJTX_MULTICAST_ADDRESS` to match WSJT-X (e.g. `224.0.0.1`) — everyone shares the stream.
 - **Cloud/hosted:** UDP can't cross the internet; use the Rig Bridge WSJT-X plugin (or the legacy relay agent with `WSJTX_RELAY_KEY`) to forward decodes over HTTPS, tied to your browser session.
 

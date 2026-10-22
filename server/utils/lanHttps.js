@@ -111,9 +111,9 @@ async function startLanHttps(app, { env = process.env, dataDir, host = '0.0.0.0'
       server.listen(port, host, resolve);
     });
     const actual = server.address().port;
-    const where = lanAddresses()
-      .map((ip) => `https://${ip}:${actual}`)
-      .join('  ');
+    // Bound to one address (HOST=localhost etc.): that is the only way in.
+    const allInterfaces = host === '0.0.0.0' || host === '::';
+    const where = (allInterfaces ? lanAddresses() : [host]).map((ip) => `https://${ip}:${actual}`).join('  ');
     log(
       `[HTTPS] Also serving on port ${actual} (${where || `https://localhost:${actual}`}) — accept the certificate once`,
     );

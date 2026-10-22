@@ -58,6 +58,8 @@ describe('lanHttps', () => {
       log: () => {},
     });
     expect(started).not.toBeNull();
+    // listens only on the requested host (server.js passes HOST)
+    expect(started.server.address().address).toBe('127.0.0.1');
     expect(fs.existsSync(path.join(dir, 'cert.pem'))).toBe(true);
     const text = execFileSync('openssl', ['x509', '-in', path.join(dir, 'cert.pem'), '-noout', '-text'], {
       encoding: 'utf8',
