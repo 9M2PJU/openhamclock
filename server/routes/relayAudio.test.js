@@ -63,6 +63,7 @@ async function startStack({ kiwiPort, bridgeAnswers = true, relaySessions = ['ab
   const uploads = { count: 0 };
   const requireRelayAuth = (req, res, next) => {
     if (req.headers.authorization !== 'Bearer k') return res.status(401).json({ error: 'nope' });
+    req.relaySessionId = req.headers['x-relay-session'] || req.query.session;
     uploads.count++;
     next();
   };
