@@ -7,7 +7,7 @@ const compression = require('compression');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const express = require('express');
-const { getClientIP } = require('../utils/helpers');
+const { getClientIP, setTrustCloudflare } = require('../utils/helpers');
 
 /**
  * Apply all middleware to the Express app.
@@ -16,10 +16,11 @@ const { getClientIP } = require('../utils/helpers');
  * @returns {{ endpointStats, writeLimiter, requireWriteAuth }} shared middleware refs
  */
 function applyMiddleware(app, ctx) {
-  const { PORT, TRUST_PROXY, API_WRITE_KEY, CORS_ORIGINS } = ctx;
+  const { PORT, TRUST_PROXY, TRUST_CLOUDFLARE, API_WRITE_KEY, CORS_ORIGINS } = ctx;
 
-  // Trust proxy
+  // Trust proxy (req.ip) and, only when opted in, Cloudflare's CF-Connecting-IP
   app.set('trust proxy', TRUST_PROXY);
+  setTrustCloudflare(TRUST_CLOUDFLARE === true);
 
   // Helper: check write auth on POST endpoints that modify server state
   function requireWriteAuth(req, res, next) {

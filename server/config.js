@@ -70,6 +70,11 @@ const TRUST_PROXY =
       ? 1
       : false;
 
+// Take the client IP from Cloudflare's CF-Connecting-IP header. Only safe when
+// the origin is reachable exclusively through Cloudflare (anyone reaching it
+// directly can forge the header), so it is off unless explicitly enabled.
+const TRUST_CLOUDFLARE = process.env.TRUST_CLOUDFLARE === 'true' || process.env.TRUST_CLOUDFLARE === '1';
+
 // Security: API key for write operations
 const API_WRITE_KEY = process.env.API_WRITE_KEY || '';
 
@@ -295,6 +300,7 @@ module.exports = {
   PORT,
   HOST,
   TRUST_PROXY,
+  TRUST_CLOUDFLARE,
   API_WRITE_KEY,
   METRICS_AUTH_KEY,
   ITURHFPROP_URL,

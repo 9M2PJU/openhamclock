@@ -98,6 +98,7 @@ const { endpointStats, writeLimiter, requireWriteAuth } = applyMiddleware(app, {
   CONFIG,
   PORT,
   TRUST_PROXY: config.TRUST_PROXY,
+  TRUST_CLOUDFLARE: config.TRUST_CLOUDFLARE,
   API_WRITE_KEY,
   CORS_ORIGINS,
 });
