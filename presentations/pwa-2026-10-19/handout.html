@@ -275,7 +275,9 @@
   <body>
     <!-- PAGE 1 -->
     <section class="page">
-      <header class="top"><b>OpenHamClock · Guided Tour</b><span>Penn Wireless Association · W3SK · October 19, 2026</span></header>
+      <header class="top">
+        <b>OpenHamClock · Guided Tour</b><span>Penn Wireless Association · W3SK · October 19, 2026</span>
+      </header>
       <h1>OpenHamClock</h1>
       <p class="lead">
         A free, open-source dashboard in your web browser that puts what's happening on the air on one screen: space
@@ -295,13 +297,10 @@
             <li><b>Click your callsign</b> (top left) to open Settings at any time.</li>
           </ol>
           <p class="muted">
-            Settings are saved in your browser, on that device. To install it like an app: iPhone Safari Share → Add
-            to Home Screen; Android Chrome ⋮ → Install app; Chrome/Edge on a computer, the install icon in the
-            address bar.
+            Settings are saved in your browser, on that device. To install it like an app: iPhone Safari Share → Add to
+            Home Screen; Android Chrome ⋮ → Install app; Chrome/Edge on a computer, the install icon in the address bar.
           </p>
-          <div class="box">
-            <b>Rule of thumb</b> High <b>SFI</b> and low <b>K</b> = a good HF day.
-          </div>
+          <div class="box"><b>Rule of thumb</b> High <b>SFI</b> and low <b>K</b> = a good HF day.</div>
           <h2>The Modern layout</h2>
           <ul class="legend">
             <li><span class="k">1</span><b>Header</b>: clocks and space weather</li>
@@ -327,7 +326,10 @@
           <div class="z" style="left: 79.5%; top: 58.8%; width: 20%; height: 40.7%"><i>8</i></div>
         </div>
       </div>
-      <div class="notes"><b>Notes</b><div></div></div>
+      <div class="notes">
+        <b>Notes</b>
+        <div></div>
+      </div>
       <footer><span>openhamclock.com · Manual: Settings → Help</span><span>1 / 4</span></footer>
     </section>
 
@@ -348,7 +350,10 @@
         </tr>
         <tr>
           <td>SFI</td>
-          <td>Solar Flux Index: the sun's radio output at 10.7 cm; a stand-in for how hard it's ionizing the upper atmosphere</td>
+          <td>
+            Solar Flux Index: the sun's radio output at 10.7 cm; a stand-in for how hard it's ionizing the upper
+            atmosphere
+          </td>
           <td>Higher is better, especially 15–10 m. ~70 quiet sun · 120+ good · 150+ excellent</td>
         </tr>
         <tr>
@@ -382,12 +387,10 @@
         <div>
           <h2><span class="n">2</span>DE: your station</h2>
           <ul>
+            <li>"DE" is telegraph shorthand for "from": <b>your end</b>.</li>
             <li>
-              "DE" is telegraph shorthand for "from": <b>your end</b>.
-            </li>
-            <li>
-              <b>Grid square</b>, e.g. <span class="mono">FN20nc</span>: FN = 20°×10° field, 20 = 2°×1° square, nc =
-              a few miles. Most of Lower Bucks is FN20.
+              <b>Grid square</b>, e.g. <span class="mono">FN20nc</span>: FN = 20°×10° field, 20 = 2°×1° square, nc = a
+              few miles. Most of Lower Bucks is FN20.
             </li>
             <li>Lat/long: every distance and heading is measured from here.</li>
             <li>
@@ -400,9 +403,7 @@
           <h2><span class="n">2</span>DX: your target</h2>
           <ul>
             <li><b>Local time</b> at their end</li>
-            <li>
-              <b>Beam Dir</b>: short-path great-circle heading. Japan from here is ~332°, over the pole.
-            </li>
+            <li><b>Beam Dir</b>: short-path great-circle heading. Japan from here is ~332°, over the pole.</li>
             <li><b>Distance</b> along that path, and their sunrise/sunset in UTC</li>
             <li>
               <b>Set it</b> by clicking the map, typing a grid or callsign + Enter, picking from <b>DXCC</b>, or
@@ -415,7 +416,9 @@
       <h2><span class="n">5</span>The map</h2>
       <div class="cols wide-left">
         <ul>
-          <li>Shaded side = night. Its edge is the <b>gray line</b>: low-band signals travel unusually far along it.</li>
+          <li>
+            Shaded side = night. Its edge is the <b>gray line</b>: low-band signals travel unusually far along it.
+          </li>
           <li>☀ = where the sun is directly overhead; the moon icon = where the moon is.</li>
           <li>
             <b>Each line is a spot</b>, from the station that heard to the station heard, colored by band (same colors
@@ -430,7 +433,10 @@
           <li>Left toolbar: zoom, lock, show/hide callsigns, night darkness.</li>
         </ul>
       </div>
-      <div class="notes"><b>Notes</b><div></div></div>
+      <div class="notes">
+        <b>Notes</b>
+        <div></div>
+      </div>
       <footer><span>openhamclock.com</span><span>2 / 4</span></footer>
     </section>
 
@@ -466,13 +472,13 @@
         <div>
           <p>
             <b>Chart view</b>: a prediction for the path <b>from your DE to your DX</b>. Rows = bands, columns = 24
-            hours (UTC); the white box is now. Green = likely, yellow/orange = possible, red/dark = unlikely. It uses the
-            ITU's HF model (ITU-R P.533, the physics behind VOACAP), calculated in your browser with your mode, power
-            and antenna (default SSB, 100 W).
+            hours (UTC); the white box is now. Green = likely, yellow/orange = possible, red/dark = unlikely. It uses
+            the ITU's HF model (ITU-R P.533, the physics behind VOACAP), calculated in your browser with your mode,
+            power and antenna (default SSB, 100 W).
           </p>
           <p class="muted">
-            Example (FN20 → Tokyo, SSB, Oct 19): 40/30 m best ~08–14 UTC (our night); 17/15 m window ~21–00 UTC (5–8
-            PM EDT).
+            Example (FN20 → Tokyo, SSB, Oct 19): 40/30 m best ~08–14 UTC (our night); 17/15 m window ~21–00 UTC (5–8 PM
+            EDT).
           </p>
           <h3>MUF and LUF</h3>
           <ul>
@@ -502,7 +508,10 @@
           </p>
         </div>
       </div>
-      <div class="notes"><b>Notes</b><div></div></div>
+      <div class="notes">
+        <b>Notes</b>
+        <div></div>
+      </div>
       <footer><span>openhamclock.com</span><span>3 / 4</span></footer>
     </section>
 
@@ -574,8 +583,8 @@
           <h2>Settings (icons down the left edge)</h2>
           <p>
             <b>Station</b> call, grid, units · <b>Display</b> layout, theme, text size · <b>Map Layers</b> MUF map,
-            aurora, radar, grid squares · <b>Satellites</b> · <b>Alerts</b> sounds/notifications ·
-            <b>Profiles</b> save &amp; share setups · <b>Integrations</b> logbooks, QRZ · <b>Help</b> the full manual
+            aurora, radar, grid squares · <b>Satellites</b> · <b>Alerts</b> sounds/notifications · <b>Profiles</b> save
+            &amp; share setups · <b>Integrations</b> logbooks, QRZ · <b>Help</b> the full manual
           </p>
           <p>
             <b>Ctrl+K</b> (⌘K on Mac): type what you want, e.g. "aurora", "classic".<br />
@@ -583,8 +592,13 @@
           </p>
         </div>
       </div>
-      <div class="notes"><b>Notes</b><div></div></div>
-      <footer><span>openhamclock.com · Chris Hetherington, K0CJH · chris@cjhlighting.com</span><span>4 / 4</span></footer>
+      <div class="notes">
+        <b>Notes</b>
+        <div></div>
+      </div>
+      <footer>
+        <span>openhamclock.com · Chris Hetherington, K0CJH · chris@cjhlighting.com</span><span>4 / 4</span>
+      </footer>
     </section>
   </body>
 </html>
