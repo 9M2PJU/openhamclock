@@ -82,7 +82,7 @@
       "eslint --max-warnings=-1 --no-warn-ignored",
       "prettier --write"
     ],
-    "*.{json,css,md}": "prettier --write"
+    "*.{json,css,md,html,yml,yaml,cjs}": "prettier --write"
   },
   "keywords": [
     "amateur-radio",
