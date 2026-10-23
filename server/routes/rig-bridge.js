@@ -430,7 +430,8 @@ module.exports = function (app, ctx) {
           ctx
             .fetch(`http://localhost:${ctx.PORT}/api/aprs/local`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              // Internal: exempt from the per-IP limits on the ingest routes
+              headers: { 'Content-Type': 'application/json', 'X-OHC-Internal': ctx.INTERNAL_TOKEN || '' },
               body: JSON.stringify({ packets: req.body.aprsPackets }),
             })
             .catch(() => {});
@@ -452,7 +453,8 @@ module.exports = function (app, ctx) {
           ctx
             .fetch(`http://localhost:${ctx.PORT}/api/meshcom/local/${subtype}`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              // Internal: exempt from the per-IP limits on the ingest routes
+              headers: { 'Content-Type': 'application/json', 'X-OHC-Internal': ctx.INTERNAL_TOKEN || '' },
               body: JSON.stringify({ ...pkt, sessionId }),
             })
             .then((r) => {
