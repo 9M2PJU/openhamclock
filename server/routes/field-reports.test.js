@@ -18,7 +18,7 @@ beforeAll(() => {
   process.env.FIELD_REPORTS_FILE = path.join(dir, 'field-reports.json');
   routes = {};
   const app = {
-    post: (p, fn) => (routes[`POST ${p}`] = fn),
+    post: (p, ...h) => (routes[`POST ${p}`] = h[h.length - 1]),
     get: (p, fn) => (routes[`GET ${p}`] = fn),
   };
   const noop = () => {};
