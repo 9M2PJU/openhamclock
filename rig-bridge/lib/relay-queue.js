@@ -15,7 +15,7 @@
  */
 
 const MAX_QUEUE = 5000; // messages kept while the server is unreachable
-const MAX_BATCH = 500; // messages per POST
+const MAX_BATCH = 100; // messages per POST — the server keeps only the first 100 (server/routes/wsjtx.js)
 
 /**
  * Drop the oldest messages so at most `max` remain.
