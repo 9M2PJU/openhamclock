@@ -34,9 +34,17 @@ import * as ATCSectorsPlugin from './layers/useATCSectors.js';
 import * as PSKReporterBandActivityPlugin from './layers/usePSKReporterBandActivity.js';
 import * as MaidenheadGridPlugin from './layers/useMaidenheadGrid.js';
 import * as WorkedGridsPlugin from './layers/useWorkedGrids.js';
+import * as LogbookQsosPlugin from './layers/useLogbookQsos.js';
 import * as DRAPPlugin from './layers/useDRAP.js';
 import * as ZonesPlugin from './layers/useZones.js';
 import * as HistoryPlaybackPlugin from './layers/useHistoryPlayback.js';
+import * as TimeShiftPlugin from './layers/useTimeShift.js';
+import * as LaunchSitesPlugin from './layers/useLaunchSites.js';
+import * as TropicalCyclonesPlugin from './layers/useTropicalCyclones.js';
+import * as FireWeatherAlertsPlugin from './layers/useFireWeatherAlerts.js';
+import * as BuoysPlugin from './layers/useBuoys.js';
+import * as BoundariesPlugin from './layers/useBoundaries.js';
+import * as BalloonsPlugin from './layers/useBalloons.js';
 
 // Auto-discover local/custom plugins (gitignored — survive updates)
 const localPluginModules = import.meta.glob('./local/*.js', { eager: true });
@@ -84,9 +92,17 @@ const layerPlugins = [
   PSKReporterBandActivityPlugin,
   MaidenheadGridPlugin,
   WorkedGridsPlugin,
+  LogbookQsosPlugin,
   DRAPPlugin,
   ZonesPlugin,
   HistoryPlaybackPlugin,
+  TimeShiftPlugin,
+  LaunchSitesPlugin,
+  TropicalCyclonesPlugin,
+  FireWeatherAlertsPlugin,
+  BuoysPlugin,
+  BoundariesPlugin,
+  BalloonsPlugin,
   ...localPlugins,
 ];
 

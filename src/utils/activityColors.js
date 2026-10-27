@@ -18,7 +18,6 @@ export const ACTIVITY_COLORS = {
   wwff: '#a3f3a3',
   sota: '#ff9632',
   wwbota: '#8b7fff',
-  canparks: '#ff6b6b',
 };
 
 export default ACTIVITY_COLORS;

@@ -4,6 +4,23 @@ import { getModeFromFreq, mapModeToRig } from '../utils/bandPlan.js';
 import { canTransmit, getLicenseClass, normalizeLicenseClass } from '../utils/privileges.js';
 import { showToast } from '../utils/toast.js';
 import { isRelayConfigured, setRelayConfigured, setRelaySessionId } from '../utils/relaySession.js';
+import { sendRelayCommand, relayReadHeaders, relayStreamUrl } from '../utils/relaySign';
+
+// "Rig Bridge refused the command" — at most once a minute, whatever the
+// command (tune, mode, PTT, indicators, NBEMS).
+let lastRefusalToastAt = 0;
+function notifyRelayRefused() {
+  const now = Date.now();
+  if (now - lastRefusalToastAt < 60000) return;
+  lastRefusalToastAt = now;
+  showToast(
+    i18n.t('app.rigControl.relayRefused', {
+      defaultValue: 'Rig Bridge refused the command — re-pair Cloud Relay in Settings → Rig Bridge',
+    }),
+    { variant: 'warning' },
+  );
+}
+import { setTunedSpot } from '../services/logbookStore.js';
 
 // Default config
 // Default config (fallback)
@@ -11,7 +28,32 @@ const DEFAULT_RIG_URL = 'http://localhost:5555';
 
 const RigContext = createContext(null);
 
-const buildRigUrl = (rigConfig) => {
+/**
+ * Frequency in Hz from a number or string of unknown unit. Numbers: < 1000 is
+ * MHz, < 100000 is kHz, otherwise Hz. Strings may say "MHz" or "kHz";
+ * without a unit the same magnitude rule applies. 0 when unparsable.
+ */
+const toHz = (freqInput) => {
+  if (typeof freqInput === 'number') {
+    if (freqInput < 1000) return freqInput * 1000000;
+    if (freqInput < 100000) return freqInput * 1000;
+    return freqInput;
+  }
+  if (typeof freqInput === 'string') {
+    // Remove non-numeric chars except dot
+    const val = parseFloat(freqInput.replace(/[^\d.]/g, ''));
+    if (isNaN(val)) return 0;
+    const lower = freqInput.toLowerCase();
+    if (lower.includes('mhz')) return val * 1000000;
+    if (lower.includes('khz')) return val * 1000;
+    if (val < 1000) return val * 1000000;
+    if (val < 100000) return val * 1000;
+    return val;
+  }
+  return 0;
+};
+
+export const buildRigUrl = (rigConfig) => {
   const host = rigConfig?.host?.trim();
   if (!host) return DEFAULT_RIG_URL;
 
@@ -22,6 +64,9 @@ const buildRigUrl = (rigConfig) => {
   const port = Number.isFinite(parsedPort) && parsedPort > 0 ? parsedPort : 5555;
   return `${host}:${port}`;
 };
+
+/** The rig context, or null outside a RigProvider (components rendered alone, tests). */
+export const useRigOptional = () => useContext(RigContext);
 
 export const useRig = () => {
   const context = useContext(RigContext);
@@ -61,6 +106,7 @@ export const RigProvider = ({ children, rigConfig }) => {
     freq: 0,
     mode: '',
     ptt: false,
+    onAir: false, // hardware PTT / ON-AIR sense line (rig-bridge GPIO plugin)
     width: 0,
     lastUpdate: 0,
   });
@@ -75,6 +121,8 @@ export const RigProvider = ({ children, rigConfig }) => {
   const confirmedRelayState = useRef({ freq: 0, mode: '' });
   const optimisticTimers = useRef({});
   const OPTIMISTIC_TIMEOUT = 3000;
+  // Pause between a mode change and the confirming frequency re-send (#1195)
+  const TUNE_SETTLE_MS = 250;
 
   // Construct URL from config or default
   const rigUrl = buildRigUrl(rigConfig);
@@ -94,6 +142,19 @@ export const RigProvider = ({ children, rigConfig }) => {
       })()
     : '';
   const isCloudRelay = !!cloudRelaySession;
+
+  // The bridge reports commands it refused (unsigned, expired, replayed, bad
+  // signature) as a 'relay-cmd-refused' plugin event — tell the user how to fix it.
+  useEffect(() => {
+    if (!isCloudRelay) return undefined;
+    const onData = (e) => {
+      const d = e?.detail;
+      // NBEMS commands report their own refusal in the NBEMS panel
+      if (d?.type === 'plugin' && d.event === 'relay-cmd-refused' && d.data?.type !== 'fldigi') notifyRelayRefused();
+    };
+    window.addEventListener('rig-plugin-data', onData);
+    return () => window.removeEventListener('rig-plugin-data', onData);
+  }, [isCloudRelay]);
 
   // Build auth headers — only set when a token is configured
   const apiToken = rigConfig?.apiToken?.trim() || '';
@@ -166,9 +227,19 @@ export const RigProvider = ({ children, rigConfig }) => {
         setError(data.relayActive ? null : 'not-reachable');
       };
 
-      const connectSSE = () => {
+      const connectSSE = async () => {
         if (!active) return;
-        eventSource = new EventSource(`/api/rig-bridge/relay/stream?session=${encodeURIComponent(cloudRelaySession)}`);
+        // A paired browser buys a one-time stream ticket with its relay read
+        // token (utils/relaySign); the stream URL never carries a secret.
+        const { url, status } = await relayStreamUrl(cloudRelaySession);
+        if (!active) return;
+        if (!url) {
+          if (status === 401) setError('relay-read-refused');
+          retryTimeout = setTimeout(connectSSE, retryDelay);
+          retryDelay = Math.min(retryDelay * 2, MAX_RETRY_DELAY);
+          return;
+        }
+        eventSource = new EventSource(url);
 
         eventSource.onmessage = (event) => {
           try {
@@ -206,7 +277,12 @@ export const RigProvider = ({ children, rigConfig }) => {
             fallbackInterval = setInterval(async () => {
               if (!active) return;
               try {
-                const res = await fetch(`/api/rig-bridge/relay/state?session=${encodeURIComponent(cloudRelaySession)}`);
+                const res = await fetch(
+                  `/api/rig-bridge/relay/state?session=${encodeURIComponent(cloudRelaySession)}`,
+                  {
+                    headers: await relayReadHeaders(cloudRelaySession),
+                  },
+                );
                 if (res.ok) {
                   fallbackFailures = 0;
                   applyRelayState({ relayActive: true, ...(await res.json()) });
@@ -275,6 +351,7 @@ export const RigProvider = ({ children, rigConfig }) => {
               mode: data.mode,
               width: data.width,
               ptt: data.ptt,
+              onAir: !!data.onAir,
               lastUpdate: Date.now(),
             }));
           } else if (data.type === 'update') {
@@ -321,15 +398,11 @@ export const RigProvider = ({ children, rigConfig }) => {
   const sendCommand = useCallback(
     async (type, payload) => {
       if (isCloudRelay) {
-        // Route through OHC server relay
-        try {
-          await fetch(`/api/rig-bridge/relay/command?session=${encodeURIComponent(cloudRelaySession)}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ type, payload }),
-          });
-        } catch (err) {
-          console.error(`[RigContext] Cloud relay command failed:`, err);
+        // Route through OHC server relay, signed with this browser's command key
+        const r = await sendRelayCommand(cloudRelaySession, type, payload);
+        if (!r.ok) {
+          console.error(`[RigContext] Cloud relay command failed: ${r.error}`);
+          if (r.status === 401) notifyRelayRefused();
         }
         return null; // No status code in relay mode
       }
@@ -484,62 +557,42 @@ export const RigProvider = ({ children, rigConfig }) => {
         const m = spot.mode || modeInput;
         if (f) {
           tuneTo(f, m);
+          // Remember who we tuned to, so the Logbook's +QSO can fill in the call.
+          // Only with rig control on: a spot clicked while nothing was tuned
+          // must not be offered later, the moment a rig gets connected.
+          if (spot.call && rigConfig?.enabled) {
+            setTunedSpot({ call: spot.call, freqHz: toHz(f), gridsquare: spot.dxGrid || spot.grid });
+          }
         }
         return;
       }
 
-      let hz = 0;
-      // Handle number
-      if (typeof freqInput === 'number') {
-        // If small number (< 1000), assume MHz -> Hz
-        // If medium number (< 100000), assume kHz -> Hz
-        // If large number (> 100000), assume Hz
-        if (freqInput < 1000) hz = freqInput * 1000000;
-        else if (freqInput < 100000) hz = freqInput * 1000;
-        else hz = freqInput;
-      }
-      // Handle string
-      else if (typeof freqInput === 'string') {
-        // Remove non-numeric chars except dot
-        const clean = freqInput.replace(/[^\d.]/g, '');
-        const val = parseFloat(clean);
-        if (isNaN(val)) return;
-
-        // Heuristic: If string contains "MHz", treat as MHz
-        if (freqInput.toLowerCase().includes('mhz')) {
-          hz = val * 1000000;
-        }
-        // If string contains "kHz", treat as kHz
-        else if (freqInput.toLowerCase().includes('khz')) {
-          hz = val * 1000;
-        }
-        // Otherwise use magnitude heuristic
-        else {
-          if (val < 1000) hz = val * 1000000;
-          else if (val < 100000) hz = val * 1000;
-          else hz = val;
-        }
-      }
-
+      const hz = toHz(freqInput);
       if (hz > 0) {
         // console.log(`[RigContext] Tuning to ${hz} Hz`);
-        setFreq(hz);
-
         // Only switch mode when autoMode is enabled (default: on).
         // When off, only the frequency changes — the radio keeps its current mode.
-        if (rigConfig?.autoMode !== false) {
-          // Determine mode: use spot mode if provided, otherwise look up from band plan
-          let targetMode = modeInput || getModeFromFreq(hz);
+        // Mode: the spot's mode if provided, otherwise the band plan's; generic
+        // modes (DATA, SSB) map to rig-specific forms (DATA-USB, USB/LSB), CW
+        // passes through — rig-listener handles the radio-specific command.
+        const targetMode = rigConfig?.autoMode !== false ? mapModeToRig(modeInput || getModeFromFreq(hz), hz) : null;
+        const modeChange = targetMode && targetMode !== rigState.mode ? targetMode : null;
 
-          // Map generic modes (DATA, SSB) to rig-specific forms (DATA-USB, USB/LSB).
-          // CW passes through unchanged — rig-listener handles the radio-specific command.
-          targetMode = mapModeToRig(targetMode, hz);
-
-          if (targetMode && targetMode !== rigState.mode) {
-            // console.log(`[RigContext] Setting Mode to ${targetMode}`);
-            setMode(targetMode);
+        // Mode first, then frequency, then the frequency once more (#1195).
+        // These used to fire concurrently; Yaesu rigs (FT-991A, FTDX10, FT-950)
+        // move the dial by ~1.4 kHz when the mode changes, so a mode command
+        // landing after the frequency left the radio close but not on the spot
+        // and a second click was needed. Sequencing the commands and re-sending
+        // the frequency after the mode has settled is what operators' own
+        // "mode, freq, mode" macros do.
+        (async () => {
+          if (modeChange) await setMode(modeChange);
+          await setFreq(hz);
+          if (modeChange) {
+            await new Promise((resolve) => setTimeout(resolve, TUNE_SETTLE_MS));
+            await setFreq(hz);
           }
-        }
+        })();
 
         // License-class privilege check (non-blocking): still tune, but warn
         // when the target freq+mode is outside the configured US license-class
@@ -613,6 +666,11 @@ export const RigProvider = ({ children, rigConfig }) => {
     // between direct rig-bridge requests and OHC server proxying.
     rigUrl,
     isCloudRelay,
+    // Relay session — hooks that send their own relay commands (useFldigi) use it
+    cloudRelaySession,
+    // Cloud Relay session id (null when the bridge is reached directly) — the
+    // Decoder panel streams KiwiSDR audio through it.
+    relaySession: cloudRelaySession || null,
     setFreq,
     setMode,
     setPTT,

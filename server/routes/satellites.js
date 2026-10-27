@@ -9,7 +9,6 @@ const path = require('path');
 const satellitesTracked = require('./satellites-tracked');
 const { tleToOmm, parseTleBlock } = require('../utils/tle-to-omm');
 const { normalizeJsonTree } = require('../utils/normalize');
-const { MutexCounter } = require('../utils/mutex');
 const { StateMachine } = require('../utils/statemachine');
 const { celestrakFailurePolicy } = require('../utils/celestrakFailurePolicy');
 const csvToJson = require('convert-csv-to-json');
@@ -28,7 +27,7 @@ module.exports = function (app, ctx) {
   // Note: later will fall back to hardcoded list if JSON file not found
   const loadSatellitesJson = () => {
     const jsonPaths = [
-      path.join(ROOT_DIR, 'public', 'data', 'satellites.json'),
+      path.join(ctx.ASSET_DIR || ROOT_DIR, 'public', 'data', 'satellites.json'),
       path.join(ROOT_DIR, 'data', 'satellites.json'),
     ];
     for (const p of jsonPaths) {
@@ -89,8 +88,19 @@ module.exports = function (app, ctx) {
   // SatNOGS Transmitter DB radio metadata.
   const SATNOGS_TRANSMITTER_CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours
   const SATNOGS_TRANSMITTER_MAX_RECORDS = 500;
+  const SATNOGS_TRANSMITTERS_PER_SAT = 16; // per-satellite cap on the Doppler picker list
   const SATNOGS_TRANSMITTER_REQUEST_TIMEOUT = 8000;
-  const SATNOGS_TRANSMITTER_CONCURRENCY = 4;
+  // One request at a time with a breather between them: four-wide bursts got
+  // SatNOGS throttling us every day, ~40 relay timeouts in two minutes,
+  // which paged watchtower as "fletcher degraded" for ten minutes. The data
+  // changes rarely, so slow is fine. After a few consecutive failures the
+  // walk stops and yesterday's metadata stays in place.
+  const SATNOGS_TRANSMITTER_CONCURRENCY = 1;
+  const SATNOGS_TRANSMITTER_PAUSE_MS = 250;
+  const SATNOGS_TRANSMITTER_MAX_CONSECUTIVE_FAILURES = 3;
+  // 24 h plus up to 2 h of jitter, so the refresh does not land at the same
+  // minute of boot every day.
+  const satnogsRefreshDelay = () => SATNOGS_TRANSMITTER_CACHE_DURATION + Math.floor(Math.random() * 2 * 60 * 60 * 1000);
   const SATNOGS_TRANSMITTER_ATTRIBUTION = 'Radio metadata from SatNOGS Transmitter DB (CC BY-SA 4.0)';
 
   let satnogsTransmitterCache = {
@@ -133,6 +143,7 @@ module.exports = function (app, ctx) {
       }
     });
     delete satellite.satnogs;
+    delete satellite.transmitters;
     delete satellite.radioMetadataAttribution;
   };
 
@@ -157,20 +168,6 @@ module.exports = function (app, ctx) {
     if (!lowStr) return highStr;
 
     return lowStr.replace(' MHz', '') + ' - ' + highStr;
-  };
-
-  const uniqueCompactList = (values, maxItems = 4) => {
-    const unique = [];
-
-    values
-      .map((v) => String(v || '').trim())
-      .filter(Boolean)
-      .forEach((v) => {
-        if (!unique.includes(v)) unique.push(v);
-      });
-
-    if (unique.length <= maxItems) return unique.join(', ');
-    return unique.slice(0, maxItems).join(', ') + ' +' + (unique.length - maxItems) + ' more';
   };
 
   const describeSatnogsMode = (tx) => {
@@ -306,6 +303,47 @@ module.exports = function (app, ctx) {
     if (uplink) metadata.uplink = uplink;
     if (tone) metadata.tone = tone;
 
+    // Every active transmitter with BOTH an uplink and a downlink — i.e. a
+    // repeater or transponder a two-station relay contact can run through.
+    // The EME layout's satellite-relay mode lists these; the single "best"
+    // entry above stays for the compact info popup. Always set (possibly
+    // empty) so a stale list never survives a refresh.
+    const hzOrNull = (v) => {
+      const n = Number(v);
+      return Number.isFinite(n) && n > 0 ? n : null;
+    };
+    metadata.relayTransmitters = selected
+      .filter((tx) => hzOrNull(tx.uplink_low) && hzOrNull(tx.downlink_low))
+      .map((tx) => ({
+        mode: describeSatnogsMode(tx) || String(tx.mode || '').trim() || 'Unknown',
+        type: String(tx.type || '').trim(),
+        description: String(tx.description || '').trim(),
+        uplink: formatHzRangeAsMHz(tx.uplink_low, tx.uplink_high),
+        downlink: formatHzRangeAsMHz(tx.downlink_low, tx.downlink_high),
+        uplinkLowHz: hzOrNull(tx.uplink_low),
+        uplinkHighHz: hzOrNull(tx.uplink_high) || hzOrNull(tx.uplink_low),
+        downlinkLowHz: hzOrNull(tx.downlink_low),
+        downlinkHighHz: hzOrNull(tx.downlink_high) || hzOrNull(tx.downlink_low),
+        invert: tx.invert === true || tx.invert === 'true',
+        tone: String(tx.tone || tx.uplink_tone || '').trim(),
+      }));
+
+    // Every active transmitter, beacons and telemetry included, for the
+    // Doppler tuner's transmitter picker. Same ordering as the popup (best
+    // first). Capped so a chatty catalogue entry stays small on the wire.
+    metadata.transmitters = selected.slice(0, SATNOGS_TRANSMITTERS_PER_SAT).map((tx) => ({
+      uuid: String(tx.uuid || '').trim(),
+      mode: describeSatnogsMode(tx) || String(tx.mode || '').trim() || 'Unknown',
+      type: String(tx.type || '').trim(),
+      description: String(tx.description || '').trim(),
+      uplinkLowHz: hzOrNull(tx.uplink_low),
+      uplinkHighHz: hzOrNull(tx.uplink_high) || hzOrNull(tx.uplink_low),
+      downlinkLowHz: hzOrNull(tx.downlink_low),
+      downlinkHighHz: hzOrNull(tx.downlink_high) || hzOrNull(tx.downlink_low),
+      invert: tx.invert === true || tx.invert === 'true',
+      baud: Number.isFinite(Number(tx.baud)) && Number(tx.baud) > 0 ? Number(tx.baud) : null,
+    }));
+
     return metadata;
   };
 
@@ -342,7 +380,7 @@ module.exports = function (app, ctx) {
       }
     }
 
-    return [];
+    return null; // every base failed (timeout / throttled) — distinct from "no transmitters"
   };
 
   const applySatnogsMetadataToRegistry = (recordsByNorad) => {
@@ -411,6 +449,8 @@ module.exports = function (app, ctx) {
       const recordsByNorad = {};
       let totalRecords = 0;
 
+      let consecutiveFailures = 0;
+      let aborted = false;
       for (
         let i = 0;
         i < norads.length && totalRecords < SATNOGS_TRANSMITTER_MAX_RECORDS;
@@ -425,14 +465,35 @@ module.exports = function (app, ctx) {
         );
 
         for (const { norad, transmitters } of results) {
-          const transmitterList = Array.isArray(transmitters) ? transmitters : [];
+          if (transmitters === null) {
+            consecutiveFailures++;
+            continue;
+          }
+          consecutiveFailures = 0;
           const room = SATNOGS_TRANSMITTER_MAX_RECORDS - totalRecords;
           if (room <= 0) break;
 
-          const limitedTransmitters = transmitterList.slice(0, room);
+          const limitedTransmitters = transmitters.slice(0, room);
           recordsByNorad[norad] = limitedTransmitters;
           totalRecords += limitedTransmitters.length;
         }
+
+        if (consecutiveFailures >= SATNOGS_TRANSMITTER_MAX_CONSECUTIVE_FAILURES) {
+          aborted = true;
+          break;
+        }
+        if (i + SATNOGS_TRANSMITTER_CONCURRENCY < norads.length) {
+          await new Promise((resolve) => setTimeout(resolve, SATNOGS_TRANSMITTER_PAUSE_MS));
+        }
+      }
+
+      if (aborted) {
+        // SatNOGS is throttling or down — keep whatever metadata we already
+        // had rather than overwrite it with a partial walk. Try again later.
+        const msg = `SatNOGS not answering after ${Object.keys(recordsByNorad).length} satellites — keeping previous metadata`;
+        satnogsTransmitterCache = { ...satnogsTransmitterCache, lastError: msg };
+        logWarn(`[Satellites] ${msg}`);
+        return;
       }
 
       satnogsTransmitterCache = {
@@ -729,7 +790,6 @@ module.exports = function (app, ctx) {
         const text = await textDecoder.decode(bytes);
 
         ommJson = await parseCsvText(text);
-        const count = Object.keys(ommJson).length;
         logDebug(`[Satellites] Space-Track OMM fetch successful`);
       } else if (res.status >= 400 && res.status <= 499) {
         logWarn(`[Satellites] Space-Track OMM fetch failed for NORAD ID '${norad}': ${res.status}`);
@@ -758,7 +818,7 @@ module.exports = function (app, ctx) {
       csvToJson.supportQuotedField(true);
       json = await csvToJson.csvStringToJson(csvText);
     } catch (err) {
-      const msg = ex?.message || String(ex ?? '(unknown error)');
+      const msg = err?.message || String(err ?? '(unknown error)');
       logWarn(`Error reading CSV: ${msg}`);
     }
     normalizeJsonTree(json);
@@ -887,7 +947,6 @@ module.exports = function (app, ctx) {
       switch (nextOmmProvider()) {
         case 'SPACE_TRACK':
           return isSpaceTrackEnabled ? 'SPACE_TRACK_INIT' : 'START'; // return next state
-          break;
         case 'CELESTRAK': {
           const now = Date.now();
           celestrakNumSatNeedDownload = celestrakSatsToDownload(now).length; // record how many satellites with a CelesTrak datasource need data
@@ -939,9 +998,8 @@ module.exports = function (app, ctx) {
         logWarn(
           `[Satellites] caught unknown exception occurred in CELESTRAK_AMATEUR_GROUP_FETCH handler, advancing to next state: ${msg}`,
         );
-      } finally {
-        return 'CELESTRAK_WEATHER_GROUP_INIT'; // return next state
       }
+      return 'CELESTRAK_WEATHER_GROUP_INIT'; // return next state
     },
 
     CELESTRAK_WEATHER_GROUP_INIT: async () => {
@@ -985,9 +1043,8 @@ module.exports = function (app, ctx) {
         logWarn(
           `[Satellites] caught unknown exception occurred in CELESTRAK_WEATHER_GROUP_FETCH handler, advancing to next state: ${msg}`,
         );
-      } finally {
-        return 'CELESTRAK_INDIVIDUAL_INIT'; // return next state
       }
+      return 'CELESTRAK_INDIVIDUAL_INIT'; // return next state
     },
 
     CELESTRAK_INDIVIDUAL_INIT: async () => {
@@ -1035,9 +1092,8 @@ module.exports = function (app, ctx) {
         logWarn(
           `[Satellites] caught unknown exception occurred in CELESTRAK_INDIVIDUAL_FETCH handler, advancing to next state: ${msg}`,
         );
-      } finally {
-        return 'CELESTRAK_INDIVIDUAL_INIT'; // return next state, back to INIT
       }
+      return 'CELESTRAK_INDIVIDUAL_INIT'; // return next state, back to INIT
     },
 
     // AMSAT fallback (covers amateur sats when CelesTrak is unreachable)
@@ -1072,9 +1128,8 @@ module.exports = function (app, ctx) {
       } catch (ex) {
         const msg = ex?.message || String(ex ?? '(unknown error)');
         logWarn(`[Satellites] caught unknown exception in AMSAT_FETCH handler: ${msg}`);
-      } finally {
-        return isSatnogsTleEnabled ? 'SATNOGS_INDIVIDUAL_INIT' : 'START'; // return next state
       }
+      return isSatnogsTleEnabled ? 'SATNOGS_INDIVIDUAL_INIT' : 'START'; // return next state
     },
 
     // SatNOGS individual fallback (covers non-amateur stragglers), accuracy of data questionable
@@ -1108,9 +1163,8 @@ module.exports = function (app, ctx) {
       } catch (ex) {
         const msg = ex?.message || String(ex ?? '(unknown error)');
         logWarn(`[Satellites] caught unknown exception in SATNOGS_INDIVIDUAL_FETCH handler: ${msg}`);
-      } finally {
-        return 'SATNOGS_INDIVIDUAL_INIT';
       }
+      return 'SATNOGS_INDIVIDUAL_INIT';
     },
 
     SPACE_TRACK_INIT: async () => {
@@ -1157,9 +1211,8 @@ module.exports = function (app, ctx) {
         logWarn(
           `[Satellites] caught unknown exception occurred in SPACE_TRACK_FETCH handler, advancing to next state: ${msg}`,
         );
-      } finally {
-        return 'START'; // return next state
       }
+      return 'START'; // return next state
     },
   };
 
@@ -1174,9 +1227,12 @@ module.exports = function (app, ctx) {
   // independent of the TLE/OMM state machine because transmitter metadata
   // changes much less frequently than orbital data.
   refreshSatnogsTransmitterMetadata(false);
-  setInterval(() => {
-    refreshSatnogsTransmitterMetadata(false);
-  }, SATNOGS_TRANSMITTER_CACHE_DURATION);
+  const scheduleSatnogsRefresh = () =>
+    setTimeout(() => {
+      refreshSatnogsTransmitterMetadata(false);
+      scheduleSatnogsRefresh();
+    }, satnogsRefreshDelay());
+  scheduleSatnogsRefresh();
 
   // satellites with a CelesTrak datasource that need data
   const celestrakSatsToDownload = (now) => {
@@ -1263,6 +1319,36 @@ module.exports = function (app, ctx) {
     };
 
     sendSatelliteData(ommCache || {});
+  });
+
+  // Forced element-set refresh (Settings → Satellites → "Refresh TLEs").
+  // Marks every tracked satellite stale so the state machine re-fetches on
+  // its next 15 s tick. Write-authenticated and rate limited like the other
+  // mutating routes, plus a global cool-down so a room full of browsers
+  // cannot turn this into an upstream hammer.
+  const FORCE_REFRESH_MIN_INTERVAL = 10 * 60 * 1000;
+  let lastForcedRefreshAt = 0;
+  app.post('/api/satellites/refresh', ctx.writeLimiter, ctx.requireWriteAuth, (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    const now = Date.now();
+    const waitMs = lastForcedRefreshAt + FORCE_REFRESH_MIN_INTERVAL - now;
+    if (waitMs > 0) {
+      res.setHeader('Retry-After', String(Math.ceil(waitMs / 1000)));
+      return res
+        .status(429)
+        .json({ ok: false, error: 'TLE refresh already requested recently', retryAfterSec: Math.ceil(waitMs / 1000) });
+    }
+    lastForcedRefreshAt = now;
+    let count = 0;
+    Object.values(HAM_SATELLITES).forEach((s) => {
+      s.ommTimestamp = 0;
+      delete s.backoffCelestrakUntil;
+      delete s.backoffSatnogsUntil;
+      delete s.backoffSpaceTrackUntil;
+      count++;
+    });
+    logInfo(`[Satellites] Forced TLE refresh requested for ${count} satellites`);
+    res.json({ ok: true, satellites: count, note: 'refresh queued; new elements arrive on the next fetch cycle' });
   });
 
   // Satellite debug endpoint — shows which are missing, which are resolved, and which have un-utilized downloaded data

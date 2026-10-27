@@ -207,6 +207,26 @@ module.exports = function (app, ctx) {
   });
 
   // Combined endpoint - returns stream info (live spots via SSE, no HTTP backfill)
+  // Registered BEFORE the /:callsign catch-all so 'eme' is a route, not a call.
+  // GET /api/pskreporter/eme?minutes=120 — recent Q65/JT65 reports at 50 MHz+
+  app.get('/api/pskreporter/eme', (req, res) => {
+    ensureEmeFeed();
+    const minutes = Math.min(120, Math.max(5, parseInt(req.query.minutes, 10) || 120));
+    const cutoff = Date.now() - minutes * 60 * 1000;
+    const spots = pskMqtt.eme.recent
+      .filter((s) => s.timestamp > cutoff)
+      .map(({ key, ...rest }) => rest)
+      .sort((a, b) => b.timestamp - a.timestamp);
+    res.set('Cache-Control', 'no-cache, no-store');
+    res.json({
+      spots,
+      connected: pskMqtt.connected,
+      modes: ['Q65', 'JT65'],
+      minFreqMHz: 50,
+      source: 'PSK Reporter (MQTT)',
+    });
+  });
+
   app.get('/api/pskreporter/:callsign', async (req, res) => {
     const callsign = req.params.callsign.toUpperCase();
 
@@ -243,6 +263,10 @@ module.exports = function (app, ctx) {
     recentSpots: new Map(),
     // Track subscribed topics to avoid double-subscribe
     subscribedCalls: new Set(),
+    // EME digital activity feed (EME layout): band-wide Q65/JT65 reports at
+    // 50 MHz and up, kept for two hours. Subscribed on first request and
+    // dropped again after 15 minutes without one.
+    eme: { active: false, lastRequest: 0, recent: [] },
     reconnectAttempts: 0,
     maxReconnectDelay: 120000, // 2 min max
     reconnectTimer: null, // guards against multiple pending reconnects
@@ -288,6 +312,7 @@ module.exports = function (app, ctx) {
     client.on('connect', () => {
       pskMqtt.connected = true;
       pskMqtt.reconnectAttempts = 0;
+      if (pskMqtt.eme.active) subscribeEmeTopics();
 
       const count = pskMqtt.subscribedCalls.size;
       if (count > 0) {
@@ -348,6 +373,24 @@ module.exports = function (app, ctx) {
 
         pskMqtt.stats.spotsReceived++;
         pskMqtt.stats.lastSpotTime = now;
+
+        // ── EME digital activity (band-wide, mode-filtered) ──
+        if (pskMqtt.eme.active && isEmeDigitalReport(spot.mode, freq)) {
+          const key = `${sc}|${rc}|${freq}`;
+          const recent = pskMqtt.eme.recent;
+          const dup = recent.some((s) => s.key === key && Math.abs(s.timestamp - spot.timestamp) < 60000);
+          if (!dup) {
+            recent.push({
+              ...spot,
+              key,
+              senderLat: senderLoc?.lat,
+              senderLon: senderLoc?.lon,
+              receiverLat: receiverLoc?.lat,
+              receiverLon: receiverLoc?.lon,
+            });
+            if (recent.length > EME_MAX_RECENT) pskMqtt.eme.recent = recent.slice(-EME_MAX_RECENT);
+          }
+        }
 
         // Helper: buffer a spot for a subscriber key, with dedup and cap
         const bufferSpot = (subKey, enrichedSpot) => {
@@ -451,7 +494,7 @@ module.exports = function (app, ctx) {
     }
     pskMqtt.reconnectTimer = setTimeout(() => {
       pskMqtt.reconnectTimer = null;
-      if (pskMqtt.subscribers.size > 0) {
+      if (pskMqtt.subscribers.size > 0 || pskMqtt.eme.active) {
         pskMqttConnect();
       } else {
         console.log('[PSK-MQTT] No active subscribers, skipping reconnect');
@@ -521,6 +564,50 @@ module.exports = function (app, ctx) {
   }
 
   // Subscribe or unsubscribe based on key type (call:XX or grid:XX)
+  // ── EME digital activity feed ─────────────────────────────────────────
+  // Q65 is a VHF+ (largely EME) mode by design; JT65 above 50 MHz is EME
+  // too (JT65B/C on 2 m and 23 cm). Anything on HF is filtered out.
+  const EME_TOPICS = ['pskr/filter/v2/+/Q65/#', 'pskr/filter/v2/+/JT65/#'];
+  const EME_MAX_RECENT = 600;
+  const EME_KEEP_MS = 2 * 60 * 60 * 1000;
+  const EME_IDLE_MS = 15 * 60 * 1000;
+
+  function isEmeDigitalReport(mode, freqHz) {
+    const m = String(mode || '').toUpperCase();
+    return (m === 'Q65' || m === 'JT65') && freqHz >= 50_000_000;
+  }
+
+  function subscribeEmeTopics() {
+    if (!pskMqtt.client || !pskMqtt.connected) return;
+    pskMqtt.client.subscribe(EME_TOPICS, { qos: 0 }, (err) => {
+      if (err && !(err.message && err.message.includes('onnection closed'))) {
+        console.error('[PSK-MQTT] EME subscribe error:', err.message);
+      } else if (!err) {
+        logInfo('[PSK-MQTT] EME digital feed subscribed (Q65/JT65, 50 MHz+)');
+      }
+    });
+  }
+
+  function unsubscribeEmeTopics() {
+    pskMqtt.eme.active = false;
+    pskMqtt.eme.recent = [];
+    if (pskMqtt.client && pskMqtt.connected) {
+      pskMqtt.client.unsubscribe(EME_TOPICS, () => {});
+    }
+    logInfo('[PSK-MQTT] EME digital feed idle — unsubscribed');
+  }
+
+  function ensureEmeFeed() {
+    pskMqtt.eme.lastRequest = Date.now();
+    if (pskMqtt.eme.active) return;
+    pskMqtt.eme.active = true;
+    if (pskMqtt.connected) {
+      subscribeEmeTopics();
+    } else if (!pskMqtt.client || (!pskMqtt.connected && pskMqtt.reconnectAttempts === 0)) {
+      pskMqttConnect();
+    }
+  }
+
   function subscribeKey(key) {
     if (key.startsWith('grid:')) {
       subscribeGrid(key.slice(5));
@@ -567,6 +654,14 @@ module.exports = function (app, ctx) {
   pskMqtt.cleanupInterval = setInterval(
     () => {
       const cutoff = Date.now() - 60 * 60 * 1000; // 1 hour
+      if (pskMqtt.eme.active) {
+        if (Date.now() - pskMqtt.eme.lastRequest > EME_IDLE_MS) {
+          unsubscribeEmeTopics();
+        } else {
+          const keep = Date.now() - EME_KEEP_MS;
+          pskMqtt.eme.recent = pskMqtt.eme.recent.filter((s) => s.timestamp > keep);
+        }
+      }
       for (const [call, spots] of pskMqtt.recentSpots) {
         // Delete entries for unsubscribed callsigns immediately
         if (!pskMqtt.subscribedCalls.has(call)) {

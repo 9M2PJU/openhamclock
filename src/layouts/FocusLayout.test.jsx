@@ -50,7 +50,6 @@ const baseProps = {
   wwffSpots: emptyHook,
   sotaSpots: emptyHook,
   wwbotaSpots: emptyHook,
-  canparksSpots: emptyHook,
   mySpots: emptyHook,
   dxLocation: { lat: 35, lon: 139 },
 };

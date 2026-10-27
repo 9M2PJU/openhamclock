@@ -1,15 +1,15 @@
 /**
  * EmComm Field Reports routes.
  *
- * Ingest endpoint for Winlink Express form exports forwarded by the
- * rig-bridge winlink-express-csv plugin (backlog 999.1). Winlink Express at
- * an EOC accumulates a CSV of received forms (Field Situation Reports,
- * Damage Assessments, ...) — the plugin watches that file and POSTs new rows
- * here; the EmComm layout lists them and plots those with positions.
+ * Ingest endpoint for EmComm forms forwarded by rig-bridge: Winlink Express
+ * form exports from the winlink-express-csv plugin (backlog 999.1), and
+ * NBEMS flmsg forms (ICS-213, radiograms, ...) from the fldigi plugin's
+ * folder watcher. Each plugin POSTs new forms here; the EmComm layout lists
+ * them and plots those with positions.
  *
  * Auth: mirrors POST /api/aprs/local — an open local-ingest endpoint intended
  * for the rig-bridge process on the same host (fire-and-forget POSTs with no
- * credentials), protected by the global API rate limiter and strict input
+ * credentials), protected by a per-IP ingest limit (30/min) and strict input
  * sanitization/caps rather than a key.
  *
  * Storage: in-memory, newest last, capped at 500 reports, with optional file
@@ -22,6 +22,7 @@ const path = require('path');
 
 module.exports = function (app, ctx) {
   const { ROOT_DIR, logInfo, logWarn, logDebug } = ctx;
+  const ingest = ctx.ingestLimiter || (() => (req, res, next) => next());
 
   const MAX_REPORTS = 500;
   const MAX_BATCH = 100; // per-POST cap
@@ -112,8 +113,12 @@ module.exports = function (app, ctx) {
     }
 
     const ts = typeof raw.timestamp === 'number' && Number.isFinite(raw.timestamp) ? raw.timestamp : null;
+    // Which ingest path delivered it ('winlink-express-csv', 'nbems-flmsg', …)
+    // so the panel and map can label Winlink and NBEMS traffic apart.
+    const source = cleanStr(raw.receivedVia ?? raw.source, 40).replace(/[^a-z0-9-]/gi, '');
     return {
       id,
+      source,
       callsign,
       formType,
       lat: cleanCoord(raw.lat, 90),
@@ -127,7 +132,7 @@ module.exports = function (app, ctx) {
   }
 
   // ─── POST /api/emcomm/field-reports — ingest from rig-bridge ─────────────
-  app.post('/api/emcomm/field-reports', (req, res) => {
+  app.post('/api/emcomm/field-reports', ingest(30), (req, res) => {
     const batch = req.body?.reports;
     if (!Array.isArray(batch)) {
       return res.status(400).json({ error: 'Missing reports array' });

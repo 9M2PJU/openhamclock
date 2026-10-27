@@ -517,4 +517,31 @@ function continentForCall(call, ctyLookup) {
   return coarseContinentForCall(call);
 }
 
-module.exports = { continentForCall, coarseContinentForCall, extractPrefixPart, COARSE_PREFIX_CONTINENTS };
+/**
+ * Resolve a callsign to its CQ zone (1–40) via the cty.dat lookup. There is
+ * no coarse fallback — zones are too fine for a prefix table — so callers
+ * must tolerate null (the spot simply does not count toward zone-level
+ * analysis).
+ *
+ * @param {string} call
+ * @param {function|null} ctyLookup — synchronous cty.dat lookup
+ * @returns {number|null}
+ */
+function zoneForCall(call, ctyLookup) {
+  if (!call || typeof ctyLookup !== 'function') return null;
+  try {
+    const entity = ctyLookup(call);
+    const zone = Number(entity?.cq);
+    return Number.isInteger(zone) && zone >= 1 && zone <= 40 ? zone : null;
+  } catch {
+    return null;
+  }
+}
+
+module.exports = {
+  continentForCall,
+  coarseContinentForCall,
+  zoneForCall,
+  extractPrefixPart,
+  COARSE_PREFIX_CONTINENTS,
+};

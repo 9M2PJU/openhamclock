@@ -5,6 +5,7 @@
 import React, { useRef, useEffect, useState, useMemo, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { MAP_STYLES } from '../utils/config.js';
+import { getSantaState, resolveSantaClock, formatPresents } from '../utils/santa.js';
 import {
   latLonToMaidenhead,
   getSunPosition,
@@ -24,11 +25,20 @@ import {
 } from '../utils/bandColors.js';
 import { createTerminator } from '../utils/terminator.js';
 import { getAprsSymbolIcon } from '../utils/aprs-symbols.js';
+import { requestAprsSelect, requestAprsHistory } from '../utils/aprsSelect.js';
+import { formatAprsDevice } from '../utils/aprsDevice.js';
 import { getAllLayers } from '../plugins/layerRegistry.js';
 import { GLOBE_OVERLAY_LAYER_IDS } from '../utils/globeOverlays.js';
 import { countryColor, fetchCountriesGeojson } from '../utils/countriesBasemap.js';
 import PluginLayer from './PluginLayer.jsx';
+import TimeShiftControl from './TimeShiftControl.jsx';
+import { displayNow, subscribeDisplayTime } from '../utils/displayTime.js';
+import MapCursorReadout from './MapCursorReadout.jsx';
 import AzimuthalMap from './AzimuthalMap.jsx';
+import { MAP_FOCUS_EVENT, MAP_FOCUS_PULSE_MS, nearestWrappedLon, isInView } from '../utils/mapFocus.js';
+import { publishMapViewport } from '../utils/mapViewport.js';
+import { useMapStylesVersion } from '../utils/mapStylesLive.js';
+import OfflineTilesBadge from './OfflineTilesBadge.jsx';
 // three.js is ~600 kB — load it only when the operator actually opens 3D mode.
 // React 18 permanently caches a rejected lazy() import, so a single failed
 // chunk load (stale HTML right after a redeploy is the classic case) would
@@ -53,10 +63,96 @@ import { use630mBandEnabled } from '../hooks/use630mBandEnabled.js';
 // DX cluster data, POTA/SOTA spots, and WSJT-X decodes come from external sources
 // and could contain malicious HTML/script tags in callsigns, comments, or park names.
 import { esc } from '../utils/escapeHtml.js';
-import { LiEye, LiEyeOff, LiLock, LiUnlock, LiPlus, LiMinus, LiRotate } from './Icons.jsx';
+import { spotLabelText, spotLabelSuppressed } from '../utils/spotLabel.js';
+import { extractIota, iotaName } from '../utils/iota.js';
+import { LiEye, LiEyeOff, LiLock, LiUnlock, LiPlus, LiMinus, LiRotate, LiLayers, LiMoon } from './Icons.jsx';
+import useCompactMapControls, { useElementSize, shouldOverflowCompactDock } from '../hooks/useCompactMapControls.js';
+import useCompactOverlayDismiss from '../hooks/useCompactOverlayDismiss.js';
 
 // Lightweight error boundary for the non-Leaflet projections (azimuthal canvas,
 // 3D globe) — falls back to Mercator instead of crashing the entire dashboard.
+// Compact map controls (phones): the projection toggle and basemap select
+// move into a popover behind one menu button. When not compact this renders
+// its children untouched — no wrapper element — so wide layouts are unchanged.
+function CompactMenuWrap({ compact, open, children }) {
+  if (!compact) return children;
+  if (!open) return null;
+  return (
+    <div
+      data-compact-pop="menu"
+      style={{
+        position: 'absolute',
+        top: '44px',
+        right: 0,
+        zIndex: 1200,
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'stretch',
+        gap: '8px',
+        padding: '8px',
+        borderRadius: '6px',
+        border: '1px solid #444',
+        background: 'rgba(0, 0, 0, 0.92)',
+        boxShadow: '0 4px 14px rgba(0,0,0,0.45)',
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+// Compact control column on a map too short for it: the controls below the
+// lock fold into a "⋯" button that opens them as a row beside it. Otherwise
+// renders its children untouched (no wrapper element).
+function DockOverflowWrap({ overflow, open, onToggle, label, children }) {
+  if (!overflow) return children;
+  return (
+    <div data-compact-pop="more" style={{ position: 'relative' }}>
+      <button
+        type="button"
+        onClick={onToggle}
+        title={label}
+        aria-label={label}
+        aria-expanded={open}
+        style={{
+          width: '36px',
+          minHeight: '36px',
+          padding: 0,
+          background: open ? 'rgba(0, 255, 204, 0.18)' : 'rgba(0, 0, 0, 0.65)',
+          border: `1px solid ${open ? '#00ffcc' : '#444'}`,
+          borderRadius: '4px',
+          color: '#ccc',
+          fontSize: '18px',
+          lineHeight: 1,
+          cursor: 'pointer',
+        }}
+      >
+        ⋯
+      </button>
+      {open && (
+        <div
+          style={{
+            position: 'absolute',
+            left: '44px',
+            top: 0,
+            zIndex: 1200,
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            padding: '6px 8px',
+            borderRadius: '6px',
+            border: '1px solid #444',
+            background: 'rgba(0, 0, 0, 0.92)',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
 class AzimuthalErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
@@ -105,9 +201,16 @@ import { mapDefs as POTADefs } from './POTAPanel.jsx';
 import { mapDefs as SOTADefs } from './SOTAPanel.jsx';
 import { mapDefs as WWBOTADefs } from './WWBOTAPanel.jsx';
 import { mapDefs as WWFFDefs } from './WWFFPanel.jsx';
-import { mapDefs as CANParksDefs } from './CANParksPanel.jsx';
+import { useHistoryScrubbing } from '../hooks/useHistoryScrubbing.js';
 
 const POPUP_AUTO_CLOSE_MS = 20_000;
+
+// Per-style Leaflet tile options: custom subdomains (operator tile server)
+// and a native zoom ceiling for sources that stop short of the map's zoom.
+const tileSourceOptions = (style) => ({
+  ...(style?.subdomains ? { subdomains: style.subdomains } : {}),
+  ...(Number.isFinite(style?.maxNativeZoom) ? { maxNativeZoom: style.maxNativeZoom } : {}),
+});
 
 export const WorldMap = ({
   config,
@@ -120,7 +223,6 @@ export const WorldMap = ({
   wwffSpots,
   sotaSpots,
   wwbotaSpots,
-  canparksSpots,
   dxPaths,
   dxFilters,
   mapBandFilter,
@@ -132,6 +234,9 @@ export const WorldMap = ({
   showDeDxMarkers = true,
   showDXLabels,
   onToggleDXLabels,
+  // Spot label text mode and HamClock "Min label dist" (km) — see utils/spotLabel.js
+  spotLabelMode = 'call',
+  spotLabelMinKm = 0,
   showPOTA,
   showPOTALabels = true,
   showWWFF,
@@ -140,8 +245,6 @@ export const WorldMap = ({
   showSOTALabels = true,
   showWWBOTA,
   showWWBOTALabels = true,
-  showCANParks,
-  showCANParksLabels = true,
   showPSKReporter,
   showPSKPaths = true,
   showMutualReception = true,
@@ -149,6 +252,8 @@ export const WorldMap = ({
   showAPRS,
   aprsStations,
   aprsWatchlistCalls,
+  showAPRSLabels = false,
+  aprsIconScale = 1,
   showMeshCom,
   meshcomNodes,
   onSpotClick,
@@ -165,7 +270,26 @@ export const WorldMap = ({
   rotatorIsStale = false,
   rotatorControlEnabled,
   onRotatorTurnRequest,
+  // Auto-track: azimuth the rotator was last commanded to (drawn as a second
+  // beam until the needle catches up); null when auto-track is off.
+  rotatorTargetAzimuth = null,
   onMapReady,
+  // Purpose-built layouts (EME) can pin a projection without touching the
+  // user's saved choice; the projection toggle hides while pinned.
+  projectionOverride = null,
+  emeMode = false,
+  emeFrameKey = 0,
+  // Satellite relay mode (EME layout): globe shows only this satellite, legs
+  // go through it, and the satellites plugin layer is forced on.
+  relaySatName = null,
+  relayTarget = null,
+  emeActivityPaths = null,
+  // Compact map controls for phones: true forces on (Mobile layout), false
+  // forces off, undefined = automatic below 600 px viewport width.
+  compactControls,
+  // Height (px) the host layout's own buttons take up at the bottom of the
+  // map; the control column is kept clear of it (Classic's Settings/DX row).
+  controlsBottomInset = 0,
 }) => {
   const { t, i18n } = useTranslation();
   const mapLang = i18n.language?.split('-')[0] || 'en'; // e.g. 'de', 'ja', 'en'
@@ -179,13 +303,15 @@ export const WorldMap = ({
   const dxMarkerRef = useRef([]);
   const sunMarkerRef = useRef([]);
   const moonMarkerRef = useRef([]);
+  const santaMarkerRef = useRef([]);
   const potaMarkersRef = useRef([]);
   const wwffMarkersRef = useRef([]);
   const sotaMarkersRef = useRef([]);
   const wwbotaMarkersRef = useRef([]);
-  const canparksMarkersRef = useRef([]);
   const dxPathsLinesRef = useRef([]);
   const dxPathsMarkersRef = useRef([]);
+  // History Playback scrubbed into the past → hide live DX paths
+  const historyScrubbing = useHistoryScrubbing();
   const pskMarkersRef = useRef([]);
   const wsjtxMarkersRef = useRef([]);
   const aprsMarkersRef = useRef([]);
@@ -200,6 +326,7 @@ export const WorldMap = ({
   const touchPendingRef = useRef(null);
   const rotatorLineRef = useRef(null);
   const rotatorGlowRef = useRef(null);
+  const rotatorTargetRef = useRef(null);
   const rotatorTurnRef = useRef(onRotatorTurnRequest);
   const rotatorEnabledRef = useRef(rotatorControlEnabled);
   const deRef = useRef(deLocation);
@@ -612,23 +739,37 @@ export const WorldMap = ({
   const initialStyle = MAP_STYLES[migratedStyle] && !MAP_STYLES[migratedStyle].legacy ? migratedStyle : 'dark';
   const initialProjection = storedSettings.isAzimuthal ? 'azimuthal' : storedSettings.mapProjection || 'mercator';
   const [mapStyle, setMapStyle] = useState(initialStyle);
+  const stylesVersion = useMapStylesVersion();
+  // The operator removed their tile source while the map showed it.
+  useEffect(() => {
+    if (!MAP_STYLES[mapStyle]) setMapStyle('dark');
+  }, [stylesVersion, mapStyle]);
   const [mapRotationConfig, setMapRotationConfig] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem('ohc_main_map_rotator_v1') || '{}');
-      const allStyleIds = Object.keys(MAP_STYLES).filter((id) => MAP_STYLES[id] && !MAP_STYLES[id].legacy);
+      // Regional (national-agency / own-server) basemaps stay out of the default
+      // rotation — they are blank outside their country.
+      const allStyleIds = Object.keys(MAP_STYLES).filter(
+        (id) => MAP_STYLES[id] && !MAP_STYLES[id].legacy && !MAP_STYLES[id].regional,
+      );
       return {
         enabled: saved.enabled === true,
         intervalSeconds: Number(saved.intervalSeconds) || 60,
         selectedIds: Array.isArray(saved.selectedIds) && saved.selectedIds.length ? saved.selectedIds : allStyleIds,
       };
     } catch {
-      const allStyleIds = Object.keys(MAP_STYLES).filter((id) => MAP_STYLES[id] && !MAP_STYLES[id].legacy);
+      // Regional (national-agency / own-server) basemaps stay out of the default
+      // rotation — they are blank outside their country.
+      const allStyleIds = Object.keys(MAP_STYLES).filter(
+        (id) => MAP_STYLES[id] && !MAP_STYLES[id].legacy && !MAP_STYLES[id].regional,
+      );
       return { enabled: false, intervalSeconds: 60, selectedIds: allStyleIds };
     }
   });
   const [showMapRotationMenu, setShowMapRotationMenu] = useState(false);
   const [mapRotationMenuActivity, setMapRotationMenuActivity] = useState(0);
-  const [mapProjection, setMapProjection] = useState(initialProjection);
+  const [mapProjectionState, setMapProjection] = useState(initialProjection);
+  const mapProjection = projectionOverride || mapProjectionState;
   // The Leaflet path applies mode/continent/watchlist filters at render time;
   // the globe consumes paths as data, so hand it the already-filtered list or
   // those filters silently stop working in 3D.
@@ -650,6 +791,7 @@ export const WorldMap = ({
     return getAllLayers().filter(
       (l) =>
         l.id !== 'satellites' &&
+        l.id !== 'time-shift' &&
         !(!lowMemoryMode && GLOBE_OVERLAY_LAYER_IDS.includes(l.id)) &&
         (pluginLayerStates[l.id]?.enabled ?? l.defaultEnabled),
     );
@@ -667,8 +809,10 @@ export const WorldMap = ({
         opacity: pluginLayerStates[l.id]?.opacity ?? l.defaultOpacity,
       };
     });
+    // APRS is not a plugin layer; its map toggle drives the globe painter (#1210).
+    out.aprs = { enabled: !!showAPRS, opacity: 1 };
     return out;
-  }, [mapProjection, pluginLayerStates]);
+  }, [mapProjection, pluginLayerStates, showAPRS]);
   // Set when a crash or chunk-load failure forces the session back to
   // Mercator: the switch must not overwrite the user's saved projection.
   // Cleared the next time they pick a projection themselves.
@@ -678,9 +822,11 @@ export const WorldMap = ({
   // Both non-Leaflet projections hide the Mercator map and its dock.
   const isLeafletHidden = isAzimuthal || isGlobe3D;
 
+  // stylesVersion: the operator tile source can be added/removed live
   const availableBaseMapIds = useMemo(
     () => Object.keys(MAP_STYLES).filter((id) => MAP_STYLES[id] && !MAP_STYLES[id].legacy),
-    [],
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- MAP_STYLES is mutated in place; the version is the signal
+    [stylesVersion],
   );
 
   useEffect(() => {
@@ -813,6 +959,26 @@ export const WorldMap = ({
     }
   });
 
+  // Remote control / demo mode: `ohc:set-mapview` {projection?, basemap?, night?}
+  // (hooks/app/useRemoteControl.js, useDemoMode.js). Same setters the on-map
+  // buttons use, so persistence and fallbacks behave identically.
+  useEffect(() => {
+    const onSetMapView = (e) => {
+      const d = e.detail || {};
+      if (d.projection && ['mercator', 'azimuthal', 'globe3d'].includes(d.projection)) {
+        projectionPersistBlockedRef.current = false;
+        setMapProjection(d.projection);
+      }
+      if (d.basemap && MAP_STYLES[d.basemap] && !MAP_STYLES[d.basemap].legacy) setMapStyle(d.basemap);
+      if (typeof d.night === 'boolean') {
+        const next = d.night ? parseInt(localStorage.getItem('ohc_nightDarkness')) || 60 : 0;
+        setNightDarkness(next);
+      }
+    };
+    window.addEventListener('ohc:set-mapview', onSetMapView);
+    return () => window.removeEventListener('ohc:set-mapview', onSetMapView);
+  }, []);
+
   const getGibsUrl = (days) => {
     const date = new Date(Date.now() - (days * 24 + 12) * 60 * 60 * 1000);
     const dateStr = date.toISOString().split('T')[0];
@@ -863,6 +1029,54 @@ export const WorldMap = ({
       return next;
     });
   }, []);
+
+  // Compact controls (phones): one open popover at a time ('menu' | 'night'),
+  // and a band legend that starts collapsed to a chip. Kept apart from the
+  // persisted desktop legend setting so a phone never changes the desktop.
+  // The map's root element: its width drives compact mode (a small Dockable
+  // map panel goes compact even on a desktop screen).
+  const mapRootRef = useRef(null);
+  const mapSize = useElementSize(mapRootRef, compactControls !== false);
+  const compact = useCompactMapControls(compactControls, mapSize, controlsBottomInset);
+  const [compactPopover, setCompactPopover] = useState(null);
+  const [compactLegendOpen, setCompactLegendOpen] = useState(false);
+  const compactOverlayOpen = compact && (compactPopover !== null || compactLegendOpen);
+  // A map too short even for the compact column folds its lower controls
+  // into a "⋯" popover (lock, labels toggle when shown, zoom ±, night).
+  const dockItems = 4 + (onToggleDXLabels && showDXPaths && Array.isArray(dxPaths) && dxPaths.length > 0 ? 1 : 0);
+  const dockOverflow = compact && shouldOverflowCompactDock(mapSize.height, controlsBottomInset, dockItems);
+
+  // An open compact popover or legend closes on any tap outside it and on
+  // Escape. A tap on the map that closes one is consumed whole — it never
+  // sets DX, opens a popup or starts a pan (hooks/useCompactOverlayDismiss).
+  useCompactOverlayDismiss({
+    enabled: compact,
+    open: compactOverlayOpen,
+    rootRef: mapRootRef,
+    onClose: () => {
+      setCompactPopover(null);
+      setCompactLegendOpen(false);
+    },
+  });
+
+  // Leaving compact mode (map panel resized wider) drops any open popover
+  useEffect(() => {
+    if (!compact) {
+      setCompactPopover(null);
+      setCompactLegendOpen(false);
+    }
+  }, [compact]);
+  const toggleCompactPopover = useCallback((id) => {
+    setCompactLegendOpen(false);
+    setCompactPopover((cur) => (cur === id ? null : id));
+  }, []);
+  const legendOpen = compact ? compactLegendOpen : showLegend;
+  const onLegendToggle = compact
+    ? () => {
+        setCompactPopover(null);
+        setCompactLegendOpen((v) => !v);
+      }
+    : toggleLegend;
 
   const destinationPoint = (latDeg, lonDeg, bearingDeg, distanceDeg) => {
     const toRad = (d) => (d * Math.PI) / 180;
@@ -937,8 +1151,8 @@ export const WorldMap = ({
           ...existing,
           mapStyle,
           mapProjection: projectionPersistBlockedRef.current
-            ? (existing.mapProjection ?? mapProjection)
-            : mapProjection,
+            ? (existing.mapProjection ?? mapProjectionState)
+            : mapProjectionState,
           center: mapView.center,
           zoom: mapView.zoom,
           wheelPxPerZoomLevel: getScaledZoomLevel(mouseZoom),
@@ -947,7 +1161,7 @@ export const WorldMap = ({
     } catch (e) {
       console.error('Failed to save map settings:', e);
     }
-  }, [mapStyle, mapProjection, mapView, mouseZoom]);
+  }, [mapStyle, mapProjectionState, mapView, mouseZoom]);
 
   // Initialize map
   useEffect(() => {
@@ -1008,6 +1222,7 @@ export const WorldMap = ({
       attribution: MAP_STYLES[mapStyle].attribution,
       noWrap: false,
       crossOrigin: 'anonymous',
+      ...tileSourceOptions(MAP_STYLES[mapStyle]),
     }).addTo(map);
 
     // Day/night terminator
@@ -1021,32 +1236,30 @@ export const WorldMap = ({
       wrap: false,
     }).addTo(map);
 
-    // Refresh terminator immediately to set initial position
-    setTimeout(() => {
+    // Refresh terminator immediately to set initial position. The night
+    // polygon follows the display time (utils/displayTime.js), so a time
+    // shift moves it at once rather than on the next minute tick.
+    const refreshTerminator = () => {
       if (terminatorRef.current) {
-        terminatorRef.current.setTime();
+        terminatorRef.current.setTime(displayNow());
         const path = terminatorRef.current.getElement();
         if (path) {
           path.classList.add('terminator-path');
         }
       }
-    }, 100);
+    };
+    setTimeout(refreshTerminator, 100);
 
-    const terminatorInterval = setInterval(() => {
-      if (terminatorRef.current) {
-        terminatorRef.current.setTime();
-        const path = terminatorRef.current.getElement();
-        if (path) {
-          path.classList.add('terminator-path');
-        }
-      }
-    }, 60000);
+    const terminatorInterval = setInterval(refreshTerminator, 60000);
+    const unsubTerminatorShift = subscribeDisplayTime(refreshTerminator);
 
     map.on('moveend', () => {
       try {
         const center = map.getCenter();
         const zoom = map.getZoom();
         setMapView({ center: [center.lat, center.lng], zoom });
+        // Offline area packs: "download the current map view"
+        publishMapViewport({ bounds: map.getBounds(), zoom });
       } catch {
         // Leaflet may throw if map panes are gone during resize/unmount
       }
@@ -1083,6 +1296,12 @@ export const WorldMap = ({
 
     mapInstanceRef.current = map;
     if (onMapReady) onMapReady(map);
+    try {
+      publishMapViewport({ bounds: map.getBounds(), zoom: map.getZoom() });
+    } catch {
+      // Bounds are unavailable until the container has a size — moveend
+      // publishes them once it does.
+    }
 
     // Apply initial map lock state if saved
     if (mapLocked) {
@@ -1116,6 +1335,12 @@ export const WorldMap = ({
     const handlePopupCallsignClick = (e) => {
       const popupContent = e.target.closest('.leaflet-popup-content');
       if (!popupContent) return;
+      const hist = e.target.closest('[data-aprs-history]');
+      if (hist) {
+        e.stopPropagation();
+        requestAprsHistory(hist.getAttribute('data-aprs-history'));
+        return;
+      }
       const el = e.target.closest('[data-map-call]');
       if (!el) return;
       e.stopPropagation();
@@ -1130,6 +1355,7 @@ export const WorldMap = ({
 
     return () => {
       clearInterval(terminatorInterval);
+      unsubTerminatorShift();
       resizeObserver.disconnect();
       mapRef.current?.removeEventListener('click', handlePopupCallsignClick);
       mapInstanceRef.current = null;
@@ -1158,6 +1384,70 @@ export const WorldMap = ({
     map.on('click', handleMapClick);
     return () => map.off('click', handleMapClick);
   }, [leafletReady]);
+
+  // "Bring this station into view" requests from panel rows (#1182). Pans only
+  // when the target is off-screen (or the request is forced), then drops a
+  // self-removing pulse ring so the eye finds the target in a busy view.
+  // Under the azimuthal projection the pulse goes on its transparent Leaflet
+  // overlay (whose bounds are not meaningful, so it never pans); the 3D globe
+  // answers the same event itself (#1210).
+  const focusPulseRef = useRef(null);
+  useEffect(() => {
+    if (isGlobe3D) return;
+    const handleFocus = (e) => {
+      const map = isAzimuthal ? azimuthalMapRef.current : mapInstanceRef.current;
+      const d = e.detail;
+      if (!map || !d || !Number.isFinite(d.lat) || !Number.isFinite(d.lon)) return;
+      const lon = isAzimuthal ? d.lon : nearestWrappedLon(map.getCenter().lng, d.lon);
+      const target = [d.lat, lon];
+      if (!isAzimuthal && (d.force || !isInView(map.getBounds(), d.lat, d.lon))) {
+        if (Number.isFinite(d.zoom)) map.setView(target, d.zoom, { animate: true });
+        else map.panTo(target, { animate: true });
+      }
+      const prev = focusPulseRef.current;
+      if (prev) {
+        clearTimeout(prev.timer);
+        try {
+          map.removeLayer(prev.marker);
+        } catch {
+          /* already gone */
+        }
+      }
+      const marker = L.marker(target, {
+        icon: L.divIcon({
+          className: 'map-focus-pulse',
+          html: '<span></span><span></span><span></span>',
+          iconSize: [0, 0],
+        }),
+        interactive: false,
+        keyboard: false,
+        zIndexOffset: 25000,
+      }).addTo(map);
+      const timer = setTimeout(() => {
+        try {
+          map.removeLayer(marker);
+        } catch {
+          /* map torn down */
+        }
+        if (focusPulseRef.current?.marker === marker) focusPulseRef.current = null;
+      }, MAP_FOCUS_PULSE_MS);
+      focusPulseRef.current = { marker, timer };
+    };
+    window.addEventListener(MAP_FOCUS_EVENT, handleFocus);
+    return () => {
+      window.removeEventListener(MAP_FOCUS_EVENT, handleFocus);
+      const prev = focusPulseRef.current;
+      if (prev) {
+        clearTimeout(prev.timer);
+        try {
+          mapInstanceRef.current?.removeLayer(prev.marker);
+        } catch {
+          /* map torn down */
+        }
+        focusPulseRef.current = null;
+      }
+    };
+  }, [leafletReady, isAzimuthal, isGlobe3D, azimuthalMapReady]);
 
   // Update the value for how many scroll pixels count as a zoom level
   useEffect(() => {
@@ -1227,6 +1517,7 @@ export const WorldMap = ({
   // Update tile layer and handle night light clipping
   useEffect(() => {
     if (!mapInstanceRef.current || !tileLayerRef.current) return;
+    if (!MAP_STYLES[mapStyle]) return; // removed own tile source — the fallback effect switches style
     const map = mapInstanceRef.current;
 
     // Remove old tile layer completely — setUrl() doesn't flush the tile cache,
@@ -1244,6 +1535,7 @@ export const WorldMap = ({
       attribution: MAP_STYLES[mapStyle].attribution,
       noWrap: false,
       crossOrigin: 'anonymous',
+      ...tileSourceOptions(MAP_STYLES[mapStyle]),
       // NASA GIBS tiles only cover -180..180; other tile providers wrap naturally
       ...(mapStyle === 'MODIS'
         ? {
@@ -1296,7 +1588,14 @@ export const WorldMap = ({
     const maskInterval = setInterval(updateMask, 3000);
 
     return () => clearInterval(maskInterval);
-  }, [mapStyle, gibsOffset]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- stylesVersion: an edited own tile source reloads the layer
+  }, [mapStyle, gibsOffset, stylesVersion]);
+
+  // Offline area packs read the current basemap (which style to download,
+  // and whether the map is on the style a pack was saved for).
+  useEffect(() => {
+    publishMapViewport({ styleId: mapStyle });
+  }, [mapStyle]);
 
   // Live-update night overlay darkness when slider changes
   useEffect(() => {
@@ -1410,6 +1709,10 @@ export const WorldMap = ({
           map.removeLayer(rotatorLineRef.current);
           rotatorLineRef.current = null;
         }
+        if (rotatorTargetRef.current) {
+          map.removeLayer(rotatorTargetRef.current);
+          rotatorTargetRef.current = null;
+        }
         if (rotatorGlowRef.current) {
           map.removeLayer(rotatorGlowRef.current);
           rotatorGlowRef.current = null;
@@ -1460,6 +1763,51 @@ export const WorldMap = ({
     });
   }, [deLocation, dxLocation, allUnits, dxWeatherAllowed, showDeDxMarkers]);
 
+  // ── Christmas easter egg: Santa on the flat map ──
+  // Companion to the 3D globe's sleigh (see Globe3D + src/utils/santa.js):
+  // an emoji marker at Santa's current position on 24–25 December, refreshed
+  // every 30 s. getSantaState is not visible on any other day, so the effect
+  // costs one cheap call per tick the rest of the year.
+  useEffect(() => {
+    if (!mapInstanceRef.current) return;
+    const map = mapInstanceRef.current;
+    const clear = () => {
+      santaMarkerRef.current.forEach((m) => {
+        try {
+          map.removeLayer(m);
+        } catch (e) {}
+      });
+      santaMarkerRef.current = [];
+    };
+    const update = () => {
+      clear();
+      const clock = resolveSantaClock();
+      const st = getSantaState(clock.nowMs);
+      if (!st.visible) return;
+      const where =
+        st.phase === 'flight'
+          ? `over <b>${st.lastStop}</b> · next stop ${st.nextStop}`
+          : st.phase === 'home'
+            ? 'heading home to the North Pole'
+            : 'at the North Pole';
+      const popup = `<b>🎅 Santa</b> ${where}<br>${formatPresents(st.delivered)} presents delivered${clock.simulated ? '<br><i>simulated</i>' : ''}`;
+      const html = '<div style="font-size:22px;line-height:1;filter:drop-shadow(0 0 3px rgba(0,0,0,.7))">🦌🛷</div>';
+      for (const offset of [-360, 0, 360]) {
+        const icon = L.divIcon({ className: 'santa-marker-icon', html, iconSize: [48, 24], iconAnchor: [24, 12] });
+        const m = L.marker([st.lat, st.lon + offset], { icon, zIndexOffset: 18000 })
+          .bindPopup(popup)
+          .addTo(map);
+        santaMarkerRef.current.push(m);
+      }
+    };
+    update();
+    const interval = setInterval(update, 30_000);
+    return () => {
+      clearInterval(interval);
+      clear();
+    };
+  }, []);
+
   // Update sun/moon markers every 60 seconds (matches terminator refresh)
   useEffect(() => {
     if (!mapInstanceRef.current) return;
@@ -1480,7 +1828,7 @@ export const WorldMap = ({
       sunMarkerRef.current = [];
       moonMarkerRef.current = [];
 
-      const now = new Date();
+      const now = displayNow();
       // World copy offsets so sun/moon appear on all visible map copies
       const worldOffsets = [-360, 0, 360];
 
@@ -1533,10 +1881,12 @@ export const WorldMap = ({
     // Initial render
     updateCelestial();
 
-    // Update every 60 seconds to match terminator
+    // Update every 60 seconds to match terminator, and at once on a time shift
     const interval = setInterval(updateCelestial, 60000);
+    const unsubShift = subscribeDisplayTime(updateCelestial);
     return () => {
       clearInterval(interval);
+      unsubShift();
       sunMarkerRef.current.forEach((m) => {
         try {
           map.removeLayer(m);
@@ -1561,8 +1911,8 @@ export const WorldMap = ({
     dxPathsMarkersRef.current.forEach((m) => map.removeLayer(m));
     dxPathsMarkersRef.current = [];
 
-    // Add new DX paths if enabled
-    if (showDXPaths && dxPaths && dxPaths.length > 0) {
+    // Add new DX paths if enabled (and not replaying history)
+    if (showDXPaths && !historyScrubbing && dxPaths && dxPaths.length > 0) {
       const filteredPaths = filterDXPaths(dxPaths, dxFilters);
 
       filteredPaths.forEach((path) => {
@@ -1601,7 +1951,12 @@ export const WorldMap = ({
           });
 
           // Render circleMarker on all 3 world copies
-          const dxPopupHtml = `<b data-map-call="${esc(dxCall)}" data-loc-lat="${path.dxLat}" data-loc-lon="${path.dxLon}" style="color: ${color}" onmouseenter="this.style.color='var(--accent-white)';this.style.fontWeight='bold'" onmouseleave="this.style.color='${color}';this.style.fontWeight=''">${esc(dxCall)}</b><br>${esc(path.freq)} MHz<br>by <span data-map-call="${esc(path.spotter)}" data-loc-lat="${path.spotterLat}" data-loc-lon="${path.spotterLon}">${esc(path.spotter)}</span>`;
+          // IOTA reference from the comment → "IOTA EU-005 · Great Britain" line in the popup
+          const pathIota = extractIota(path.comment);
+          const iotaHtml = pathIota
+            ? `<br><span style="color: var(--accent-cyan); font-size: 11px">IOTA ${esc(pathIota)}${iotaName(pathIota) ? ' · ' + esc(iotaName(pathIota)) : ''}</span>`
+            : '';
+          const dxPopupHtml = `<b data-map-call="${esc(dxCall)}" data-loc-lat="${path.dxLat}" data-loc-lon="${path.dxLon}" style="color: ${color}" onmouseenter="this.style.color='var(--accent-white)';this.style.fontWeight='bold'" onmouseleave="this.style.color='${color}';this.style.fontWeight=''">${esc(dxCall)}</b><br>${esc(path.freq)} MHz<br>by <span data-map-call="${esc(path.spotter)}" data-loc-lat="${path.spotterLat}" data-loc-lon="${path.spotterLon}">${esc(path.spotter)}</span>${iotaHtml}`;
           replicatePoint(path.dxLat, path.dxLon).forEach(([lat, lon]) => {
             const dxCircle = L.circleMarker([lat, lon], {
               radius: isHovered ? 12 : 6,
@@ -1637,11 +1992,18 @@ export const WorldMap = ({
             dxPathsMarkersRef.current.push(dxCircle);
           });
 
-          // Add label if enabled — replicate across world copies
-          if (showDXLabels || isHovered) {
+          // Add label if enabled — replicate across world copies. The text
+          // follows the Map Layers "Spot labels" mode (call / prefix / freq);
+          // labels within "Min label dist" of DE are suppressed unless hovered.
+          const dxLabelText = isHovered
+            ? dxCall
+            : showDXLabels && !spotLabelSuppressed(deLocation, path.dxLat, path.dxLon, spotLabelMinKm)
+              ? spotLabelText(spotLabelMode, { call: dxCall, freq: path.freq })
+              : null;
+          if (dxLabelText) {
             const labelIcon = L.divIcon({
               className: '',
-              html: `<span style="display:inline-block;background:${isHovered ? '#fff' : color};color:${isHovered ? color : '#000'};padding:${isHovered ? '3px 6px' : '2px 5px'};border-radius:3px;font-family:var(--font-mono);font-size:${isHovered ? '12px' : '11px'};font-weight:700;white-space:nowrap;border:1px solid ${isHovered ? color : 'rgba(0,0,0,0.5)'};box-shadow:0 1px ${isHovered ? '4px' : '2px'} rgba(0,0,0,${isHovered ? '0.5' : '0.3'});line-height:1.1;">${esc(dxCall)}</span>`,
+              html: `<span style="display:inline-block;background:${isHovered ? '#fff' : color};color:${isHovered ? color : '#000'};padding:${isHovered ? '3px 6px' : '2px 5px'};border-radius:3px;font-family:var(--font-mono);font-size:${isHovered ? '12px' : '11px'};font-weight:700;white-space:nowrap;border:1px solid ${isHovered ? color : 'rgba(0,0,0,0.5)'};box-shadow:0 1px ${isHovered ? '4px' : '2px'} rgba(0,0,0,${isHovered ? '0.5' : '0.3'});line-height:1.1;">${esc(dxLabelText)}</span>`,
               iconSize: [0, 0],
               iconAnchor: [0, 0],
             });
@@ -1680,7 +2042,19 @@ export const WorldMap = ({
         }
       });
     }
-  }, [dxPaths, dxFilters, showDXPaths, showDXLabels, hoveredSpot, bandColorVersion, bandPassesMapFilter]);
+  }, [
+    dxPaths,
+    dxFilters,
+    showDXPaths,
+    historyScrubbing,
+    showDXLabels,
+    hoveredSpot,
+    bandColorVersion,
+    bandPassesMapFilter,
+    spotLabelMode,
+    spotLabelMinKm,
+    deLocation,
+  ]);
 
   useEffect(() => {
     const map = mapInstanceRef.current;
@@ -1736,6 +2110,47 @@ export const WorldMap = ({
       rotatorLineRef.current.setStyle({ opacity: rotatorIsStale ? 0.55 : 1 });
     }
   }, [showRotatorBearing, deLocation?.lat, deLocation?.lon, rotatorAzimuth, rotatorLastGoodAzimuth, rotatorIsStale]);
+
+  // Commanded azimuth (auto-track) — same bearing geometry as the live beam,
+  // amber, only while it differs from where the rotator actually points.
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!map || typeof L === 'undefined') return;
+    const lat = deLocation?.lat;
+    const lon = deLocation?.lon;
+    const target = Number.isFinite(rotatorTargetAzimuth) ? ((rotatorTargetAzimuth % 360) + 360) % 360 : null;
+    const actualRaw = rotatorAzimuth ?? rotatorLastGoodAzimuth;
+    const actual = Number.isFinite(actualRaw) ? ((actualRaw % 360) + 360) % 360 : null;
+    const delta = target != null && actual != null ? Math.abs(((target - actual + 540) % 360) - 180) : 999;
+
+    if (!showRotatorBearing || target == null || !Number.isFinite(lat) || !Number.isFinite(lon) || delta < 1) {
+      if (rotatorTargetRef.current) {
+        map.removeLayer(rotatorTargetRef.current);
+        rotatorTargetRef.current = null;
+      }
+      return;
+    }
+    const points = unwrapLonPath(buildBearingPoints(lat, lon, target, 95, 2));
+    if (!rotatorTargetRef.current) {
+      rotatorTargetRef.current = L.polyline(points, {
+        color: 'rgba(255, 191, 0, 0.8)',
+        weight: 1.6,
+        opacity: 1,
+        dashArray: '4 8',
+        className: 'ohc-rotator-target',
+        interactive: false,
+      }).addTo(map);
+    } else {
+      rotatorTargetRef.current.setLatLngs(points);
+    }
+  }, [
+    showRotatorBearing,
+    deLocation?.lat,
+    deLocation?.lon,
+    rotatorTargetAzimuth,
+    rotatorAzimuth,
+    rotatorLastGoodAzimuth,
+  ]);
 
   const unwrapLonPath = (latlngs) => {
     if (!Array.isArray(latlngs) || latlngs.length < 2) return latlngs;
@@ -1807,10 +2222,14 @@ export const WorldMap = ({
             markersRef.current.push(marker);
           });
 
-          if (showLabels) {
+          const activationLabel =
+            showLabels && !spotLabelSuppressed(deLocation, spot.lat, spot.lon, spotLabelMinKm)
+              ? spotLabelText(spotLabelMode, { call: spot.call, freq: spot.freq })
+              : null;
+          if (activationLabel) {
             const labelIcon = L.divIcon({
               className: '',
-              html: `<span style="display:inline-block;background:${mapDefaults.color};color:#000;padding:2px 5px;border-radius:3px;font-size:11px;font-family:var(--font-mono);font-weight:700;white-space:nowrap;border:1px solid rgba(0,0,0,0.5);box-shadow:0 1px 2px rgba(0,0,0,0.3);line-height:1.1;">${esc(spot.call)}</span>`,
+              html: `<span style="display:inline-block;background:${mapDefaults.color};color:#000;padding:2px 5px;border-radius:3px;font-size:11px;font-family:var(--font-mono);font-weight:700;white-space:nowrap;border:1px solid rgba(0,0,0,0.5);box-shadow:0 1px 2px rgba(0,0,0,0.3);line-height:1.1;">${esc(activationLabel)}</span>`,
               iconSize: [0, 0],
               iconAnchor: [0, -2],
             });
@@ -1851,27 +2270,22 @@ export const WorldMap = ({
   // Update POTA markers
   useEffect(() => {
     placeSpots(POTADefs, potaSpots, showPOTA, showPOTALabels, potaMarkersRef, mapInstanceRef);
-  }, [potaSpots, showPOTA, showPOTALabels, bandPassesMapFilter]);
+  }, [potaSpots, showPOTA, showPOTALabels, bandPassesMapFilter, spotLabelMode, spotLabelMinKm, deLocation]);
 
   // Update WWFF markers
   useEffect(() => {
     placeSpots(WWFFDefs, wwffSpots, showWWFF, showWWFFLabels, wwffMarkersRef, mapInstanceRef);
-  }, [wwffSpots, showWWFF, showWWFFLabels, bandPassesMapFilter]);
+  }, [wwffSpots, showWWFF, showWWFFLabels, bandPassesMapFilter, spotLabelMode, spotLabelMinKm, deLocation]);
 
   // Update SOTA markers
   useEffect(() => {
     placeSpots(SOTADefs, sotaSpots, showSOTA, showSOTALabels, sotaMarkersRef, mapInstanceRef);
-  }, [sotaSpots, showSOTA, showSOTALabels, bandPassesMapFilter]);
+  }, [sotaSpots, showSOTA, showSOTALabels, bandPassesMapFilter, spotLabelMode, spotLabelMinKm, deLocation]);
 
   // Update WWBOTA markers
   useEffect(() => {
     placeSpots(WWBOTADefs, wwbotaSpots, showWWBOTA, showWWBOTALabels, wwbotaMarkersRef, mapInstanceRef);
-  }, [wwbotaSpots, showWWBOTA, showWWBOTALabels, bandPassesMapFilter]);
-
-  // Update CANParks markers
-  useEffect(() => {
-    placeSpots(CANParksDefs, canparksSpots, showCANParks, showCANParksLabels, canparksMarkersRef, mapInstanceRef);
-  }, [canparksSpots, showCANParks, showCANParksLabels, bandPassesMapFilter]);
+  }, [wwbotaSpots, showWWBOTA, showWWBOTALabels, bandPassesMapFilter, spotLabelMode, spotLabelMinKm, deLocation]);
 
   // Plugin layer system - properly load saved states
   useEffect(() => {
@@ -1920,6 +2334,9 @@ export const WorldMap = ({
             ...prev,
             [id]: { ...prev[id], enabled },
           }));
+          // Lets panels that mirror a layer (e.g. the Logbook's map button)
+          // follow toggles made in Settings, the command palette or shortcuts.
+          window.dispatchEvent(new CustomEvent('openhamclock-layer-toggle', { detail: { id, enabled } }));
         },
 
         setOpacity: (id, opacity) => {
@@ -2249,7 +2666,8 @@ export const WorldMap = ({
         const isRF = station.source === 'local-tnc';
         // amber for watched, green for local RF, cyan for internet
         const color = isWatched ? '#f59e0b' : isRF ? '#4ade80' : '#22d3ee';
-        const iconSize = isWatched ? 20 : 16;
+        const scale = Number(aprsIconScale) > 0 ? Number(aprsIconScale) : 1; // #1214
+        const iconSize = Math.round((isWatched ? 20 : 16) * scale);
 
         try {
           replicatePoint(lat, lon).forEach(([rLat, rLon]) => {
@@ -2283,30 +2701,50 @@ export const WorldMap = ({
                     ? `${ageMin}m ago`
                     : `${Math.floor(ageMin / 60)}h ago`;
 
-            marker
-              .bindPopup(
-                `
-                <b data-map-call="${esc(station.ssid || station.call)}" data-loc-lat="${station.lat}" data-loc-lon="${station.lon}">${esc(station.ssid || station.call)}</b>
+            const label = station.ssid || station.call;
+            const popupHtml = `
+                <b data-map-call="${esc(label)}" data-loc-lat="${station.lat}" data-loc-lon="${station.lon}">${esc(label)}</b>
                 ${isWatched ? ' <span style="color:#f59e0b">★</span>' : ''}
                 ${isRF ? ' <span style="color:#4ade80;font-size:10px">RF</span>' : ''}<br>
                 <span style="color:#888;font-size:11px">${ageStr}</span><br>
+                ${station.device ? `<span style="color:#aaa;font-size:11px">${esc(formatAprsDevice(station.device))}</span><br>` : ''}
+                <span data-aprs-history="${esc(label)}" style="color:#22d3ee;font-size:11px;cursor:pointer" title="Messages exchanged with this station (EmComm layout)">Messages ↗</span><br>
                 ${station.speed > 0 ? `Speed: ${station.speed} kt<br>` : ''}
                 ${station.altitude ? `Alt: ${station.altitude} ft<br>` : ''}
                 ${station.comment ? `<span style="font-size:11px;color:#aaa">${esc(station.comment.substring(0, 80))}</span>` : ''}
-              `,
-              )
-              .addTo(map);
+              `;
+            // APRS clicks open the popup and bring the station's row into view
+            // in the APRS panel (#1210) — intentionally do not set DX location.
+            const selectInList = () => requestAprsSelect({ ssid: station.ssid, call: station.call });
 
-            // APRS clicks open the popup only — intentionally do not set DX location
-
+            marker.bindPopup(popupHtml).addTo(map);
+            marker.on('click', selectInList);
             aprsMarkersRef.current.push(marker);
+
+            // Optional callsign tag beside the symbol, same treatment as the
+            // POTA/SOTA labels (#1209); tinted with the station's colour.
+            if (showAPRSLabels) {
+              const tag = L.marker([rLat, rLon], {
+                icon: L.divIcon({
+                  className: '',
+                  html: `<span style="display:inline-block;background:${color};color:#000;padding:${Math.round(2 * scale)}px ${Math.round(5 * scale)}px;border-radius:3px;font-size:${Math.round(11 * scale)}px;font-family:var(--font-mono);font-weight:700;white-space:nowrap;border:1px solid rgba(0,0,0,0.5);box-shadow:0 1px 2px rgba(0,0,0,0.3);line-height:1.1;">${esc(label)}</span>`,
+                  iconSize: [0, 0],
+                  iconAnchor: [-(iconSize / 2 + 2), iconSize / 2],
+                }),
+                zIndexOffset: isWatched ? 4999 : 999,
+              })
+                .bindPopup(popupHtml)
+                .addTo(map);
+              tag.on('click', selectInList);
+              aprsMarkersRef.current.push(tag);
+            }
           });
         } catch (err) {
           // skip bad station
         }
       });
     }
-  }, [aprsStations, showAPRS, aprsWatchlistCalls]);
+  }, [aprsStations, showAPRS, aprsWatchlistCalls, showAPRSLabels, aprsIconScale]);
 
   // Update MeshCom node markers
   useEffect(() => {
@@ -2435,7 +2873,7 @@ export const WorldMap = ({
   );
 
   return (
-    <div style={{ position: 'relative', height: '100%', minHeight: '200px' }}>
+    <div ref={mapRootRef} data-map-surface="" style={{ position: 'relative', height: '100%', minHeight: '200px' }}>
       {/* Azimuthal equidistant projection (canvas-based) */}
       {isAzimuthal && (
         <AzimuthalErrorBoundary
@@ -2454,7 +2892,6 @@ export const WorldMap = ({
             wwffSpots={wwffSpots}
             sotaSpots={sotaSpots}
             wwbotaSpots={wwbotaSpots}
-            canparksSpots={canparksSpots}
             dxPaths={dxPaths}
             dxFilters={dxFilters}
             mapBandFilter={mapBandFilter}
@@ -2465,11 +2902,15 @@ export const WorldMap = ({
             showWWFF={showWWFF}
             showSOTA={showSOTA}
             showWWBOTA={showWWBOTA}
-            showCANParks={showCANParks}
             showPSKReporter={showPSKReporter}
             showPSKPaths={showPSKPaths}
             showMutualReception={showMutualReception}
             showWSJTX={showWSJTX}
+            showAPRS={showAPRS}
+            aprsStations={aprsStations}
+            aprsWatchlistCalls={aprsWatchlistCalls}
+            showAPRSLabels={showAPRSLabels}
+            aprsIconScale={aprsIconScale}
             onSpotClick={onSpotClick}
             hoveredSpot={hoveredSpot}
             callsign={callsign}
@@ -2522,7 +2963,6 @@ export const WorldMap = ({
               wwffSpots={wwffSpots}
               sotaSpots={sotaSpots}
               wwbotaSpots={wwbotaSpots}
-              canparksSpots={canparksSpots}
               dxPaths={globeDxPaths}
               mapBandFilter={mapBandFilter}
               pskReporterSpots={pskReporterSpots}
@@ -2532,14 +2972,17 @@ export const WorldMap = ({
               showWWFF={showWWFF}
               showSOTA={showSOTA}
               showWWBOTA={showWWBOTA}
-              showCANParks={showCANParks}
               showPSKReporter={showPSKReporter}
               showWSJTX={showWSJTX}
+              aprsStations={showAPRS ? aprsStations : null}
+              aprsWatchlistCalls={aprsWatchlistCalls}
+              showAPRSLabels={showAPRSLabels}
+              aprsIconScale={aprsIconScale}
               onSpotClick={onSpotClick}
               callsign={callsign}
               showDeDxMarkers={showDeDxMarkers}
               satellites={satellites}
-              satellitesEnabled={pluginLayerStates.satellites?.enabled ?? true}
+              satellitesEnabled={!!relaySatName || (pluginLayerStates.satellites?.enabled ?? true)}
               suppressedLayers={suppressed2DLayers.map((l) => t(l.name))}
               overlayLayerStates={globeOverlayStates}
               allUnits={allUnits}
@@ -2550,6 +2993,11 @@ export const WorldMap = ({
               lowMemoryMode={lowMemoryMode}
               nightDarkness={nightDarkness}
               onNightDarknessChange={setNightDarkness}
+              emeMode={emeMode}
+              emeFrameKey={emeFrameKey}
+              relaySatName={relaySatName}
+              relayTarget={relayTarget}
+              emeActivityPaths={emeActivityPaths}
             />
           </React.Suspense>
         </AzimuthalErrorBoundary>
@@ -2603,6 +3051,7 @@ export const WorldMap = ({
               onDXChange={onDXChange}
               mapBandFilter={mapBandFilter}
               config={finalConfig}
+              showLabels={showDXLabels}
               map={isAzimuthal ? azimuthalMapRef.current : mapInstanceRef.current}
               satellites={satellites}
               allUnits={allUnits}
@@ -2614,6 +3063,19 @@ export const WorldMap = ({
             />
           );
         })}
+
+      {/* Subtle "offline tiles" badge while an offline area pack is drawing the basemap */}
+      {!isLeafletHidden && !mapUiHidden && <OfflineTilesBadge />}
+
+      {/* Cursor readout: lat/lon, grid, DE distance/bearing, nearest city (flat map) */}
+      {!isLeafletHidden && leafletReady && (
+        <MapCursorReadout
+          map={mapInstanceRef.current}
+          deLocation={deLocation}
+          units={allUnits?.dist}
+          hidden={mapUiHidden || hideOverlays}
+        />
+      )}
 
       {/* Unified map control dock */}
       {!isLeafletHidden && (
@@ -2672,8 +3134,8 @@ export const WorldMap = ({
                 onClick={() => setMapLocked((prev) => !prev)}
                 title={mapLocked ? t('app.mapControls.unlock') : t('app.mapControls.lock')}
                 style={{
-                  width: '30px',
-                  minHeight: '30px',
+                  width: compact ? '36px' : '30px',
+                  minHeight: compact ? '36px' : '30px',
                   background: mapLocked ? 'rgba(255, 80, 80, 0.25)' : 'rgba(0, 0, 0, 0.65)',
                   border: `1px solid ${mapLocked ? 'rgba(255, 80, 80, 0.7)' : '#444'}`,
                   borderRadius: '4px',
@@ -2693,103 +3155,194 @@ export const WorldMap = ({
                 )}
               </button>
 
-              {onToggleDXLabels && showDXPaths && Array.isArray(dxPaths) && dxPaths.length > 0 && (
+              <DockOverflowWrap
+                overflow={dockOverflow}
+                open={compactPopover === 'more'}
+                onToggle={() => toggleCompactPopover('more')}
+                label="More map controls"
+              >
+                {onToggleDXLabels && showDXPaths && Array.isArray(dxPaths) && dxPaths.length > 0 && (
+                  <button
+                    onClick={onToggleDXLabels}
+                    title={showDXLabels ? t('app.mapControls.calls.hide') : t('app.mapControls.calls.show')}
+                    style={{
+                      width: '30px',
+                      background: showDXLabels ? 'rgba(255, 170, 0, 0.2)' : 'rgba(0, 0, 0, 0.65)',
+                      border: `1px solid ${showDXLabels ? '#ffaa00' : '#444'}`,
+                      color: showDXLabels ? '#ffaa00' : '#888',
+                      padding: '6px 8px',
+                      borderRadius: '4px',
+                      fontFamily: 'var(--font-mono)',
+                      cursor: 'pointer',
+                      textAlign: 'center',
+                      minHeight: '30px',
+                    }}
+                  >
+                    ⊞
+                  </button>
+                )}
+
                 <button
-                  onClick={onToggleDXLabels}
-                  title={showDXLabels ? t('app.mapControls.calls.hide') : t('app.mapControls.calls.show')}
+                  onClick={() => adjustMapZoom(0.25)}
+                  disabled={mapLocked}
+                  title="Zoom in"
                   style={{
-                    width: '30px',
-                    background: showDXLabels ? 'rgba(255, 170, 0, 0.2)' : 'rgba(0, 0, 0, 0.65)',
-                    border: `1px solid ${showDXLabels ? '#ffaa00' : '#444'}`,
-                    color: showDXLabels ? '#ffaa00' : '#888',
-                    padding: '6px 8px',
+                    width: compact ? '36px' : '30px',
+                    minHeight: compact ? '36px' : '30px',
+                    background: 'rgba(0, 0, 0, 0.65)',
+                    border: '1px solid #444',
                     borderRadius: '4px',
+                    color: '#ccc',
                     fontFamily: 'var(--font-mono)',
-                    cursor: 'pointer',
-                    textAlign: 'center',
-                    minHeight: '30px',
+                    cursor: mapLocked ? 'not-allowed' : 'pointer',
+                    opacity: mapLocked ? 0.45 : 1,
+                    padding: 0,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
                   }}
                 >
-                  ⊞
+                  <LiPlus size={22} style={{ flexShrink: 0 }} />
                 </button>
-              )}
 
-              <button
-                onClick={() => adjustMapZoom(0.25)}
-                disabled={mapLocked}
-                title="Zoom in"
-                style={{
-                  width: '30px',
-                  minHeight: '30px',
-                  background: 'rgba(0, 0, 0, 0.65)',
-                  border: '1px solid #444',
-                  borderRadius: '4px',
-                  color: '#ccc',
-                  fontFamily: 'var(--font-mono)',
-                  cursor: mapLocked ? 'not-allowed' : 'pointer',
-                  opacity: mapLocked ? 0.45 : 1,
-                  padding: 0,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}
-              >
-                <LiPlus size={22} style={{ flexShrink: 0 }} />
-              </button>
-
-              <button
-                onClick={() => adjustMapZoom(-0.25)}
-                disabled={mapLocked}
-                title="Zoom out"
-                style={{
-                  width: '30px',
-                  minHeight: '30px',
-                  background: 'rgba(0, 0, 0, 0.65)',
-                  border: '1px solid #444',
-                  borderRadius: '4px',
-                  color: '#ccc',
-                  fontFamily: 'var(--font-mono)',
-                  cursor: mapLocked ? 'not-allowed' : 'pointer',
-                  opacity: mapLocked ? 0.45 : 1,
-                  padding: 0,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}
-              >
-                <LiMinus size={22} style={{ flexShrink: 0 }} />
-              </button>
-
-              <div
-                title="Adjust night overlay darkness"
-                style={{
-                  width: '30px',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  gap: '5px',
-                  color: '#999',
-                  fontSize: '12px',
-                  fontFamily: 'var(--font-mono)',
-                  textAlign: 'center',
-                }}
-              >
-                <span>{nightDarkness}%</span>
-                <input
-                  type="range"
-                  min="0"
-                  max="90"
-                  value={nightDarkness}
-                  onChange={(e) => setNightDarkness(parseInt(e.target.value, 10))}
+                <button
+                  onClick={() => adjustMapZoom(-0.25)}
+                  disabled={mapLocked}
+                  title="Zoom out"
                   style={{
-                    cursor: 'pointer',
-                    margin: 0,
-                    writingMode: 'vertical-lr',
-                    WebkitAppearance: 'slider-vertical',
-                    transform: 'rotate(180deg)',
+                    width: compact ? '36px' : '30px',
+                    minHeight: compact ? '36px' : '30px',
+                    background: 'rgba(0, 0, 0, 0.65)',
+                    border: '1px solid #444',
+                    borderRadius: '4px',
+                    color: '#ccc',
+                    fontFamily: 'var(--font-mono)',
+                    cursor: mapLocked ? 'not-allowed' : 'pointer',
+                    opacity: mapLocked ? 0.45 : 1,
+                    padding: 0,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
                   }}
-                />
-              </div>
+                >
+                  <LiMinus size={22} style={{ flexShrink: 0 }} />
+                </button>
+
+                {compact && dockOverflow ? (
+                  // Inside the "⋯" row: the night slider sits inline
+                  <label
+                    title="Adjust night overlay darkness"
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      color: '#ccc',
+                      fontSize: '12px',
+                      fontFamily: 'var(--font-mono)',
+                    }}
+                  >
+                    <LiMoon size={18} style={{ flexShrink: 0 }} />
+                    <input
+                      type="range"
+                      min="0"
+                      max="90"
+                      value={nightDarkness}
+                      aria-label="Night overlay darkness"
+                      onChange={(e) => setNightDarkness(parseInt(e.target.value, 10))}
+                      style={{ width: '90px', margin: 0, cursor: 'pointer' }}
+                    />
+                    <span style={{ minWidth: '3ch', textAlign: 'right' }}>{nightDarkness}%</span>
+                  </label>
+                ) : compact ? (
+                  <div data-compact-pop="night" style={{ position: 'relative' }}>
+                    <button
+                      type="button"
+                      onClick={() => toggleCompactPopover('night')}
+                      title="Adjust night overlay darkness"
+                      aria-label="Adjust night overlay darkness"
+                      aria-expanded={compactPopover === 'night'}
+                      style={{
+                        width: '36px',
+                        minHeight: '36px',
+                        background: compactPopover === 'night' ? 'rgba(0, 255, 204, 0.18)' : 'rgba(0, 0, 0, 0.65)',
+                        border: `1px solid ${compactPopover === 'night' ? '#00ffcc' : '#444'}`,
+                        borderRadius: '4px',
+                        color: '#ccc',
+                        padding: 0,
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                    >
+                      <LiMoon size={20} style={{ flexShrink: 0 }} />
+                    </button>
+                    {compactPopover === 'night' && (
+                      <div
+                        style={{
+                          position: 'absolute',
+                          left: '44px',
+                          top: 0,
+                          zIndex: 1200,
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '8px',
+                          padding: '8px 10px',
+                          borderRadius: '6px',
+                          border: '1px solid #444',
+                          background: 'rgba(0, 0, 0, 0.92)',
+                          color: '#ccc',
+                          fontSize: '12px',
+                          fontFamily: 'var(--font-mono)',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        <input
+                          type="range"
+                          min="0"
+                          max="90"
+                          value={nightDarkness}
+                          aria-label="Night overlay darkness"
+                          onChange={(e) => setNightDarkness(parseInt(e.target.value, 10))}
+                          style={{ width: '140px', margin: 0, cursor: 'pointer' }}
+                        />
+                        <span style={{ minWidth: '3ch', textAlign: 'right' }}>{nightDarkness}%</span>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div
+                    title="Adjust night overlay darkness"
+                    style={{
+                      width: '30px',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      gap: '5px',
+                      color: '#999',
+                      fontSize: '12px',
+                      fontFamily: 'var(--font-mono)',
+                      textAlign: 'center',
+                    }}
+                  >
+                    <span>{nightDarkness}%</span>
+                    <input
+                      type="range"
+                      min="0"
+                      max="90"
+                      value={nightDarkness}
+                      onChange={(e) => setNightDarkness(parseInt(e.target.value, 10))}
+                      style={{
+                        cursor: 'pointer',
+                        margin: 0,
+                        writingMode: 'vertical-lr',
+                        WebkitAppearance: 'slider-vertical',
+                        transform: 'rotate(180deg)',
+                      }}
+                    />
+                  </div>
+                )}
+              </DockOverflowWrap>
             </div>
           )}
         </div>
@@ -2845,94 +3398,121 @@ export const WorldMap = ({
             alignItems: 'center',
           }}
         >
-          {/* Projection toggle */}
-          <div
-            style={{
-              display: 'flex',
-              background: 'rgba(0, 0, 0, 0.8)',
-              border: '1px solid #444',
-              borderRadius: '4px',
-              overflow: 'hidden',
-              position: 'relative',
-            }}
-          >
-            {[
-              { key: 'mercator', label: 'Flat' },
-              { key: 'azimuthal', label: 'Azimuthal' },
-              { key: 'globe3d', label: '3D' },
-            ].map(({ key, label }) => (
-              <button
-                key={key}
-                onClick={() => {
-                  const wasBlocked = projectionPersistBlockedRef.current;
-                  projectionPersistBlockedRef.current = false;
-                  setMapProjection(key);
-                  // Re-selecting the projection the session already fell back
-                  // to is a no-op state change, so the save effect never runs
-                  // and the cleared block would not persist. Write it here.
-                  if (wasBlocked && key === mapProjection) {
-                    try {
-                      const existing = getStoredMapSettings();
-                      localStorage.setItem(
-                        'openhamclock_mapSettings',
-                        JSON.stringify({ ...existing, mapProjection: key }),
-                      );
-                    } catch (e) {
-                      console.error('Failed to save map settings:', e);
+          {compact && (
+            <button
+              type="button"
+              data-compact-pop="menu"
+              onClick={() => toggleCompactPopover('menu')}
+              title="Map projection and style"
+              aria-label="Map projection and style"
+              aria-expanded={compactPopover === 'menu'}
+              style={{
+                width: '36px',
+                height: '36px',
+                padding: 0,
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                borderRadius: '4px',
+                border: `1px solid ${compactPopover === 'menu' ? '#00ffcc' : '#444'}`,
+                background: compactPopover === 'menu' ? 'rgba(0, 255, 204, 0.18)' : 'rgba(0, 0, 0, 0.8)',
+                color: '#00ffcc',
+                cursor: 'pointer',
+              }}
+            >
+              <LiLayers size={20} style={{ flexShrink: 0 }} />
+            </button>
+          )}
+          <CompactMenuWrap compact={compact} open={compactPopover === 'menu'}>
+            {/* Projection toggle */}
+            <div
+              style={{
+                display: projectionOverride ? 'none' : 'flex',
+                background: 'rgba(0, 0, 0, 0.8)',
+                border: '1px solid #444',
+                borderRadius: '4px',
+                overflow: 'hidden',
+                position: 'relative',
+              }}
+            >
+              {[
+                { key: 'mercator', label: 'Flat' },
+                { key: 'azimuthal', label: 'Azimuthal' },
+                { key: 'globe3d', label: '3D' },
+              ].map(({ key, label }) => (
+                <button
+                  key={key}
+                  onClick={() => {
+                    const wasBlocked = projectionPersistBlockedRef.current;
+                    projectionPersistBlockedRef.current = false;
+                    setMapProjection(key);
+                    // Re-selecting the projection the session already fell back
+                    // to is a no-op state change, so the save effect never runs
+                    // and the cleared block would not persist. Write it here.
+                    if (wasBlocked && key === mapProjection) {
+                      try {
+                        const existing = getStoredMapSettings();
+                        localStorage.setItem(
+                          'openhamclock_mapSettings',
+                          JSON.stringify({ ...existing, mapProjection: key }),
+                        );
+                      } catch (e) {
+                        console.error('Failed to save map settings:', e);
+                      }
                     }
-                  }
-                }}
-                style={{
-                  background: mapProjection === key ? '#00ffcc' : 'transparent',
-                  color: mapProjection === key ? '#000' : '#888',
-                  border: 'none',
-                  padding: '5px 8px',
-                  fontSize: '10px',
-                  fontFamily: 'var(--font-mono)',
-                  cursor: 'pointer',
-                  fontWeight: mapProjection === key ? 'bold' : 'normal',
-                }}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-
-          {/* Style dropdown */}
-          <select
-            // The globe cannot build MODIS (its GIBS URL is generated
-            // dynamically by the 2D projections). The option stays present but
-            // disabled in 3D: aliasing the controlled value to 'dark' instead
-            // made picking Dark a no-op, since the DOM value never changed.
-            value={mapStyle}
-            id="mapStyle"
-            onChange={(e) => {
-              setMapStyle(e.target.value);
-              if (mapRotationConfig.enabled) {
-                setMainMapRotation({ enabled: false });
-              }
-            }}
-            style={{
-              background: 'rgba(0, 0, 0, 0.8)',
-              border: '1px solid #444',
-              color: '#00ffcc',
-              padding: '6px 10px',
-              borderRadius: '4px',
-              fontSize: '11px',
-              fontFamily: 'var(--font-mono)',
-              cursor: 'pointer',
-              outline: 'none',
-            }}
-          >
-            {Object.entries(MAP_STYLES)
-              .filter(([, style]) => !style.legacy)
-              .map(([key, style]) => (
-                <option key={key} value={key} disabled={isGlobe3D && key === 'MODIS'}>
-                  {style.name}
-                  {isGlobe3D && key === 'MODIS' ? ' (2D only)' : ''}
-                </option>
+                  }}
+                  style={{
+                    background: mapProjection === key ? '#00ffcc' : 'transparent',
+                    color: mapProjection === key ? '#000' : '#888',
+                    border: 'none',
+                    padding: '5px 8px',
+                    fontSize: '10px',
+                    fontFamily: 'var(--font-mono)',
+                    cursor: 'pointer',
+                    fontWeight: mapProjection === key ? 'bold' : 'normal',
+                  }}
+                >
+                  {label}
+                </button>
               ))}
-          </select>
+            </div>
+
+            {/* Style dropdown */}
+            <select
+              // The globe cannot build MODIS (its GIBS URL is generated
+              // dynamically by the 2D projections). The option stays present but
+              // disabled in 3D: aliasing the controlled value to 'dark' instead
+              // made picking Dark a no-op, since the DOM value never changed.
+              value={mapStyle}
+              id="mapStyle"
+              onChange={(e) => {
+                setMapStyle(e.target.value);
+                if (mapRotationConfig.enabled) {
+                  setMainMapRotation({ enabled: false });
+                }
+              }}
+              style={{
+                background: 'rgba(0, 0, 0, 0.8)',
+                border: '1px solid #444',
+                color: '#00ffcc',
+                padding: '6px 10px',
+                borderRadius: '4px',
+                fontSize: '11px',
+                fontFamily: 'var(--font-mono)',
+                cursor: 'pointer',
+                outline: 'none',
+              }}
+            >
+              {Object.entries(MAP_STYLES)
+                .filter(([, style]) => !style.legacy)
+                .map(([key, style]) => (
+                  <option key={key} value={key} disabled={isGlobe3D && key === 'MODIS'}>
+                    {style.name}
+                    {isGlobe3D && key === 'MODIS' ? ' (2D only)' : ''}
+                  </option>
+                ))}
+            </select>
+          </CompactMenuWrap>
           <button
             type="button"
             onClick={() => {
@@ -2948,8 +3528,8 @@ export const WorldMap = ({
               display: 'inline-flex',
               alignItems: 'center',
               justifyContent: 'center',
-              width: '32px',
-              height: '26px',
+              width: compact ? '36px' : '32px',
+              height: compact ? '36px' : '26px',
               fontSize: '12px',
               fontWeight: 700,
               padding: '0',
@@ -3136,41 +3716,53 @@ export const WorldMap = ({
         <CallsignWeatherOverlay hoveredSpot={hoveredSpot} enabled={dxWeatherAllowed} allUnits={allUnits} />
       )}
 
+      {/* Display-time scrubber (Time Shift layer) — floats over every projection */}
+      {!hideOverlays && !mapUiHidden && pluginLayerStates['time-shift']?.enabled && (
+        <TimeShiftControl onClose={() => window.hamclockLayerControls?.toggleLayer('time-shift', false)} />
+      )}
+
       {/* DX News Ticker - left side of bottom bar (independent of UI hide toggle) */}
-      {!hideOverlays && showDXNews && <DXNewsTicker />}
+      {!hideOverlays && showDXNews && !compact && <DXNewsTicker />}
 
       {/* Legend toggle button */}
       {!hideOverlays && !mapUiHidden && (
         <button
-          onClick={toggleLegend}
-          title={showLegend ? 'Hide legend' : 'Show legend'}
+          onClick={onLegendToggle}
+          data-compact-pop={compact ? 'legend' : undefined}
+          title={legendOpen ? 'Hide legend' : 'Show legend'}
+          aria-expanded={compact ? legendOpen : undefined}
           style={{
             position: 'absolute',
-            bottom: showLegend ? '80px' : '44px',
+            bottom: compact ? '8px' : showLegend ? '80px' : '44px',
             left: '50%',
             transform: 'translateX(-50%)',
             background: 'rgba(0, 0, 0, 0.85)',
-            border: '1px solid #444',
-            borderRadius: '4px',
-            padding: '2px 8px',
+            border: `1px solid ${compact && hasMapBandFilter ? '#00ffcc' : '#444'}`,
+            borderRadius: compact ? '999px' : '4px',
+            padding: compact ? '6px 12px' : '2px 8px',
             zIndex: 1001,
             cursor: 'pointer',
-            fontSize: '10px',
+            fontSize: compact ? '12px' : '10px',
             fontFamily: 'var(--font-mono)',
-            color: '#888',
+            color: compact && hasMapBandFilter ? '#00ffcc' : '#888',
             lineHeight: 1.2,
           }}
         >
-          {showLegend ? '▼ Legend' : '▲ Legend'}
+          {compact
+            ? `${legendOpen ? '▼' : '▲'} Bands${hasMapBandFilter ? ` · ${selectedMapBands.size}` : ''}`
+            : showLegend
+              ? '▼ Legend'
+              : '▲ Legend'}
         </button>
       )}
 
       {/* Legend - centered above news ticker */}
-      {!hideOverlays && !mapUiHidden && showLegend && (
+      {!hideOverlays && !mapUiHidden && legendOpen && (
         <div
+          data-compact-pop={compact ? 'legend' : undefined}
           style={{
             position: 'absolute',
-            bottom: '44px',
+            bottom: compact ? '46px' : '44px',
             left: '50%',
             transform: 'translateX(-50%)',
             background: 'rgba(0, 0, 0, 0.85)',
@@ -3184,10 +3776,18 @@ export const WorldMap = ({
             fontSize: '11px',
             fontFamily: 'var(--font-mono)',
             flexWrap: 'nowrap',
+            ...(compact ? { width: 'max-content', maxWidth: 'calc(100% - 20px)', boxSizing: 'border-box' } : {}),
           }}
         >
-          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-            <span style={{ color: '#888' }}>Bands:</span>
+          <div
+            style={{
+              display: 'flex',
+              gap: '8px',
+              alignItems: 'center',
+              ...(compact ? { flexWrap: 'wrap', justifyContent: 'center', gap: '6px' } : {}),
+            }}
+          >
+            {!compact && <span style={{ color: '#888' }}>Bands:</span>}
             <button
               type="button"
               onClick={() => clearMapBandFilter()}
@@ -3246,7 +3846,7 @@ export const WorldMap = ({
           </div>
         </div>
       )}
-      {!hideOverlays && !mapUiHidden && showLegend && editingBand && (
+      {!hideOverlays && !mapUiHidden && legendOpen && editingBand && (
         <div
           style={{
             position: 'absolute',

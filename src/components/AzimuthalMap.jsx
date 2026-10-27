@@ -8,14 +8,17 @@
  * Leaflet handles pan/zoom; canvas syncs to Leaflet's view state.
  */
 import { useRef, useEffect, useState, useCallback, useMemo } from 'react';
+import { nearestCity, formatPopulation } from '../utils/nearestCity.js';
 import { useTranslation } from 'react-i18next';
 import { getBandColor, getBandFromFreq } from '../utils/callsign.js';
 import { latLonToMaidenhead } from '../utils/geo.js';
+import { formatBearing } from '../utils/bearing.js';
 import { MAP_STYLES } from '../utils/config.js';
 import { createTileReprojector } from '../utils/tileReproject.js';
 import { createAzimuthalCRS } from '../utils/azimuthalCRS.js';
 import { matchesDXSpotPath } from '../utils/dxClusterSpotMatcher';
 import { ACTIVITY_COLORS } from '../utils/activityColors.js';
+import { useHistoryScrubbing } from '../hooks/useHistoryScrubbing.js';
 
 // ── Projection Math ────────────────────────────────────────
 const DEG = Math.PI / 180;
@@ -114,18 +117,21 @@ export default function AzimuthalMap({
   wwffSpots,
   sotaSpots,
   wwbotaSpots,
-  canparksSpots,
   dxPaths,
   dxFilters,
   mapBandFilter,
   pskReporterSpots,
   wsjtxSpots,
+  showAPRS = false,
+  aprsStations = null,
+  aprsWatchlistCalls = null,
+  showAPRSLabels = false,
+  aprsIconScale = 1,
   showDXPaths,
   showPOTA,
   showWWFF,
   showSOTA,
   showWWBOTA,
-  showCANParks,
   showPSKReporter,
   showPSKPaths = true,
   showMutualReception = true,
@@ -141,6 +147,8 @@ export default function AzimuthalMap({
   onMapReady,
 }) {
   const canvasRef = useRef(null);
+  // History Playback scrubbed into the past → hide the live DX cluster paths
+  const historyScrubbing = useHistoryScrubbing();
   const containerRef = useRef(null);
   const leafletDivRef = useRef(null);
   const leafletMapRef = useRef(null);
@@ -232,10 +240,14 @@ export default function AzimuthalMap({
           DEG +
           360) %
         360;
+      const city = nearestCity(e.latlng.lat, e.latlng.lng, 100);
+      const cityText = city
+        ? `  ${city.name} (${formatPopulation(city.population)})${city.km >= 5 ? ` ${Math.round(city.km)} km` : ''}`
+        : '';
       setTooltip({
         x: e.containerPoint.x,
         y: e.containerPoint.y,
-        text: `${e.latlng.lat.toFixed(1)}°, ${e.latlng.lng.toFixed(1)}°  ${latLonToMaidenhead({ lat: e.latlng.lat, lon: e.latlng.lng })}  ${Math.round(p.dist)} km  ${Math.round(bearing)}°`,
+        text: `${e.latlng.lat.toFixed(1)}°, ${e.latlng.lng.toFixed(1)}°  ${latLonToMaidenhead({ lat: e.latlng.lat, lon: e.latlng.lng })}  ${Math.round(p.dist)} km  ${formatBearing(bearing, lat0, lon0)}${cityText}`,
       });
     });
     map.on('mouseout', () => setTooltip(null));
@@ -537,8 +549,8 @@ export default function AzimuthalMap({
       ctx.fillText(bearingLabels[b / 30], lx, ly);
     }
 
-    // ── DX Cluster paths ─────────────────────────────────
-    if (showDXPaths && dxPaths?.length > 0) {
+    // ── DX Cluster paths (hidden while History Playback replays the past) ──
+    if (showDXPaths && !historyScrubbing && dxPaths?.length > 0) {
       dxPaths.forEach((path) => {
         if (!path.dxLat || !path.dxLon) return;
         const band = bandFromAnyFrequency(path.freq);
@@ -760,6 +772,46 @@ export default function AzimuthalMap({
       });
     }
 
+    // ── APRS stations (#1210) ────────────────────────────
+    // Same colours as the flat map's markers: amber watched, green local RF,
+    // cyan internet; optional callsign tag beside the dot.
+    if (showAPRS && aprsStations?.length > 0) {
+      const watch = aprsWatchlistCalls || new Set();
+      const scale = Number(aprsIconScale) > 0 ? Number(aprsIconScale) : 1; // #1214
+      ctx.save();
+      ctx.font = `${Math.round(10 * scale)}px "JetBrains Mono", monospace`;
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      aprsStations.forEach((station) => {
+        const lat = parseFloat(station.lat);
+        const lon = parseFloat(station.lon);
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+        const isWatched = !!(watch.has?.(station.call) || watch.has?.(station.ssid));
+        const color = isWatched ? '#f59e0b' : station.source === 'local-tnc' ? '#4ade80' : '#22d3ee';
+        const p = toCanvas(lat, lon);
+        if (!p || !Number.isFinite(p.x) || !Number.isFinite(p.y)) return;
+        const r = (isWatched ? 5 : 4) * scale;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        ctx.fill();
+        ctx.strokeStyle = '#000';
+        ctx.lineWidth = 0.8;
+        ctx.stroke();
+        if (showAPRSLabels) {
+          const label = station.ssid || station.call || '';
+          if (label) {
+            ctx.lineWidth = 3;
+            ctx.strokeStyle = 'rgba(0,0,0,0.85)';
+            ctx.strokeText(label, p.x + r + 3, p.y);
+            ctx.fillStyle = color;
+            ctx.fillText(label, p.x + r + 3, p.y);
+          }
+        }
+      });
+      ctx.restore();
+    }
+
     // ── WWBOTA spots ─────────────────────────────────────
     if (showWWBOTA && wwbotaSpots?.length > 0) {
       wwbotaSpots.forEach((spot) => {
@@ -772,26 +824,6 @@ export default function AzimuthalMap({
         ctx.beginPath();
         ctx.arc(p.x, p.y, 5, 0, Math.PI * 2);
         ctx.fillStyle = ACTIVITY_COLORS.wwbota;
-        ctx.fill();
-        ctx.strokeStyle = '#000';
-        ctx.lineWidth = 0.5;
-        ctx.stroke();
-      });
-    }
-
-    // ── CANParks spots ───────────────────────────────────
-    if (showCANParks && canparksSpots?.length > 0) {
-      canparksSpots.forEach((spot) => {
-        if (!Number.isFinite(spot.lat) || !Number.isFinite(spot.lon)) return;
-        const band = normalizeBandKey(spot.band) || bandFromAnyFrequency(spot.freq);
-        if (!bandPassesMapFilter(band)) return;
-
-        const p = toCanvas(spot.lat, spot.lon);
-        // CANParks circle — shared palette (maple red); distinguished from
-        // the WWBOTA circle by colour, matching the flat map's round marker.
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, 5, 0, Math.PI * 2);
-        ctx.fillStyle = ACTIVITY_COLORS.canparks;
         ctx.fill();
         ctx.strokeStyle = '#000';
         ctx.lineWidth = 0.5;
@@ -860,6 +892,7 @@ export default function AzimuthalMap({
     deLocation,
     dxLocation,
     dxPaths,
+    historyScrubbing,
     dxFilters,
     mapBandFilter,
     showDXPaths,
@@ -872,14 +905,17 @@ export default function AzimuthalMap({
     showSOTA,
     wwbotaSpots,
     showWWBOTA,
-    canparksSpots,
-    showCANParks,
     pskReporterSpots,
     showPSKReporter,
     showPSKPaths,
     showMutualReception,
     wsjtxSpots,
     showWSJTX,
+    showAPRS,
+    aprsStations,
+    aprsWatchlistCalls,
+    showAPRSLabels,
+    aprsIconScale,
     hideOverlays,
     toCanvas,
     useTiles,

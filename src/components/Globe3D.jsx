@@ -18,9 +18,12 @@ import { useTranslation } from 'react-i18next';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { getBandColor, getBandFromFreq } from '../utils/callsign.js';
-import { getSunPosition, getMoonPosition, densifyGeoJson } from '../utils/geo.js';
-import { lzwDecode } from '../plugins/layers/useLightning.js';
+import { getBandColorForBand, getEffectiveBandColors } from '../utils/bandColors.js';
+import { getSunPosition, getMoonPosition, getMoonAzEl, densifyGeoJson } from '../utils/geo.js';
+import { displayNow, subscribeDisplayTime } from '../utils/displayTime.js';
+import { subscribeStrikes } from '../utils/lightningFeed.js';
 import { MAP_STYLES } from '../utils/config.js';
+import { MAP_FOCUS_EVENT, MAP_FOCUS_PULSE_MS } from '../utils/mapFocus.js';
 import { buildGlobeTexture, buildGlobeDetailPatch, chooseGlobeTileZoom } from '../utils/globeTexture.js';
 import {
   classifySatellite,
@@ -28,14 +31,18 @@ import {
   getEnterpriseTemplate,
   loadIssTemplate,
 } from '../utils/satelliteModels.js';
+import { getSantaTemplate } from '../utils/santaModel.js';
+import { getSantaState, resolveSantaClock, destinationPoint, formatPresents } from '../utils/santa.js';
 import { GLOBE_OVERLAY_PAINTERS, ZONE_SOURCES, workedGridCounts, decimateAircraft } from '../utils/globeOverlays.js';
 import logbookStore from '../services/logbookStore.js';
+import { logbookLinesShown, useLogbookMapPoints } from '../utils/logbookMap.js';
 import {
   acquire as acquireHistory,
   release as releaseHistory,
   subscribe as subscribeHistory,
   buildTransportControl as buildHistoryTransportControl,
 } from '../services/historyPlaybackStore.js';
+import { useHistoryScrubbing } from '../hooks/useHistoryScrubbing.js';
 import { makeDraggable } from '../plugins/layers/makeDraggable.js';
 import { addMinimizeToggle } from '../plugins/layers/addMinimizeToggle.js';
 import { ACTIVITY_COLORS } from '../utils/activityColors.js';
@@ -47,6 +54,16 @@ import SatelliteInfoPanel from './SatelliteInfoPanel.jsx';
 const DEG = Math.PI / 180;
 const EARTH_R = 1;
 const DEFAULT_CAM_DISTANCE = 3.2;
+// Orbit ceiling. The EME layout lifts it so Earth and Moon frame together.
+const CAM_MAX_DISTANCE = 8;
+const EME_CAM_MAX_DISTANCE = 22;
+// Where the moon sprite sits: compressed (true scale is ~60 Earth radii) but
+// outside the normal orbit ceiling and inside the starfield.
+const MOON_DIST = 12;
+// EME framing: orbit target at the Earth–Moon midpoint; the camera distance
+// is derived from the viewport so Earth (radius 1) and Moon both fit, with
+// this much clearance beyond the Earth's limb, in Earth radii.
+const EME_FRAME_MARGIN = 1.8;
 // Altitude of every overlay above the sphere, as a multiple of EARTH_R.
 // Markers and arc endpoints share it so arcs start exactly at the dot.
 const MARKER_ALT = 1.012;
@@ -132,15 +149,17 @@ const bandFromAnyFrequency = (freq) => {
 };
 
 // ── Round sprite for spot markers ──────────────────────────
+// 256 px with a narrow edge falloff: at 64 px with a soft ramp, zooming in
+// magnified the texture and the dots went visibly blurry (#1234).
 function makeDotTexture() {
-  const size = 64;
+  const size = 256;
   const c = document.createElement('canvas');
   c.width = c.height = size;
   const ctx = c.getContext('2d');
   const g = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
   g.addColorStop(0, 'rgba(255,255,255,1)');
-  g.addColorStop(0.55, 'rgba(255,255,255,1)');
-  g.addColorStop(0.72, 'rgba(255,255,255,0.85)');
+  g.addColorStop(0.82, 'rgba(255,255,255,1)');
+  g.addColorStop(0.92, 'rgba(255,255,255,0.85)');
   g.addColorStop(1, 'rgba(255,255,255,0)');
   ctx.fillStyle = g;
   ctx.beginPath();
@@ -148,8 +167,32 @@ function makeDotTexture() {
   ctx.fill();
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
   return tex;
 }
+
+// Dot with a dark rim baked in, for APRS stations: the shader multiplies the
+// texel by the station colour, so the white disc takes the colour and the
+// black rim stays black — the same outlined look as the flat map's markers.
+function makeOutlinedDotTexture() {
+  const size = 256;
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#000';
+  ctx.beginPath();
+  ctx.arc(size / 2, size / 2, size / 2 - 2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#fff';
+  ctx.beginPath();
+  ctx.arc(size / 2, size / 2, size * 0.36, 0, Math.PI * 2);
+  ctx.fill();
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+const APRS_LABEL_MAX = 300; // text sprites are one texture each — cap them
 
 /**
  * Relative luminance of any CSS colour string, resolved by letting canvas do
@@ -380,7 +423,6 @@ export default function Globe3D({
   wwffSpots,
   sotaSpots,
   wwbotaSpots,
-  canparksSpots,
   dxPaths,
   mapBandFilter,
   pskReporterSpots,
@@ -390,7 +432,6 @@ export default function Globe3D({
   showWWFF,
   showSOTA,
   showWWBOTA,
-  showCANParks,
   showPSKReporter,
   showPSKPaths = true,
   showWSJTX,
@@ -403,6 +444,10 @@ export default function Globe3D({
   // { layerId: { enabled, opacity } } for the globe-capable plugin layers —
   // same states the flat map persists to openhamclock_mapSettings.layers.
   overlayLayerStates = null,
+  aprsStations = null,
+  aprsWatchlistCalls = null,
+  showAPRSLabels = false,
+  aprsIconScale = 1,
   allUnits = { dist: 'imperial' },
   config,
   hideUi = false,
@@ -413,6 +458,18 @@ export default function Globe3D({
   tileStyle = 'dark',
   lowMemoryMode = false,
   nightDarkness = 60,
+  // EME layout: draw the DE→Moon→DX legs and frame Earth + Moon together.
+  // emeFrameKey re-runs the framing when bumped (a "re-centre" button).
+  emeMode = false,
+  emeFrameKey = 0,
+  // Satellite relay mode (EME layout): legs go DE→satellite→DX instead of
+  // via the moon, only this satellite is drawn (with its footprint), and
+  // framing centres over its sub-point. relayTarget refreshes every second.
+  relaySatName = null,
+  relayTarget = null, // { lat, lon, altKm, deUp, dxUp }
+  // EME activity (PSK Reporter Q65/JT65 reports): faint sender→Moon→receiver
+  // paths in band colour, drawn alongside the DE/DX legs in moon mode.
+  emeActivityPaths = null, // [{ aLat, aLon, bLat, bLon, freqMHz }]
   onNightDarknessChange,
 }) {
   const { t, i18n } = useTranslation();
@@ -421,6 +478,8 @@ export default function Globe3D({
   // non-English operators got English labels only in 3D.
   const mapLang = i18n.language?.split('-')[0] || 'en';
   const containerRef = useRef(null);
+  // History Playback scrubbed into the past → hide the live DX cluster arcs
+  const historyScrubbing = useHistoryScrubbing();
   const gl = useRef({}); // three.js objects, kept off React state
   // Mirrors the nightDarkness prop so a scene rebuild seeds the shader uniform
   // with the current value instead of snapping back to the material default.
@@ -442,6 +501,79 @@ export default function Globe3D({
       }
     }, AUTOROTATE_IDLE_MS);
   }, []);
+  // "Bring this station into view" requests from panel rows (#1182/#1210):
+  // swing the camera to the target over ~0.7 s, keeping its distance, and
+  // drop a pulse ring on the surface for as long as the flat map's ring lives.
+  const focusRef = useRef(null);
+  useEffect(() => {
+    const clearFocus = () => {
+      const f = focusRef.current;
+      if (!f) return;
+      cancelAnimationFrame(f.raf);
+      const s = gl.current;
+      if (s?.scene) s.scene.remove(f.ring);
+      f.geo.dispose();
+      f.mat.dispose();
+      focusRef.current = null;
+      s?.requestRender?.();
+    };
+    const onFocus = (e) => {
+      const s = gl.current;
+      const d = e?.detail;
+      if (!s?.camera || !s.controls || !s.scene || !d) return;
+      if (!Number.isFinite(d.lat) || !Number.isFinite(d.lon)) return;
+      clearFocus();
+      kickIdleTimer(); // a focus counts as presence: stop auto-rotate for a while
+
+      const dist = s.camera.position.length();
+      const fromDir = s.camera.position.clone().normalize();
+      const toDir = latLonToVec3(d.lat, d.lon, 1).normalize();
+      const swing = new THREE.Quaternion().setFromUnitVectors(fromDir, toDir);
+      const identity = new THREE.Quaternion();
+
+      const geo = new THREE.RingGeometry(0.018, 0.026, 48);
+      const mat = new THREE.MeshBasicMaterial({
+        color: 0x22d3ee,
+        transparent: true,
+        opacity: 0.95,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      });
+      const ring = new THREE.Mesh(geo, mat);
+      ring.position.copy(latLonToVec3(d.lat, d.lon, EARTH_R * 1.004));
+      ring.lookAt(0, 0, 0);
+      ring.renderOrder = 50;
+      s.scene.add(ring);
+
+      const SWING_MS = 700;
+      const RING_PERIOD_MS = 1300; // matches the CSS ring animation on the flat map
+      const start = performance.now();
+      const step = (now) => {
+        const s2 = gl.current;
+        if (!s2?.camera) return clearFocus();
+        const elapsed = now - start;
+        if (elapsed <= SWING_MS) {
+          const t = Math.min(1, elapsed / SWING_MS);
+          const k = t * t * (3 - 2 * t);
+          const dir = fromDir.clone().applyQuaternion(identity.clone().slerp(swing, k));
+          s2.camera.position.copy(dir.multiplyScalar(dist));
+          s2.controls.update();
+        }
+        const phase = (elapsed % RING_PERIOD_MS) / RING_PERIOD_MS;
+        ring.scale.setScalar(1 + phase * 3);
+        mat.opacity = 0.95 * (1 - phase);
+        s2.requestRender?.();
+        if (elapsed >= MAP_FOCUS_PULSE_MS) return clearFocus();
+        focusRef.current.raf = requestAnimationFrame(step);
+      };
+      focusRef.current = { raf: requestAnimationFrame(step), ring, geo, mat };
+    };
+    window.addEventListener(MAP_FOCUS_EVENT, onFocus);
+    return () => {
+      window.removeEventListener(MAP_FOCUS_EVENT, onFocus);
+      clearFocus();
+    };
+  }, [kickIdleTimer]);
   const [textureLoading, setTextureLoading] = useState(true);
   // One-way per-session detail upgrade: once the camera has been close enough
   // that tile resolution visibly limits the basemap (labels pixelate), the
@@ -467,6 +599,13 @@ export default function Globe3D({
   // config.lowMemoryMode arrives asynchronously as undefined then false;
   // normalising stops that flip from rebuilding the entire WebGL scene.
   const lowMem = !!lowMemoryMode;
+  // Logbook QSOs layer: drawn natively like DX spots (markers + arcs from DE),
+  // from the same points as the flat layer — live log + the Logbook panel's
+  // filter (utils/logbookMap.js).
+  const logbookLayer = overlayLayerStates?.['logbook-qsos'];
+  const logbookOn = !lowMem && !!logbookLayer?.enabled;
+  const logbookOpacity = logbookLayer?.opacity ?? 0.8;
+  const logbookPoints = useLogbookMapPoints(logbookOn);
   const [panelWidth, setPanelWidth] = useState(0);
   // WebGL construction failure, rethrown during render so WorldMap's error
   // boundary can fall back to Mercator. Swallowing it here left the user on a
@@ -573,9 +712,8 @@ export default function Globe3D({
     if (showWWFF) pushSimple(wwffSpots, ACTIVITY_COLORS.wwff, 'WWFF');
     if (showSOTA) pushSimple(sotaSpots, ACTIVITY_COLORS.sota, 'SOTA');
     if (showWWBOTA) pushSimple(wwbotaSpots, ACTIVITY_COLORS.wwbota, 'WWBOTA');
-    if (showCANParks) pushSimple(canparksSpots, ACTIVITY_COLORS.canparks, 'CANParks');
 
-    if (showDXPaths && dxPaths?.length) {
+    if (showDXPaths && !historyScrubbing && dxPaths?.length) {
       dxPaths.forEach((p) => {
         if (!Number.isFinite(p.dxLat) || !Number.isFinite(p.dxLon)) return;
         const band = bandFromAnyFrequency(p.freq);
@@ -646,21 +784,46 @@ export default function Globe3D({
       });
     }
 
+    // Logbook QSOs: one dot per worked position and band. Clicking sets DX
+    // only — `raw` carries no frequency, so a past QSO never retunes the rig.
+    if (logbookOn) {
+      const palette = getEffectiveBandColors(); // once, not per dot
+      logbookPoints.forEach((p) => {
+        const latest = p.qsos.reduce((a, b) =>
+          `${b.qso_date || ''}${b.time_on || ''}` > `${a.qso_date || ''}${a.time_on || ''}` ? b : a,
+        );
+        const more = p.qsos.length > 1 ? ` +${p.qsos.length - 1}` : '';
+        out.push({
+          lat: p.lat,
+          lon: p.lon,
+          color: getBandColorForBand(p.band, palette),
+          size: p.qsos.length > 1 ? 8 : 7,
+          kind: 'QSO',
+          label: `${latest.call}${more}`,
+          detail: [p.band, latest.mode, p.approx ? `${p.place} (country position)` : p.place]
+            .filter(Boolean)
+            .join(' · '),
+          raw: { lat: p.lat, lon: p.lon, call: latest.call },
+        });
+      });
+    }
+
     return out;
   }, [
+    logbookOn,
+    logbookPoints,
     potaSpots,
     wwffSpots,
     sotaSpots,
     wwbotaSpots,
-    canparksSpots,
     dxPaths,
+    historyScrubbing,
     pskReporterSpots,
     wsjtxSpots,
     showPOTA,
     showWWFF,
     showSOTA,
     showWWBOTA,
-    showCANParks,
     showDXPaths,
     showPSKReporter,
     showWSJTX,
@@ -672,7 +835,7 @@ export default function Globe3D({
   const arcs = useMemo(() => {
     const out = [];
 
-    if (showDXPaths && dxPaths?.length) {
+    if (showDXPaths && !historyScrubbing && dxPaths?.length) {
       dxPaths.forEach((p) => {
         if (!Number.isFinite(p.dxLat) || !Number.isFinite(p.dxLon)) return;
         if (!Number.isFinite(p.spotterLat) || !Number.isFinite(p.spotterLon)) return;
@@ -708,6 +871,20 @@ export default function Globe3D({
       });
     }
 
+    // Logbook QSOs: DE → each worked position, band-coloured — only while
+    // they stay readable (see MAX_LOGBOOK_LINES); the dots always show.
+    if (logbookOn && hasDE && logbookLinesShown(logbookPoints.length)) {
+      const palette = getEffectiveBandColors(); // once, not per arc
+      logbookPoints.forEach((p) => {
+        out.push({
+          from: [lat0, lon0],
+          to: [p.lat, p.lon],
+          color: getBandColorForBand(p.band, palette),
+          opacity: logbookOpacity * 0.8, // 0.64 at the default, like the cluster arcs
+        });
+      });
+    }
+
     // The DE→DX arc exists to connect the two station markers, so it hides
     // with them — unlike the cluster paths, which have their own toggle.
     if (showDeDxMarkers && Number.isFinite(dxLocation?.lat) && Number.isFinite(dxLocation?.lon)) {
@@ -722,7 +899,12 @@ export default function Globe3D({
     return out;
     // themeTick: the DE→DX arc colour is read from a CSS variable.
   }, [
+    logbookOn,
+    logbookPoints,
+    logbookOpacity,
+    hasDE,
     dxPaths,
+    historyScrubbing,
     showDXPaths,
     bandPassesMapFilter,
     dxLocation,
@@ -776,7 +958,7 @@ export default function Globe3D({
     controls.zoomSpeed = 0.7;
     controls.enablePan = false;
     controls.minDistance = 1.25;
-    controls.maxDistance = 8;
+    controls.maxDistance = emeMode ? EME_CAM_MAX_DISTANCE : CAM_MAX_DISTANCE;
     controls.autoRotate = false;
     controls.autoRotateSpeed = AUTOROTATE_SPEED;
     // Fires on pointer-down / wheel, i.e. genuine user gestures — programmatic
@@ -842,6 +1024,12 @@ export default function Globe3D({
     const satGroup = new THREE.Group();
     scene.add(satGroup);
 
+    // APRS stations (#1234): native points + callsign sprites. They used to be
+    // painted into the shared 2048-px overlay canvas, so zooming in blew each
+    // one up into a blurry square; these keep a constant on-screen size.
+    const aprsGroup = new THREE.Group();
+    scene.add(aprsGroup);
+
     // Plugin overlay shell — one shared equirectangular canvas (Maidenhead,
     // zones, D-RAP, aurora) draped on a transparent sphere just above the
     // earth mesh. SphereGeometry's UV layout matches the canvas's lat/lon
@@ -882,6 +1070,9 @@ export default function Globe3D({
       stars,
       overlayGroup,
       satGroup,
+      aprsGroup,
+      aprsData: [],
+      aprsLabels: [],
       overlayShell,
       overlayTexture,
       overlayCanvas,
@@ -889,6 +1080,7 @@ export default function Globe3D({
       raycaster,
       pointer,
       dotTexture: makeDotTexture(),
+      aprsDotTexture: makeOutlinedDotTexture(),
       markerData: [],
       disposables: [],
     };
@@ -925,6 +1117,16 @@ export default function Globe3D({
       if (s.stationMarkers?.length) {
         const k = s.camera.position.length() / DEFAULT_CAM_DISTANCE;
         for (let i = 0; i < s.stationMarkers.length; i++) s.stationMarkers[i].scale.setScalar(k);
+      }
+      // APRS callsign tags: constant on-screen size, like the dots under them
+      if (s.aprsLabels?.length) {
+        const h = s.renderer.domElement.clientHeight || 1;
+        const fovK = 2 * Math.tan((s.camera.fov * Math.PI) / 360);
+        for (let i = 0; i < s.aprsLabels.length; i++) {
+          const sp = s.aprsLabels[i];
+          const f = (fovK * s.camera.position.distanceTo(sp.position)) / h;
+          sp.scale.set(sp.userData.wPx * f, sp.userData.hPx * f, 1);
+        }
       }
       // Satellite 3D models: shown inside the LOD distance (always for
       // selected birds), scaled per frame to a constant apparent size. The
@@ -1263,13 +1465,17 @@ export default function Globe3D({
     const update = () => {
       const s = gl.current;
       if (!s.earthMat) return;
-      const sun = getSunPosition(new Date());
+      const sun = getSunPosition(displayNow());
       s.sunWorld = latLonToVec3(sun.lat, sun.lon, 1).normalize();
       s.requestRender?.(); // the sun moves on a timer, not on input
     };
     update();
     const id = setInterval(update, 60_000);
-    return () => clearInterval(id);
+    const unsubShift = subscribeDisplayTime(update); // display-time shift moves the sun at once
+    return () => {
+      clearInterval(id);
+      unsubShift();
+    };
   }, [lowMem]);
 
   // ── Moon: real position, real phase ──────────────────────
@@ -1291,7 +1497,6 @@ export default function Globe3D({
     const s = gl.current;
     if (!s.scene) return undefined;
 
-    const MOON_DIST = 12; // world units (camera maxDistance is 8, starfield ~22+)
     const MOON_SIZE = 0.85; // sprite diameter in world units
     const MOON_TEX_SIZE = 512;
 
@@ -1309,7 +1514,7 @@ export default function Globe3D({
     let lastImageBucket = null;
 
     const updatePosition = () => {
-      const pos = getMoonPosition(new Date());
+      const pos = getMoonPosition(displayNow());
       latLonToVec3(pos.lat, pos.lon, MOON_DIST, moon.position);
       s.requestRender?.();
     };
@@ -1363,17 +1568,233 @@ export default function Globe3D({
     updateTexture();
     const posId = setInterval(updatePosition, 60_000);
     const texId = setInterval(updateTexture, 600_000); // checks the hour bucket
+    const unsubMoonShift = subscribeDisplayTime(updatePosition);
 
     return () => {
       alive = false;
       clearInterval(posId);
       clearInterval(texId);
+      unsubMoonShift();
       s.scene?.remove(moon);
       material.map?.dispose();
       material.dispose();
       s.requestRender?.();
     };
   }, [lowMem]);
+
+  // Latest relay target, read by the framing effect without re-running it.
+  const relayTargetRef = useRef(null);
+  relayTargetRef.current = relayTarget;
+
+  // ── EME: DE→Moon→DX legs ─────────────────────────────────
+  // Straight lines in space from each station to the moon sprite's position
+  // (same compressed sublunar placement as the sprite, so the legs meet it).
+  // A leg is solid in the station's marker colour while that station can see
+  // the moon, and dashed red once the moon is below its horizon — the path
+  // then visibly dives through the Earth, which is the point. In low-memory
+  // mode the sprite is skipped, so a plain disc stands in for the moon.
+  useEffect(() => {
+    const s = gl.current;
+    if (!s.scene || !emeMode) return undefined;
+
+    const group = new THREE.Group();
+    s.scene.add(group);
+    const disposables = [];
+
+    const clear = () => {
+      while (group.children.length) {
+        const child = group.children[0];
+        group.remove(child);
+      }
+      disposables.forEach((d) => d.dispose?.());
+      disposables.length = 0;
+    };
+
+    const addLeg = (fromVec, toVec, color, up) => {
+      const geo = new THREE.BufferGeometry().setFromPoints([fromVec, toVec]);
+      const mat = up
+        ? new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.95, depthWrite: false })
+        : new THREE.LineDashedMaterial({
+            color: '#ef4444',
+            dashSize: 0.22,
+            gapSize: 0.14,
+            transparent: true,
+            opacity: 0.6,
+            depthWrite: false,
+          });
+      const line = new THREE.Line(geo, mat);
+      if (!up) line.computeLineDistances();
+      line.frustumCulled = false;
+      group.add(line);
+      disposables.push(geo, mat);
+    };
+
+    const build = () => {
+      clear();
+      const now = displayNow();
+      const viaSat = !!relayTarget && Number.isFinite(relayTarget.lat) && Number.isFinite(relayTarget.lon);
+      let targetVec;
+      let deUp;
+      let dxUp;
+      if (viaSat) {
+        targetVec = latLonToVec3(relayTarget.lat, relayTarget.lon, EARTH_R + (relayTarget.altKm || 0) / 6371);
+        deUp = !!relayTarget.deUp;
+        dxUp = !!relayTarget.dxUp;
+      } else {
+        const moonPos = getMoonPosition(now);
+        targetVec = latLonToVec3(moonPos.lat, moonPos.lon, MOON_DIST);
+        deUp = hasDE && getMoonAzEl(now, lat0, lon0).elevation >= 0;
+        dxUp =
+          Number.isFinite(dxLocation?.lat) &&
+          Number.isFinite(dxLocation?.lon) &&
+          getMoonAzEl(now, dxLocation.lat, dxLocation.lon).elevation >= 0;
+        if (lowMem) {
+          const geo = new THREE.SphereGeometry(0.3, 16, 12);
+          const mat = new THREE.MeshBasicMaterial({ color: '#e6e6f0' });
+          const disc = new THREE.Mesh(geo, mat);
+          disc.position.copy(targetVec);
+          group.add(disc);
+          disposables.push(geo, mat);
+        }
+      }
+
+      // Third-party moonbounce reports: both stations bounce off the same
+      // moon, so each report is two thin legs meeting at the sprite. Capped
+      // and faint so the operator's own DE/DX legs stay the loudest lines.
+      if (!viaSat && emeActivityPaths?.length) {
+        const c = new THREE.Color();
+        const verts = [];
+        const cols = [];
+        emeActivityPaths.slice(0, 60).forEach((r) => {
+          if (![r.aLat, r.aLon, r.bLat, r.bLon].every(Number.isFinite)) return;
+          c.set(getBandColor(parseFloat(r.freqMHz)) || GLOBE_COLORS.bandFallback);
+          const a = latLonToVec3(r.aLat, r.aLon, EARTH_R * MARKER_ALT);
+          const b = latLonToVec3(r.bLat, r.bLon, EARTH_R * MARKER_ALT);
+          verts.push(a.x, a.y, a.z, targetVec.x, targetVec.y, targetVec.z);
+          verts.push(b.x, b.y, b.z, targetVec.x, targetVec.y, targetVec.z);
+          for (let k = 0; k < 4; k++) cols.push(c.r, c.g, c.b);
+        });
+        if (verts.length) {
+          const geo = new THREE.BufferGeometry();
+          geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(verts), 3));
+          geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(cols), 3));
+          const mat = new THREE.LineBasicMaterial({
+            vertexColors: true,
+            transparent: true,
+            opacity: 0.35,
+            depthWrite: false,
+            blending: isDarkBackdrop ? THREE.AdditiveBlending : THREE.NormalBlending,
+          });
+          const lines = new THREE.LineSegments(geo, mat);
+          lines.frustumCulled = false;
+          group.add(lines);
+          disposables.push(geo, mat);
+        }
+      }
+
+      if (hasDE) {
+        addLeg(
+          latLonToVec3(lat0, lon0, EARTH_R * MARKER_ALT),
+          targetVec,
+          cssVarColor('--accent-blue', '#4488ff'),
+          deUp,
+        );
+      }
+      if (Number.isFinite(dxLocation?.lat) && Number.isFinite(dxLocation?.lon)) {
+        addLeg(
+          latLonToVec3(dxLocation.lat, dxLocation.lon, EARTH_R * MARKER_ALT),
+          targetVec,
+          cssVarColor('--accent-cyan', '#00ddff'),
+          dxUp,
+        );
+      }
+      s.requestRender?.();
+    };
+
+    build();
+    // Moon legs drift slowly (one-minute tick); satellite legs rebuild with
+    // every relayTarget update instead, so no timer in that mode.
+    const id = relayTarget ? null : setInterval(build, 60_000);
+    const unsubLegShift = relayTarget ? null : subscribeDisplayTime(build);
+    return () => {
+      unsubLegShift?.();
+      if (id) clearInterval(id);
+      clear();
+      s.scene?.remove(group);
+      s.requestRender?.();
+    };
+    // themeTick: leg colours come from CSS variables. lowMem: scene rebuild.
+    // emeActivityPaths / isDarkBackdrop: third-party report legs.
+  }, [
+    emeMode,
+    hasDE,
+    lat0,
+    lon0,
+    dxLocation?.lat,
+    dxLocation?.lon,
+    themeTick,
+    lowMem,
+    relayTarget,
+    emeActivityPaths,
+    isDarkBackdrop,
+  ]);
+
+  // ── EME: frame Earth + Moon ──────────────────────────────
+  // Orbit around the Earth–Moon midpoint from a point beside the line, tilted
+  // a little above it, so both bodies sit in frame with the legs between them.
+  // Leaving EME mode restores the normal ceiling and an Earth-centred orbit.
+  useEffect(() => {
+    const s = gl.current;
+    if (!s.camera || !s.controls) return;
+    s.controls.maxDistance = emeMode ? EME_CAM_MAX_DISTANCE : CAM_MAX_DISTANCE;
+    if (!emeMode) {
+      s.controls.target.set(0, 0, 0);
+      if (s.camera.position.length() > CAM_MAX_DISTANCE) s.camera.position.setLength(DEFAULT_CAM_DISTANCE);
+      s.controls.update();
+      s.requestRender?.();
+      return;
+    }
+    // The QTH auto-follow re-centres on Earth; it must not fight the framing.
+    userMovedRef.current = true;
+    if (relaySatName) {
+      // Satellite relay: an ordinary Earth-centred orbit above the satellite's
+      // sub-point (LEO — no need to pull back), so DE, satellite and DX all
+      // sit under the camera.
+      const rt = relayTargetRef.current;
+      s.controls.target.set(0, 0, 0);
+      if (rt && Number.isFinite(rt.lat) && Number.isFinite(rt.lon)) {
+        latLonToVec3(rt.lat, rt.lon, DEFAULT_CAM_DISTANCE + 0.6, s.camera.position);
+      } else if (hasDE) {
+        latLonToVec3(lat0, lon0, DEFAULT_CAM_DISTANCE + 0.6, s.camera.position);
+      }
+      s.controls.update();
+      s.requestRender?.();
+      return;
+    }
+    const pos = getMoonPosition(displayNow());
+    const moonDir = latLonToVec3(pos.lat, pos.lon, 1);
+    const up = new THREE.Vector3(0, 1, 0);
+    const side = new THREE.Vector3().crossVectors(moonDir, up);
+    if (side.lengthSq() < 1e-6) side.set(1, 0, 0);
+    side.normalize();
+    const mid = moonDir.clone().multiplyScalar(MOON_DIST / 2);
+    s.controls.target.copy(mid);
+    // Half the Earth–Moon span plus clearance must fit in the narrower of the
+    // two half-extents at the target distance (vertical fov, aspect for width).
+    const halfSpan = MOON_DIST / 2 + EME_FRAME_MARGIN;
+    const tanHalfFov = Math.tan((s.camera.fov * Math.PI) / 360);
+    const aspect = Math.max(0.5, s.camera.aspect || 1);
+    const dist = Math.min(EME_CAM_MAX_DISTANCE - 1, halfSpan / (tanHalfFov * Math.min(aspect, 1.6)));
+    s.camera.position
+      .copy(mid)
+      .addScaledVector(side, dist)
+      .addScaledVector(up, dist * 0.22);
+    s.controls.update();
+    s.requestRender?.();
+    // lowMem: scene rebuild — re-apply to the fresh camera/controls.
+    // relaySatName: re-frame when the relay satellite changes, not per tick.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [emeMode, emeFrameKey, lowMem, relaySatName]);
 
   // ── Trek theme easter egg: the Enterprise on patrol ──────
   // While the LCARS theme is active, a procedural Constitution-class
@@ -1447,6 +1868,126 @@ export default function Globe3D({
       // never disposed, same convention as the satellite archetypes.
     };
   }, [lowMem, themeTick]);
+
+  // ── Christmas easter egg: Santa's sleigh on Christmas Eve ──────
+  // On 24–25 December (UTC) a procedural Santa, sleigh and nine reindeer fly
+  // the route in src/utils/santa.js: launch from the North Pole when it
+  // turns midnight in the first time zone, then westward one zone per hour
+  // through recognisable cities, home after Samoa. Same cost class and
+  // conventions as the Enterprise above (decorative, never picked, skipped
+  // in low-memory mode). santaOn is re-evaluated every minute so the effect
+  // starts and stops on its own at the day boundaries; ?santa=… drives a
+  // simulated clock for demos (see resolveSantaClock).
+  const [santaOn, setSantaOn] = useState(() => getSantaState(resolveSantaClock().nowMs).visible);
+  const [santaInfo, setSantaInfo] = useState(null);
+  useEffect(() => {
+    const check = () => setSantaOn(getSantaState(resolveSantaClock().nowMs).visible);
+    check();
+    const id = setInterval(check, 60_000);
+    return () => clearInterval(id);
+  }, []);
+  useEffect(() => {
+    if (lowMem || !santaOn) {
+      setSantaInfo(null);
+      return undefined;
+    }
+    const s = gl.current;
+    if (!s.scene) return undefined;
+
+    const sleigh = getSantaTemplate().clone();
+    s.scene.add(sleigh);
+
+    const ALT = EARTH_R * 1.045;
+    const SLEIGH_PX = 110; // nose-to-runner length on screen; the sleigh itself is ~1/4 of that
+    const TICK_MS = 50;
+    const INFO_MS = 5_000;
+
+    const pos = new THREE.Vector3();
+    const ahead = new THREE.Vector3();
+    const forward = new THREE.Vector3();
+    const up = new THREE.Vector3();
+    const right = new THREE.Vector3();
+    const basis = new THREE.Matrix4();
+
+    let raf = 0;
+    let last = 0;
+    let lastInfo = 0;
+    const tick = (now) => {
+      raf = requestAnimationFrame(tick);
+      if (now - last < TICK_MS) return;
+      last = now;
+      if (!s.renderer) return;
+
+      const clock = resolveSantaClock();
+      const st = getSantaState(clock.nowMs);
+      sleigh.visible = st.visible;
+      if (!st.visible) return;
+
+      latLonToVec3(st.lat, st.lon, ALT, pos);
+      up.copy(pos).normalize();
+      // Nose along the track: a point half a degree ahead on the current bearing
+      const a = destinationPoint(st, st.heading, 0.5);
+      latLonToVec3(a.lat, a.lon, ALT, ahead);
+      forward.subVectors(ahead, pos);
+      right.crossVectors(up, forward).normalize();
+      forward.crossVectors(right, up).normalize();
+      basis.makeBasis(right, up, forward);
+      sleigh.quaternion.setFromRotationMatrix(basis);
+      // Gentle bob so the team looks airborne rather than pinned
+      pos.addScaledVector(up, 0.004 * Math.sin(now / 350));
+      sleigh.position.copy(pos);
+
+      const h = s.renderer.domElement.clientHeight || 1;
+      const fovK = 2 * Math.tan((s.camera.fov * Math.PI) / 360);
+      sleigh.scale.setScalar((SLEIGH_PX * fovK * s.camera.position.distanceTo(sleigh.position)) / h);
+
+      if (now - lastInfo > INFO_MS) {
+        lastInfo = now;
+        setSantaInfo({
+          phase: st.phase,
+          lastStop: st.lastStop,
+          nextStop: st.nextStop,
+          delivered: st.delivered,
+          simulated: clock.simulated,
+        });
+      }
+      s.requestRender?.();
+    };
+    raf = requestAnimationFrame(tick);
+
+    return () => {
+      cancelAnimationFrame(raf);
+      s.scene?.remove(sleigh);
+      s.requestRender?.();
+      setSantaInfo(null);
+    };
+  }, [lowMem, santaOn]);
+
+  const santaText = useMemo(() => {
+    if (!santaInfo) return '';
+    const presents = formatPresents(santaInfo.delivered);
+    const vars = { stop: santaInfo.lastStop, next: santaInfo.nextStop, presents };
+    const byPhase = {
+      pre: t('santa.pre', {
+        ...vars,
+        defaultValue: 'Santa is loading the sleigh at the North Pole — first stop {{next}}',
+      }),
+      flight: t('santa.flight', {
+        ...vars,
+        defaultValue: 'Santa is over {{stop}} · next stop {{next}} · {{presents}} presents delivered',
+      }),
+      home: t('santa.home', {
+        ...vars,
+        defaultValue: 'Santa is heading home to the North Pole · {{presents}} presents delivered',
+      }),
+      post: t('santa.post', {
+        ...vars,
+        defaultValue: 'Santa is back at the North Pole · {{presents}} presents delivered · Merry Christmas!',
+      }),
+    };
+    const text = byPhase[santaInfo.phase] || '';
+    return santaInfo.simulated ? `${text} (${t('santa.simulated', 'simulated')})` : text;
+  }, [santaInfo, t]);
 
   // ── Plugin overlay layers (Maidenhead / zones / D-RAP / aurora / worked grids) ──────
   // The globe-capable subset of the plugin layers, driven by the same
@@ -1596,21 +2137,14 @@ export default function Globe3D({
     };
   }, [wxradarOverlayOn]);
 
-  // Lightning: own Blitzortung socket (the Leaflet layer's socket never runs
-  // in globe mode). Strikes are buffered and flushed to state every 10 s —
-  // a deliberate cadence compromise between liveness and the globe's
-  // render-on-change design (each flush repaints the whole overlay canvas).
+  // Lightning: the shared Blitzortung feed (utils/lightningFeed.js — the
+  // Leaflet layer hook never mounts in globe mode). Strikes are buffered and
+  // flushed to state every 10 s — a deliberate cadence compromise between
+  // liveness and the globe's render-on-change design (each flush repaints
+  // the whole overlay canvas).
   useEffect(() => {
     if (!lightningOverlayOn) return undefined;
     let alive = true;
-    let ws = null;
-    let serverIdx = 0;
-    const servers = [
-      'wss://ws8.blitzortung.org',
-      'wss://ws7.blitzortung.org',
-      'wss://ws2.blitzortung.org',
-      'wss://ws1.blitzortung.org',
-    ];
     const buffer = [];
     const flush = setInterval(() => {
       if (!alive || !buffer.length) return;
@@ -1620,44 +2154,14 @@ export default function Globe3D({
       buffer.push(...kept);
       setOverlayLightning([...kept]);
     }, 10_000);
-    const connect = () => {
-      if (!alive) return;
-      try {
-        ws = new WebSocket(servers[serverIdx % servers.length]);
-        ws.onopen = () => ws.send(JSON.stringify({ a: 111 }));
-        ws.onmessage = (event) => {
-          try {
-            const data = JSON.parse(lzwDecode(event.data));
-            if (data.time && data.lat != null && data.lon != null) {
-              buffer.push({
-                lat: parseFloat(data.lat),
-                lon: parseFloat(data.lon),
-                timestamp: parseInt(data.time / 1000000, 10),
-              });
-            }
-          } catch {}
-        };
-        ws.onerror = () => {
-          serverIdx++;
-          try {
-            ws.close();
-          } catch {}
-        };
-        ws.onclose = () => {
-          if (alive) setTimeout(connect, 5000);
-        };
-      } catch {
-        serverIdx++;
-        if (alive) setTimeout(connect, 5000);
-      }
-    };
-    connect();
+    const unsubscribe = subscribeStrikes((batch) => {
+      for (const s of batch) buffer.push({ lat: s.lat, lon: s.lon, timestamp: s.timestamp });
+      if (buffer.length > 2000) buffer.splice(0, buffer.length - 2000);
+    });
     return () => {
       alive = false;
       clearInterval(flush);
-      try {
-        ws?.close();
-      } catch {}
+      unsubscribe();
       setOverlayLightning(null);
     };
   }, [lightningOverlayOn]);
@@ -1928,6 +2432,136 @@ export default function Globe3D({
     overlayHistory,
     lowMem,
   ]);
+
+  // ── APRS stations: native points + callsign tags (#1234) ──
+  const aprsLayerState = overlayLayerStates?.aprs;
+  const aprsEnabled = !!aprsLayerState?.enabled;
+  const aprsOpacity = aprsLayerState?.opacity ?? 1;
+  useEffect(() => {
+    const s = gl.current;
+    if (!s.aprsGroup) return;
+    while (s.aprsGroup.children.length) {
+      const child = s.aprsGroup.children.pop();
+      child.geometry?.dispose?.();
+      child.material?.map?.dispose?.();
+      child.material?.dispose?.();
+    }
+    s.aprsData = [];
+    s.aprsLabels = [];
+    const stations = Array.isArray(aprsStations) ? aprsStations : [];
+    if (!aprsEnabled || !stations.length) {
+      s.requestRender?.();
+      return;
+    }
+    const scale = Number(aprsIconScale) > 0 ? Number(aprsIconScale) : 1;
+    const watch = aprsWatchlistCalls;
+    const list = [];
+    for (const st of stations) {
+      const lat = Number(st?.lat);
+      const lon = Number(st?.lon);
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+      const watched = !!(watch?.has?.(st.call) || watch?.has?.(st.ssid));
+      // Same colours as the flat map: amber watched, green RF, cyan internet
+      const color = watched ? '#f59e0b' : st.source === 'local-tnc' ? '#4ade80' : '#22d3ee';
+      list.push({ st, lat, lon, watched, color });
+    }
+    if (!list.length) {
+      s.requestRender?.();
+      return;
+    }
+
+    const positions = new Float32Array(list.length * 3);
+    const colors = new Float32Array(list.length * 3);
+    const sizes = new Float32Array(list.length);
+    const c = new THREE.Color();
+    list.forEach((m, i) => {
+      const v = latLonToVec3(m.lat, m.lon, EARTH_R * MARKER_ALT);
+      positions.set([v.x, v.y, v.z], i * 3);
+      c.set(m.color);
+      colors.set([c.r, c.g, c.b], i * 3);
+      sizes[i] = (m.watched ? 12 : 10) * scale;
+    });
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    geo.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
+    const mat = new THREE.ShaderMaterial({
+      uniforms: {
+        uTex: { value: s.aprsDotTexture },
+        uPixelRatio: { value: s.renderer?.getPixelRatio?.() ?? 1 },
+        uOpacity: { value: aprsOpacity },
+      },
+      vertexShader: /* glsl */ `
+        attribute float size;
+        uniform float uPixelRatio;
+        varying vec3 vColor;
+        void main() {
+          vColor = color;
+          gl_PointSize = size * uPixelRatio;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: /* glsl */ `
+        uniform sampler2D uTex;
+        uniform float uOpacity;
+        varying vec3 vColor;
+        void main() {
+          vec4 t = texture2D(uTex, gl_PointCoord);
+          if (t.a < 0.5) discard;
+          // White disc takes the station colour; the baked black rim stays black
+          gl_FragColor = vec4(vColor * t.rgb, uOpacity);
+          #include <colorspace_fragment>
+        }
+      `,
+      transparent: true,
+      vertexColors: true,
+      depthWrite: false,
+    });
+    const points = new THREE.Points(geo, mat);
+    points.name = 'aprs';
+    points.frustumCulled = false;
+    s.aprsGroup.add(points);
+    s.aprsData = list;
+
+    if (showAPRSLabels) {
+      const dpr = Math.min(2, s.renderer?.getPixelRatio?.() ?? 1);
+      const fontPx = Math.round(11 * scale);
+      for (const m of list.slice(0, APRS_LABEL_MAX)) {
+        const text = String(m.st.ssid || m.st.call || '');
+        if (!text) continue;
+        const cnv = document.createElement('canvas');
+        const ctx = cnv.getContext('2d');
+        const font = `600 ${fontPx * dpr}px monospace`;
+        ctx.font = font;
+        const pad = 3 * dpr;
+        cnv.width = Math.ceil(ctx.measureText(text).width + pad * 2);
+        cnv.height = Math.ceil(fontPx * dpr * 1.4);
+        ctx.font = font;
+        ctx.textBaseline = 'middle';
+        ctx.lineWidth = 3 * dpr;
+        ctx.strokeStyle = 'rgba(0,0,0,0.9)';
+        ctx.strokeText(text, pad, cnv.height / 2);
+        ctx.fillStyle = m.color;
+        ctx.fillText(text, pad, cnv.height / 2);
+        const tex = new THREE.CanvasTexture(cnv);
+        tex.colorSpace = THREE.SRGBColorSpace;
+        const sp = new THREE.Sprite(
+          new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, opacity: aprsOpacity }),
+        );
+        sp.position.copy(latLonToVec3(m.lat, m.lon, EARTH_R * MARKER_ALT));
+        const wPx = cnv.width / dpr;
+        const hPx = cnv.height / dpr;
+        // Anchor the tag's left edge just right of the dot
+        const dotPx = (m.watched ? 12 : 10) * scale;
+        sp.center.set(-(dotPx / 2 + 2) / wPx, 0.5);
+        sp.userData = { wPx, hPx };
+        sp.frustumCulled = false;
+        s.aprsGroup.add(sp);
+        s.aprsLabels.push(sp);
+      }
+    }
+    s.requestRender?.();
+  }, [aprsEnabled, aprsOpacity, aprsStations, aprsWatchlistCalls, showAPRSLabels, aprsIconScale, lowMem]);
 
   // ── Aircraft: native 3D models ───────────────────────────
   // One InstancedMesh of flat airliner silhouettes (one draw call for
@@ -2220,6 +2854,14 @@ export default function Globe3D({
     // lowMem: scene rebuild — repopulate the fresh overlay group.
   }, [markers, arcs, lat0, lon0, dxLocation, themeTick, showDeDxMarkers, isDarkBackdrop, lowMem]);
 
+  // Relay mode draws only the relay satellite (the rest are one click away
+  // in the layout's candidate list) and always shows its footprint.
+  const globeSatellites = useMemo(
+    () => (relaySatName ? (satellites || []).filter((sat) => sat.name === relaySatName) : satellites),
+    [satellites, relaySatName],
+  );
+  const isSatSelected = (name) => selectedSats.includes(name) || name === relaySatName;
+
   // ── Satellites ───────────────────────────────────────────
   // Rendered from the same position/track data the Leaflet layer consumes, so
   // both projections agree. The one thing 3D adds for free is honesty about
@@ -2246,13 +2888,13 @@ export default function Globe3D({
     // a group that has since been cleared.
     s.satModelToken = (s.satModelToken || 0) + 1;
 
-    if (!satellitesEnabled || !satellites?.length) return;
+    if (!satellitesEnabled || !globeSatellites?.length) return;
 
     const accentCyan = cssVarColor('--accent-cyan', '#00ddff');
     const accentGreen = cssVarColor('--accent-green', '#00ff88');
     const accentAmber = cssVarColor('--accent-amber', '#ffb432');
     const blending = isDarkBackdrop ? THREE.AdditiveBlending : THREE.NormalBlending;
-    const sats = satellites.filter((sat) => Number.isFinite(sat?.lat) && Number.isFinite(sat?.lon));
+    const sats = globeSatellites.filter((sat) => Number.isFinite(sat?.lat) && Number.isFinite(sat?.lon));
     if (!sats.length) return;
 
     // Dots at true altitude, constant screen size like the spot markers.
@@ -2272,7 +2914,7 @@ export default function Globe3D({
       colors[i * 3] = c.r;
       colors[i * 3 + 1] = c.g;
       colors[i * 3 + 2] = c.b;
-      sizes[i] = selectedSats.includes(sat.name) ? 13 : 8;
+      sizes[i] = isSatSelected(sat.name) ? 13 : 8;
     });
 
     const geo = new THREE.BufferGeometry();
@@ -2360,7 +3002,7 @@ export default function Globe3D({
         obj.up.copy(pos).normalize();
         obj.lookAt(pos.clone().add(forward.normalize()));
         obj.visible = false; // renderFrame owns visibility via the LOD gate
-        obj.userData.satSelected = selectedSats.includes(sat.name);
+        obj.userData.satSelected = isSatSelected(sat.name);
         s.satGroup.add(obj);
         s.satModels.push(obj);
       };
@@ -2389,7 +3031,7 @@ export default function Globe3D({
     }
 
     sats.forEach((sat) => {
-      const isSelected = selectedSats.includes(sat.name);
+      const isSelected = isSatSelected(sat.name);
       const altR = Math.max(1 + (Number.isFinite(sat.alt) ? sat.alt : 0) / 6371, MARKER_ALT);
 
       // Nadir line — makes the altitude legible against the ground track.
@@ -2428,18 +3070,30 @@ export default function Globe3D({
           fade[i * 3 + 2] = base.b * k;
         }
         pastGeo.setAttribute('color', new THREE.BufferAttribute(fade, 3));
-        s.satGroup.add(
-          new THREE.Line(
-            pastGeo,
-            new THREE.LineBasicMaterial({
-              vertexColors: true,
-              transparent: true,
-              opacity: isSelected ? 0.9 : 0.25,
-              blending,
-              depthWrite: false,
-            }),
-          ),
+        // Stale element sets (Settings → Satellites → max TLE age) draw the
+        // whole orbit dashed, matching the flat map.
+        const pastLine = new THREE.Line(
+          pastGeo,
+          sat.tleStale
+            ? new THREE.LineDashedMaterial({
+                vertexColors: true,
+                dashSize: 0.025,
+                gapSize: 0.035,
+                transparent: true,
+                opacity: isSelected ? 0.9 : 0.25,
+                blending,
+                depthWrite: false,
+              })
+            : new THREE.LineBasicMaterial({
+                vertexColors: true,
+                transparent: true,
+                opacity: isSelected ? 0.9 : 0.25,
+                blending,
+                depthWrite: false,
+              }),
         );
+        if (sat.tleStale) pastLine.computeLineDistances();
+        s.satGroup.add(pastLine);
 
         const leadPts = sat.track.slice(mid).map(toVec);
         const leadGeo = new THREE.BufferGeometry().setFromPoints(leadPts);
@@ -2458,7 +3112,7 @@ export default function Globe3D({
         s.satGroup.add(lead);
       }
 
-      // Footprint ring for selected satellites — green when workable from DE.
+      // Footprint ring for selected globeSatellites — green when workable from DE.
       if (isSelected && Number.isFinite(sat.footprintRadius) && sat.footprintRadius > 0) {
         const ringPts = footprintRingPoints(sat.lat, sat.lon, sat.footprintRadius / 6371, EARTH_R * 1.003);
         const footprintColor = sat.isVisible ? accentGreen : accentCyan;
@@ -2500,7 +3154,7 @@ export default function Globe3D({
     });
     // lowMem: scene rebuild — repopulate the fresh satellite group.
     s.requestRender?.();
-  }, [satellites, satellitesEnabled, selectedSats, themeTick, isDarkBackdrop, lowMem]);
+  }, [globeSatellites, satellitesEnabled, selectedSats, themeTick, isDarkBackdrop, lowMem, relaySatName]);
 
   // ── Pointer interaction: hover tooltip + click ───────────
   useEffect(() => {
@@ -2564,6 +3218,25 @@ export default function Globe3D({
             .filter(Boolean)
             .join(' · '),
           color: sat.color || '#00ddff',
+        });
+        return;
+      }
+
+      const aprsObj = s.aprsGroup?.children.find((c) => c.name === 'aprs');
+      const aprsHit = nearest(aprsObj ? s.raycaster.intersectObject(aprsObj, false) : []);
+      if (aprsHit && s.aprsData?.[aprsHit.index]) {
+        const { st, color } = s.aprsData[aprsHit.index];
+        el.style.cursor = 'pointer';
+        setTooltip({
+          x: ev.clientX - rect.left,
+          y: ev.clientY - rect.top,
+          label: st.ssid || st.call,
+          kind: '📡 APRS',
+          detail: [st.source === 'local-tnc' ? 'RF' : 'APRS-IS', st.cleanComment || st.comment || '']
+            .filter(Boolean)
+            .join(' · ')
+            .slice(0, 120),
+          color,
         });
         return;
       }
@@ -2656,7 +3329,13 @@ export default function Globe3D({
   const centerOn = useCallback((lat, lon) => {
     const s = gl.current;
     if (!s.camera || !s.controls) return;
-    const dist = s.camera.position.length();
+    let dist = s.camera.position.length();
+    // EME framing orbits the Earth–Moon midpoint; centring on a station means
+    // "look at Earth again", so drop back to an Earth-centred orbit first.
+    if (s.controls.target.lengthSq() > 0) {
+      s.controls.target.set(0, 0, 0);
+      dist = DEFAULT_CAM_DISTANCE;
+    }
     latLonToVec3(lat, lon, dist, s.camera.position);
     s.controls.update();
     s.requestRender?.();
@@ -2735,6 +3414,33 @@ export default function Globe3D({
           }}
         >
           {t('map.loadingTiles', 'Loading globe')} {Math.round(textureProgress * 100)}%
+        </div>
+      )}
+
+      {/* Christmas easter egg status line — see the Santa effect above */}
+      {santaText && !hideUi && (
+        <div
+          style={{
+            position: 'absolute',
+            top: '48px',
+            right: '10px',
+            zIndex: 1100,
+            maxWidth: 'calc(100% - 120px)', // leave the control column clear
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+            color: 'var(--text-primary)',
+            fontFamily: 'var(--font-mono)',
+            fontSize: '11px',
+            background: 'var(--bg-panel)',
+            border: '1px solid var(--border-color)',
+            borderRadius: '6px',
+            padding: '5px 10px',
+            pointerEvents: 'none',
+          }}
+          title={t('santa.title', 'Santa tracker')}
+        >
+          🎅 {santaText}
         </div>
       )}
 

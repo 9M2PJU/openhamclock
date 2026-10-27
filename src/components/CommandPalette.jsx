@@ -35,10 +35,12 @@ const LAYOUT_IDS = [
   'dockable',
   'emcomm',
   'contest',
+  'eme',
   'activator',
   'hunter',
   'weather',
   'airtraffic',
+  'mobile',
 ];
 const SETTINGS_TAB_IDS = [
   'station',

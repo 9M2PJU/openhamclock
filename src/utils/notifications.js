@@ -64,8 +64,7 @@ export function formatAlertBody(feedId, item) {
     case 'pota':
     case 'sota':
     case 'wwff':
-    case 'wwbota':
-    case 'canparks': {
+    case 'wwbota': {
       // Hook-normalized spots: { call, ref, freq (MHz string), mode }
       const freq = item.freq || item.frequency || '';
       const call = item.call || item.activator || item.callsign || '';
@@ -93,6 +92,14 @@ export function formatAlertBody(feedId, item) {
         const detail = [item.freq, item.mode].filter(Boolean).join(' ');
         parts.push(detail ? `${call} spotted: ${detail}` : `${call} spotted`);
       }
+      break;
+    }
+    case 'hamalert': {
+      // HamAlert alert: { call, freq (MHz string), mode, source, comment }
+      const call = item.call || '';
+      const detail = [item.freq, item.mode, item.source ? `(${item.source})` : ''].filter(Boolean).join(' ');
+      if (call) parts.push(detail ? `${call} ${detail}` : call);
+      if (typeof item.comment === 'string' && item.comment.trim()) parts.push(item.comment.trim());
       break;
     }
     case 'contest-start': {
@@ -126,16 +133,48 @@ export function formatAlertBody(feedId, item) {
       }
       break;
     }
+    case 'sat-alerts': {
+      // hams.at alerted pass: { name, callsign, aos (ms), grids[], maxElevation }
+      const name = item.name || '';
+      const who = item.callsign || '';
+      if (name || who) {
+        const aosMs = typeof item.aos === 'number' ? item.aos : Date.parse(item.aos || '');
+        const head = [who, name ? `on ${name}` : ''].filter(Boolean).join(' ');
+        if (Number.isFinite(aosMs)) {
+          const mins = Math.max(0, Math.round((aosMs - Date.now()) / 60000));
+          parts.push(mins > 0 ? `${head} in ${mins} min` : `${head} now`);
+        } else {
+          parts.push(head);
+        }
+        if (Array.isArray(item.grids) && item.grids.length) parts.push(item.grids.join(' '));
+      }
+      break;
+    }
+    case 'grid-change': {
+      // Rover: { grid, from }
+      if (item.grid) parts.push(item.from ? `Entered ${item.grid} (from ${item.from})` : `Entered ${item.grid}`);
+      break;
+    }
     case 'band-openings': {
-      // Opening entry: { band, from_continent, to_continent, shortCount, factor }
+      // Opening entry: { band, from_continent, to_continent | to_zone, shortCount, factor }
       const band = item.band || '';
-      const path = item.from_continent && item.to_continent ? `${item.from_continent}→${item.to_continent}` : '';
+      const to = item.to_zone != null ? `zone ${item.to_zone}` : item.to_continent || '';
+      const path = item.from_continent && to ? `${item.from_continent}→${to}` : '';
       if (band || path) {
         const main = [band, 'opening', path].filter(Boolean).join(' ');
         const stats = [];
         if (item.shortCount != null) stats.push(`${item.shortCount} spots`);
         if (item.factor != null) stats.push(`${item.factor}x baseline`);
         parts.push(stats.length ? `${main} (${stats.join(', ')})` : main);
+      }
+      break;
+    }
+    case 'beacon-opening': {
+      // Measured beacon opening: { beacon, band, snrDb }
+      const beacon = item.beacon || '';
+      if (beacon) {
+        const snr = Number.isFinite(item.snrDb) ? `${item.snrDb >= 0 ? '+' : ''}${Math.round(item.snrDb)} dB` : '';
+        parts.push([item.band, beacon, 'heard', snr].filter(Boolean).join(' '));
       }
       break;
     }
@@ -159,9 +198,28 @@ export function formatAlertBody(feedId, item) {
       if (main) parts.push(main);
       break;
     }
-    case 'lightning': {
-      const dist = item.distance != null ? `${Math.round(item.distance)} km` : '';
-      if (dist) parts.push(dist);
+    case 'lightning-guard': {
+      // Lightning guard: { level, distance ("12 km NE"), rate (strikes/10 min), relay }
+      if (item.level === 'clear') parts.push('All clear');
+      else if (item.distance) parts.push(`Nearest strike ${item.distance}`);
+      if (item.level !== 'clear' && Number.isFinite(item.count) && item.count > 0) {
+        const win = Number.isFinite(item.windowMin) ? item.windowMin : 10;
+        parts.push(`${item.count} strike${item.count === 1 ? '' : 's'} in ${win} min`);
+      }
+      if (item.relay === true) parts.push('antenna relay engaged');
+      else if (item.relay === false) parts.push('antenna relay released');
+      break;
+    }
+    case 'opportunity': {
+      // Opportunity row: { call, freq (MHz), band, mode, needs: ['dxcc', ...], reliability }
+      const call = item.call || '';
+      if (call) {
+        const detail = [item.freq, item.mode].filter(Boolean).join(' ');
+        parts.push(detail ? `${call} ${detail}` : call);
+        const needs = (item.needs || []).map((n) => `new ${n === 'dxcc' ? 'DXCC' : n}`).join(', ');
+        if (needs) parts.push(needs);
+        if (item.reliability != null) parts.push(`${Math.round(item.reliability)}% predicted`);
+      }
       break;
     }
     default:
@@ -208,7 +266,6 @@ export async function showAlertNotification({ feedId, title, body = '', tag } = 
 
   // Fallback: page-owned notification.
   try {
-    // eslint-disable-next-line no-new
     new api(title, options);
   } catch {
     // Some platforms throw for page-owned notifications — stay silent.

@@ -61,6 +61,8 @@ Release notes live in the app itself: click the version number in the header to 
 docker run -d -p 3000:3000 --name openhamclock ghcr.io/accius/openhamclock:latest
 ```
 
+**Prebuilt executable** (no Node.js, no Docker): download the file for your OS from the **[latest release](https://github.com/accius/openhamclock/releases/latest)**, extract, run. Windows, macOS (Apple Silicon and Intel), Linux, and Raspberry Pi (64-bit) — see the [Quick Start guide](docs/QUICKSTART.md#prebuilt-executable-no-nodejs-needed).
+
 **Self-host from source** (Node.js 22 LTS recommended):
 
 ```bash
@@ -88,15 +90,16 @@ npm run dev
 
 ## Deployment Matrix
 
-| Platform                | Method                                                         | Guide                                                             |
-| ----------------------- | -------------------------------------------------------------- | ----------------------------------------------------------------- |
-| Nothing (hosted)        | [openhamclock.com](https://openhamclock.com)                   | [Quick Start](docs/QUICKSTART.md)                                 |
-| Docker / Portainer      | `docker compose up -d` or `ghcr.io/accius/openhamclock:latest` | [docs/DOCKER.md](docs/DOCKER.md)                                  |
-| Linux / macOS / FreeBSD | `scripts/setup.sh` (add `--service` for systemd on Linux)      | [Quick Start](docs/QUICKSTART.md#linux--macos--freebsd-one-liner) |
-| Raspberry Pi (3B–5)     | `scripts/setup-pi.sh` (`--kiosk` for a dedicated display)      | [Quick Start](docs/QUICKSTART.md#raspberry-pi)                    |
-| Windows                 | `scripts/setup-windows.ps1`                                    | [Quick Start](docs/QUICKSTART.md#windows)                         |
-| Railway (cloud)         | `railway up` or connect the GitHub repo                        | [Quick Start](docs/QUICKSTART.md#railway-cloud)                   |
-| Desktop app             | `npm run electron` (experimental)                              | —                                                                 |
+| Platform                | Method                                                                                         | Guide                                                                  |
+| ----------------------- | ---------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| Nothing (hosted)        | [openhamclock.com](https://openhamclock.com)                                                   | [Quick Start](docs/QUICKSTART.md)                                      |
+| Prebuilt executable     | Download from [Releases](https://github.com/accius/openhamclock/releases/latest), extract, run | [Quick Start](docs/QUICKSTART.md#prebuilt-executable-no-nodejs-needed) |
+| Docker / Portainer      | `docker compose up -d` or `ghcr.io/accius/openhamclock:latest`                                 | [docs/DOCKER.md](docs/DOCKER.md)                                       |
+| Linux / macOS / FreeBSD | `scripts/setup.sh` (add `--service` for systemd on Linux)                                      | [Quick Start](docs/QUICKSTART.md#linux--macos--freebsd-one-liner)      |
+| Raspberry Pi (3B–5)     | `scripts/setup-pi.sh` (`--kiosk` for a dedicated display)                                      | [Quick Start](docs/QUICKSTART.md#raspberry-pi)                         |
+| Windows                 | `scripts/setup-windows.ps1`                                                                    | [Quick Start](docs/QUICKSTART.md#windows)                              |
+| Railway (cloud)         | `railway up` or connect the GitHub repo                                                        | [Quick Start](docs/QUICKSTART.md#railway-cloud)                        |
+| Desktop app             | `npm run electron` (experimental)                                                              | —                                                                      |
 
 **Hardware:** the server side is light (~100–150 MB RAM); it's the browser rendering the map that works a machine. A Pi 4 (2 GB+) or Pi 5 makes a smooth kiosk; a Pi 3B+ is best as a headless server or with Low Memory Mode enabled in Settings. The 3D globe wants WebGL — without it the app falls back to the flat map automatically.
 
@@ -207,7 +210,7 @@ Full codebase map: **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**
 ## Updating
 
 - **Hosted site** — nothing to do; a toast appears when a new version deploys.
-- **Git installs** — `./scripts/update.sh` (Linux/macOS/Pi) or `.\scripts\update.ps1` (Windows), then restart. Local installs also get an **UPDATE** button in the header. Optional auto-update via `AUTO_UPDATE_ENABLED=true`.
+- **Git installs** — `./scripts/update.sh` (Linux/macOS/Pi) or `.\scripts\update.ps1` (Windows), then restart. Local installs also get an **UPDATE** button in the header. Optional auto-update via `AUTO_UPDATE_ENABLED=true`. If an update was cut off part way (SSH session dropped, out of memory) and the server will not start, `./scripts/update.sh --repair` reinstalls the dependencies and rebuilds; the script also offers this itself when it finds the install incomplete.
 - **Docker** — `docker compose pull && docker compose up -d`.
 - **Railway** — push to the connected repo, or `railway up`.
 
@@ -278,6 +281,7 @@ Open pull requests against **`Staging`**, not `main`. Read **[CONTRIBUTING.md](C
 - **NASA** — Imagery, EONET hazards data, and the ISS 3D model (NASA/VTAD)
 - **KC2G / GIRO** — Ionospheric sounding data ([acknowledgements](https://giro.uml.edu/didbase/acknowledgements.html))
 - **AD1C** — cty.dat DXCC entity database
+- **Hessu, OH7LZB / aprs.fi** — [aprs-deviceid](https://github.com/aprsorg/aprs-deviceid) APRS device identification table (CC BY-SA 2.0)
 - **NG3K** — DXpedition listing
 - **DXNews.com / DX-World** — DX news headlines
 - **WA7BNM** — Contest calendar data

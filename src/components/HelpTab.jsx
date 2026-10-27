@@ -15,6 +15,26 @@ import { useTranslation } from 'react-i18next';
 import MarkdownView, { extractHeadings } from './MarkdownView.jsx';
 
 const MANUAL_GITHUB_URL = 'https://github.com/accius/openhamclock/blob/main/docs/MANUAL.md';
+// Screenshot fallback for an image the bundle does not carry.
+const MANUAL_IMAGE_RAW_BASE = 'https://raw.githubusercontent.com/accius/openhamclock/main/docs/';
+
+// The manual's screenshots ship inside the build (hashed assets), so the
+// Help tab works self-hosted and offline, and Staging previews show the
+// Staging screenshots rather than whatever main has. Eager only for the
+// URL strings — the JPEGs themselves load when scrolled into view.
+const MANUAL_IMAGES = import.meta.glob('../../docs/images/manual/*.{jpg,jpeg,png,webp}', {
+  eager: true,
+  query: '?url',
+  import: 'default',
+});
+const manualImageByName = Object.fromEntries(
+  Object.entries(MANUAL_IMAGES).map(([path, url]) => [path.split('/').pop(), url]),
+);
+export const resolveManualImage = (src) => {
+  if (!src || /^[a-z][a-z0-9+.-]*:/i.test(src) || src.startsWith('//')) return src;
+  const name = src.split('/').pop();
+  return manualImageByName[name] || MANUAL_IMAGE_RAW_BASE + src.replace(/^\.\//, '');
+};
 const NARROW_WIDTH = 700;
 
 // Cache across opens — the manual never changes within a session.
@@ -207,7 +227,7 @@ export const HelpTab = ({ anchor }) => {
 
         {/* Rendered manual */}
         <div ref={containerRef} style={{ flex: 1, minWidth: 0 }}>
-          <MarkdownView markdown={manual} />
+          <MarkdownView markdown={manual} resolveImage={resolveManualImage} />
 
           {/* Footer link to the GitHub docs */}
           <div

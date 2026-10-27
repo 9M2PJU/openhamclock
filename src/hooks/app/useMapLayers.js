@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { syncAllSettingsToServer } from '../../utils';
 
+export const APRS_ICON_SCALES = [0.75, 1, 1.25, 1.5, 2];
+
 export default function useMapLayers() {
   const defaults = {
     showDeDxMarkers: true,
@@ -14,8 +16,6 @@ export default function useMapLayers() {
     showSOTALabels: false,
     showWWBOTA: false,
     showWWBOTALabels: false,
-    showCANParks: false,
-    showCANParksLabels: false,
     showSatellites: false,
     showPSKReporter: true,
     showPSKPaths: true,
@@ -23,7 +23,13 @@ export default function useMapLayers() {
     showDXNews: true,
     showRotatorBearing: false,
     showAPRS: true,
+    showAPRSLabels: false,
+    aprsIconScale: 1, // APRS symbol + tag size multiplier (#1214)
     showMeshCom: true,
+    // Spot marker labels (DX cluster / activations): 'none' | 'call' | 'prefix' | 'freq',
+    // and the HamClock "Min label dist" — labels closer to DE than this (km) are hidden.
+    spotLabelMode: 'call',
+    spotLabelMinKm: 0,
   };
 
   const [mapLayers, setMapLayers] = useState(() => {
@@ -87,11 +93,6 @@ export default function useMapLayers() {
     () => setMapLayers((prev) => ({ ...prev, showWWBOTALabels: !prev.showWWBOTALabels })),
     [],
   );
-  const toggleCANParks = useCallback(() => setMapLayers((prev) => ({ ...prev, showCANParks: !prev.showCANParks })), []);
-  const toggleCANParksLabels = useCallback(
-    () => setMapLayers((prev) => ({ ...prev, showCANParksLabels: !prev.showCANParksLabels })),
-    [],
-  );
   const toggleSatellites = useCallback(
     () => setMapLayers((prev) => ({ ...prev, showSatellites: !prev.showSatellites })),
     [],
@@ -108,7 +109,38 @@ export default function useMapLayers() {
     [],
   );
   const toggleAPRS = useCallback(() => setMapLayers((prev) => ({ ...prev, showAPRS: !prev.showAPRS })), []);
+  const toggleAPRSLabels = useCallback(
+    () => setMapLayers((prev) => ({ ...prev, showAPRSLabels: !prev.showAPRSLabels })),
+    [],
+  );
+  const setAprsIconScale = useCallback(
+    (v) => setMapLayers((prev) => ({ ...prev, aprsIconScale: Math.min(2, Math.max(0.75, Number(v) || 1)) })),
+    [],
+  );
+  // Click-to-cycle: 1 → 1.25 → 1.5 → 2 → 0.75 → 1 …
+  const cycleAprsIconScale = useCallback(
+    () =>
+      setMapLayers((prev) => {
+        const steps = APRS_ICON_SCALES;
+        const i = steps.indexOf(Number(prev.aprsIconScale) || 1);
+        return { ...prev, aprsIconScale: steps[(i + 1) % steps.length] };
+      }),
+    [],
+  );
   const toggleMeshCom = useCallback(() => setMapLayers((prev) => ({ ...prev, showMeshCom: !prev.showMeshCom })), []);
+  const setSpotLabelMode = useCallback(
+    (mode) =>
+      setMapLayers((prev) => ({
+        ...prev,
+        spotLabelMode: ['none', 'call', 'prefix', 'freq'].includes(mode) ? mode : 'call',
+      })),
+    [],
+  );
+  const setSpotLabelMinKm = useCallback(
+    (km) =>
+      setMapLayers((prev) => ({ ...prev, spotLabelMinKm: Math.max(0, Math.min(20000, Math.round(Number(km) || 0))) })),
+    [],
+  );
 
   return {
     mapLayers,
@@ -124,8 +156,6 @@ export default function useMapLayers() {
     toggleSOTALabels,
     toggleWWBOTA,
     toggleWWBOTALabels,
-    toggleCANParks,
-    toggleCANParksLabels,
     toggleSatellites,
     togglePSKReporter,
     togglePSKPaths,
@@ -133,6 +163,11 @@ export default function useMapLayers() {
     toggleDXNews,
     toggleRotatorBearing,
     toggleAPRS,
+    toggleAPRSLabels,
+    setAprsIconScale,
+    cycleAprsIconScale,
     toggleMeshCom,
+    setSpotLabelMode,
+    setSpotLabelMinKm,
   };
 }

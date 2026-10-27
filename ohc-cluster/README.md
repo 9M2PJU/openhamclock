@@ -17,7 +17,7 @@ No DXSpider/AR-Cluster nodes are scraped. That's the point.
 | SOTA           | Summit spots          | api2.sota.org.uk JSON, 1/min                              |
 | WWFF           | Park spots            | spots.wwff.co JSON, 1/min (park lat/lon → grid)           |
 | Parks n Peaks  | VK/ZL park+summit     | parksnpeaks.org JSON, 1/min                               |
-| DX Summit      | Human cluster spots   | dxsummit.fi JSON API, 1/min                               |
+| DX Summit      | Human cluster spots   | dxsummit.fi JSON API, 1/min — opt-in, off by default      |
 | dxspider-proxy | Human cluster spots   | our own DXSpider client node's feed, 1/min                |
 | OHC users      | Human spots           | telnet `dx` command or `POST /api/dxcluster/spot`         |
 
@@ -58,17 +58,18 @@ send that email.
 
 ## Environment
 
-| Var                                                                                                        | Default          | Purpose                                                             |
-| ---------------------------------------------------------------------------------------------------------- | ---------------- | ------------------------------------------------------------------- |
-| `HTTP_PORT`                                                                                                | 3002             | HTTP API port (falls back to `PORT` unless that is the telnet port) |
-| `TELNET_PORT`                                                                                              | 7300             | telnet cluster port                                                 |
-| `CALLSIGN`                                                                                                 | K0CJH            | RBN login callsign (must be valid)                                  |
-| `NODE_CALL`                                                                                                | K0CJH-2          | node callsign shown to telnet users                                 |
-| `RBN_ENABLED`                                                                                              | 1                | set `0` to disable RBN ingest                                       |
-| `HAMQTH_ENABLED`                                                                                           | 1                | set `0` to disable HamQTH polling                                   |
-| `POTA_ENABLED` / `SOTA_ENABLED` / `DXSUMMIT_ENABLED` / `DXSPIDER_ENABLED` / `WWFF_ENABLED` / `PNP_ENABLED` | 1                | set `0` to disable that human-spot poller                           |
-| `DXSPIDER_PROXY_URL`                                                                                       | production proxy | base URL of our dxspider-proxy feed                                 |
-| `LOG_LEVEL`                                                                                                | info             | `debug` / `info` / `warn`                                           |
+| Var                                                                                   | Default          | Purpose                                                             |
+| ------------------------------------------------------------------------------------- | ---------------- | ------------------------------------------------------------------- |
+| `HTTP_PORT`                                                                           | 3002             | HTTP API port (falls back to `PORT` unless that is the telnet port) |
+| `TELNET_PORT`                                                                         | 7300             | telnet cluster port                                                 |
+| `CALLSIGN`                                                                            | K0CJH            | RBN login callsign (must be valid)                                  |
+| `NODE_CALL`                                                                           | K0CJH-2          | node callsign shown to telnet users                                 |
+| `RBN_ENABLED`                                                                         | 1                | set `0` to disable RBN ingest                                       |
+| `HAMQTH_ENABLED`                                                                      | 1                | set `0` to disable HamQTH polling                                   |
+| `POTA_ENABLED` / `SOTA_ENABLED` / `DXSPIDER_ENABLED` / `WWFF_ENABLED` / `PNP_ENABLED` | 1                | set `0` to disable that human-spot poller                           |
+| `DXSUMMIT_ENABLED`                                                                    | 0                | set `1` to enable dxsummit.fi polling (off by default)              |
+| `DXSPIDER_PROXY_URL`                                                                  | production proxy | base URL of our dxspider-proxy feed                                 |
+| `LOG_LEVEL`                                                                           | info             | `debug` / `info` / `warn`                                           |
 
 ## Tests
 

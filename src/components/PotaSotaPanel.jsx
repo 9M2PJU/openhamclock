@@ -1,6 +1,6 @@
 /**
  * PotaSotaPanel Component
- * Tabbed panel that switches between POTA, WWFF, SOTA, WWBOTA and CANParks views.
+ * Tabbed panel that switches between POTA, WWFF, SOTA and WWBOTA views.
  * Used in Classic and Modern layouts. In Dockable layout, each is a separate panel.
  */
 import React, { useState, useRef } from 'react';
@@ -9,9 +9,8 @@ import { POTAPanel } from './POTAPanel.jsx';
 import { WWFFPanel } from './WWFFPanel.jsx';
 import { SOTAPanel } from './SOTAPanel.jsx';
 import { WWBOTAPanel } from './WWBOTAPanel.jsx';
-import { CANParksPanel } from './CANParksPanel.jsx';
 
-const TABS = ['pota', 'wwff', 'sota', 'wwbota', 'canparks'];
+const TABS = ['pota', 'wwff', 'sota', 'wwbota'];
 
 export const PotaSotaPanel = ({
   potaData,
@@ -69,20 +68,6 @@ export const PotaSotaPanel = ({
   wwbotaFilters,
   setShowWwbotaFilters,
   filteredWwbotaSpots,
-
-  canparksData,
-  canparksLoading,
-  canparksLastUpdated,
-  canparksLastChecked,
-  showCANParks,
-  onToggleCANParks,
-  showCANParksLabels,
-  toggleCANParksLabels,
-  onCANParksSpotClick,
-  onCANParksHoverSpot,
-  canparksFilters,
-  setShowCanparksFilters,
-  filteredCanparksSpots,
 }) => {
   const potaSotaTabRefs = useRef({});
   const [activeTab, setActiveTab] = useState(() => {
@@ -101,8 +86,8 @@ export const PotaSotaPanel = ({
     } catch {}
   };
 
-  const tabColors = { pota: '#44cc44', wwff: '#a3f3a3', sota: '#ff9632', wwbota: '#8b7fff', canparks: '#ff6b6b' };
-  const tabShapes = { pota: '▲', wwff: '▼', sota: '◆', wwbota: '■', canparks: '●' };
+  const tabColors = { pota: '#44cc44', wwff: '#a3f3a3', sota: '#ff9632', wwbota: '#8b7fff' };
+  const tabShapes = { pota: '▲', wwff: '▼', sota: '◆', wwbota: '■' };
 
   const tabStyle = (tab) => ({
     flex: 1,
@@ -111,7 +96,7 @@ export const PotaSotaPanel = ({
     border: 'none',
     borderBottom: activeTab === tab ? `2px solid ${tabColors[tab]}` : '2px solid transparent',
     color: activeTab === tab ? tabColors[tab] : '#666',
-    fontSize: tab === 'wwbota' || tab === 'canparks' ? '9px' : '10px',
+    fontSize: tab === 'wwbota' ? '9px' : '10px',
     fontFamily: 'var(--font-mono)',
     fontWeight: activeTab === tab ? '700' : '400',
     cursor: 'pointer',
@@ -140,7 +125,6 @@ export const PotaSotaPanel = ({
   const potaStaleMin = potaLastUpdated ? Math.floor((Date.now() - potaLastUpdated) / 60000) : null;
   const sotaStaleMin = sotaLastUpdated ? Math.floor((Date.now() - sotaLastUpdated) / 60000) : null;
   const wwffStaleMin = wwffLastUpdated ? Math.floor((Date.now() - wwffLastUpdated) / 60000) : null;
-  const canparksStaleMin = canparksLastUpdated ? Math.floor((Date.now() - canparksLastUpdated) / 60000) : null;
 
   const staleWarning = (minutes) => {
     if (minutes === null || minutes < 5) return '';
@@ -219,23 +203,6 @@ export const PotaSotaPanel = ({
           <span style={{ color: wwbotaConnected ? '#44cc44' : '#ff4444', marginLeft: '4px' }}>
             {wwbotaConnected ? '' : '✗'}
           </span>
-        </button>
-        <button
-          role="tab"
-          id="tab-potasota-canparks"
-          aria-selected={activeTab === 'canparks'}
-          aria-controls="panel-potasota-canparks"
-          tabIndex={activeTab === 'canparks' ? 0 : -1}
-          ref={(el) => (potaSotaTabRefs.current['canparks'] = el)}
-          style={tabStyle('canparks')}
-          onClick={() => handleTabChange('canparks')}
-        >
-          {tabBadge('canparks')} CANP {canparksData?.length > 0 ? `(${canparksData.length})` : ''}
-          {canparksStaleMin >= 5 && (
-            <span style={{ color: canparksStaleMin >= 10 ? '#ff4444' : '#ffaa00' }}>
-              {staleWarning(canparksStaleMin)}
-            </span>
-          )}
         </button>
       </div>
 
@@ -338,31 +305,6 @@ export const PotaSotaPanel = ({
               filters={wwbotaFilters}
               onOpenFilters={setShowWwbotaFilters}
               filteredData={filteredWwbotaSpots}
-            />
-          )}
-        </div>
-        <div
-          role="tabpanel"
-          id="panel-potasota-canparks"
-          aria-labelledby="tab-potasota-canparks"
-          hidden={activeTab !== 'canparks'}
-          style={{ height: '100%' }}
-        >
-          {activeTab === 'canparks' && (
-            <CANParksPanel
-              data={canparksData}
-              loading={canparksLoading}
-              lastUpdated={canparksLastUpdated}
-              lastChecked={canparksLastChecked}
-              showOnMap={showCANParks}
-              onToggleMap={onToggleCANParks}
-              onSpotClick={onCANParksSpotClick}
-              onHoverSpot={onCANParksHoverSpot}
-              showLabelsOnMap={showCANParksLabels}
-              onToggleLabelsOnMap={toggleCANParksLabels}
-              filters={canparksFilters}
-              onOpenFilters={setShowCanparksFilters}
-              filteredData={filteredCanparksSpots}
             />
           )}
         </div>

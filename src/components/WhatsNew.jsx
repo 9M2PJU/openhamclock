@@ -8,11 +8,11 @@ import { useState, useEffect } from 'react';
 // ─── Announcement Banner ────────────────────────────────────
 // Set to null to hide. Shown at the top of the What's New modal.
 const ANNOUNCEMENT = {
-  emoji: '🎁',
-  text: "Surprise! Two major releases within a week. We shipped the 3D globe, looked at the calendar, and apparently decided sleep is a suggestion — because here's 26.7.0 with a native logbook, group logging for Field Day, a full Contest Mode, offline support, and a time machine for the map. Nobody planned this. It just... happened. Consider it the September drop and its encore playing on the same night. Tips of the hat this cycle: Anthony (@AntDiClementi), chris_debian for the WCAG contrast audit this release implements, Alan Hargreaves (@alanhargreaves), Michael R Wheeley (@MichaelWheeley), and Jörg (DO1HOZ) for the countries-globe report. 73 from K0CJH — see you at the next first Tuesday, probably.",
-  color: '#ffd700',
-  bg: 'rgba(255, 215, 0, 0.10)',
-  border: 'rgba(255, 215, 0, 0.30)',
+  emoji: '📡',
+  text: '26.10.0 comes six days after 26.9.0 because Michael, KE8PLM, took the new APRS decoder onto the air with a real TNC and filed eleven reports in a week — the first ever RF net check-in to land in the Net Roster happened during his testing, and most of what follows is his list. Koen, KoenVdH, landed three PRs: logbook QSOs on the map, logging the station you just tuned to, and a fixed contributor setup. twicklund76 brought Wavelog pull sync. And the APRS device names come from the aprs-deviceid table Hessu, OH7LZB, keeps for aprs.fi. 73 de K0CJH.',
+  color: '#c9d1e6',
+  bg: 'rgba(201, 209, 230, 0.10)',
+  border: 'rgba(201, 209, 230, 0.30)',
 };
 
 // ─── Changelog ──────────────────────────────────────────────
@@ -28,6 +28,503 @@ const ANNOUNCEMENT = {
 // The jump to v26 resets the scheme to something meaningful going forward.
 
 const CHANGELOG = [
+  {
+    version: '26.11.0',
+    date: '2026-11-03',
+    heading:
+      "The big one, built around EmComm. A served agency's paperwork (ICS 309, 214, 213, 205) filled in from what you already logged, one shared incident picture for several operators and sites, a Net Control panel, fldigi and flmsg in the layout, Winlink gateways ranked by whether you can reach them right now, a map that keeps drawing when the internet is gone, and a lightning guard that can disconnect the antenna. Beyond EmComm: CW and FT8 decoded in the browser, a Mobile layout for the phone in your go-box, a time scrubber for the whole dashboard, an opportunity feed, measured beacon SNR, spoken alerts, Home Assistant and a phone remote.",
+    features: [
+      {
+        icon: '📋',
+        title: 'NEW: ICS Forms (309, 214, 213, 205)',
+        desc: 'The paperwork a served agency asks for at the end of a shift, filled in from what the EmComm layout already recorded. ICS 309 Communications Log from the event log for any operational period, with station message numbers that keep counting across operations; ICS 214 Activity Log; an ICS 213 General Message composer that can also go out over your local TNC as numbered APRS messages, picking up where it left off if the TNC drops; and an ICS 205 Radio Communications Plan built from nearby repeaters, your saved nets, simplex channels or a CHIRP export, downloadable as a CHIRP CSV to program radios. Every row is editable before you print, and Print / PDF gives just the form, black on white with the standard numbered blocks, in FEMA English or your interface language. In the EmComm rail, and as an ICS Forms panel in the Dockable layout.',
+      },
+      {
+        icon: '🤝',
+        title: 'NEW: Shared Incident',
+        desc: 'A new Incident panel at the top of the EmComm rail lets several operators and sites work one operating picture. One station creates the incident and shares its id and key (read them over the air, or scan the QR code); every joined browser then sees the same net roster, event log, field and shelter reports, ICS form drafts, running net and incident board, each entry tagged by site. The creator\'s admin key can correct or delete entries and issue a new join key if one leaks. Two sites working the same net keep both sets of changes, a "your change" chip puts yours back in one click when both touched the same station, and an offline ICS form edit never overwrites a newer one: you see theirs, the differences, and Apply mine. If the connection drops, updates wait in the browser and go out when it returns.',
+      },
+      {
+        icon: '🎙️',
+        title: 'NEW: Net Control for Voice Nets',
+        desc: 'Run a repeater or simplex net from the EmComm rail or a Dockable panel. Start one from your Nets schedule, then type a callsign and Enter to check a station in, with letters for traffic, mobile, short time, relay or in-and-out (W1AW T, W1AW/M). Names fill in from previous nets, your logbook and the callbook; duplicates are caught, and traffic stations queue up for Next and Passed. Read-aloud scripts come ready for an ARES weekly net, a SKYWARN activation and a tactical net, or write your own. Close the net for a report to copy, download as CSV or print; it also goes into the event log, the ICS 309 and the ICS 205.',
+      },
+      {
+        icon: '📨',
+        title: 'NEW: NBEMS — fldigi and flmsg in the EmComm Layout',
+        desc: "A new Rig Bridge plugin talks to fldigi. The EmComm layout gains an NBEMS panel with fldigi's mode (and a picker to change it), dial frequency, TX/RX state, a live tail of the receive pane, and a send box that returns fldigi to receive when done. A compact ICS-213 goes out as a standard flmsg transfer any flmsg accepts. ICS-213s, radiograms and other flmsg forms received over the air, compressed or not, land in Field Reports tagged NBEMS, and on the map when they carry a grid or lat/lon. Works on your network and through the Cloud Relay. Rig Bridge → Plugins → fldigi + flmsg.",
+      },
+      {
+        icon: '📬',
+        title: 'NEW: Reachable Winlink Gateways',
+        desc: "Which RMS gateways can you reach on HF right now? The Winlink panel's new Reachable tab runs an ITU-R P.533 prediction from your station to each HF gateway within range (3,000 km by default) on its own frequencies for this hour, with your power and antenna, and ranks them Good / Marginal / Closed with reliability and SNR margin. Mode thresholds come from Winlink's own simulator tests of PACTOR, VARA, ARDOP and WINMOR, with a PACTOR 4 setting. Gateways outside their published hours show as Off the air. Click one to set it as DX and, with rig control, tune it; one click copies the Pat connect string. The map layer and the EmComm layout show the same status. Works without Rig Bridge.",
+      },
+      {
+        icon: '🌐',
+        title: 'NEW: Internet APRS Around Your Own Station',
+        desc: 'The APRS panel has a ⚙ button: choose Internet + RF or Local RF only, and a radius from 50 to 1000 km around your station location. On a shared server every viewer now gets the internet APRS stations around their own station instead of one area set by the server, which is what lets the hosted site offer APRS. The server still keeps a single connection to the APRS-IS network for everyone. Internet APRS does not send past positions, so a new area fills in as stations beacon, usually within 10 to 30 minutes. Server operators: APRS_ENABLED=true is all it needs (APRS_FILTER is now optional and adds a fixed area), and the server only logs in with a real callsign (CALLSIGN or the new APRS_LOGIN), never N0CALL.',
+      },
+      {
+        icon: '📦',
+        title: 'NEW: Offline Map Areas',
+        desc: "Settings → Map Layers → Offline map areas (also in the EmComm rail) saves the map around your station (25, 50 or 100 km, or the current view) at a zoom range you pick, showing tile count and size before anything downloads; a cancelled or interrupted download keeps a Resume button. Each area also saves the NWS alerts, nearby shelters, repeaters within 200 km and, in the US, your state's FEMA declarations. When the internet is gone the map draws from your areas (OFFLINE TILES tag) and the EmComm panels show the newest saved copy with its time. Only basemaps whose terms allow it can be saved: USGS Topo, Plan IGN (France), GSI (Japan), Kartverket (Norway), Geoscience Australia, or your own tile server; Esri, Google, CARTO, OpenStreetMap's servers and OpenTopoMap are not offered. Needs HTTPS or localhost. On iPhone and iPad, add the app to the Home Screen or Safari deletes saved areas after 7 days unused. The EmComm rail also lists nearby repeaters with offset and tone.",
+      },
+      {
+        icon: '⚡',
+        title: 'NEW: Lightning Guard and Antenna Relay',
+        desc: 'Settings → Alerts → Lightning guard watches real-time lightning around your station, even with the map layer off: a warning inside 50 km, an alarm inside 25 km (both adjustable), the all-clear after 30 quiet minutes, and a fresh alert when it comes much closer. Tone, speech, notification, Web Push to your phone for strikes near you, a ⚡ header indicator with distance and bearing, a banner and an EmComm log entry; Simulate buttons test the whole chain. It replaces the Lightning Proximity tone and carries your settings over. Optionally a Rig Bridge GPIO relay on a Raspberry Pi disconnects the antenna at the alarm and reconnects at the all-clear; the bridge holds it if the browser goes away, and can run the guard with no browser open. The relay has not yet met a live storm or real hardware. It is a convenience, not lightning protection: keep your grounding and arrestors.',
+      },
+      {
+        icon: '🎧',
+        title: 'NEW: Decoder — CW and FT8 in the Browser',
+        desc: "A new Decoder panel listens to your receiver and decodes it inside OpenHamClock, no extra program. Feed it the rig's USB sound card or a line input and watch the waterfall. In CW, click a trace or press Find and the copy scrolls in with the measured speed (5–45 WPM) and a signal meter; if you are tuned beside a signal it offers Retune instead of printing a string of E's. In FT8 every 15-second slot is decoded on your own computer with dB, DT and audio frequency, CQs highlighted and NEW / BAND badges. It decodes most of what WSJT-X does, but not all. A new KiwiSDR Audio plugin for Rig Bridge feeds it from a remote receiver, on the hosted site too through the Cloud Relay. Needs HTTPS, localhost or the desktop app; set HTTPS_PORT=3443 and a Pi also serves the dashboard over HTTPS on your LAN.",
+      },
+      {
+        icon: '📲',
+        title: 'NEW: Mobile Layout',
+        desc: 'A phone or small tablet as the main display, for go-boxes and the field. A compact header with UTC, local time and solar chips, the map at a usable height, and panel cards you swipe through: DX Cluster, POTA / SOTA, Propagation, Solar, Satellites, Logbook with +QSO, Weather, PSK / WSJT-X, APRS, and an optional EmComm card with nearby NWS alerts, the nearest shelters and the net roster. ☰ picks the cards, ⤢ opens one full screen, and turning the phone sideways puts the map beside a card. On phones and on small or short maps (a Dockable map panel, a 7-inch kiosk) the map controls fold into a menu, a moon button and a Bands chip. Phones get it on their first visit; Settings → Display → Mobile.',
+      },
+      {
+        icon: '✍️',
+        title: 'QSO Form: DX Follows the Call, NEW / BAND / DUPE at a Glance',
+        desc: "As you type a call into the QSO form, the DX marker moves to that station's country or grid, and goes back if you cancel (#1225). The call field also shows the same NEW, BAND or DUPE label the cluster uses, so you know before you log whether it is a new one or a dupe (#1226). Both by KoenVdH.",
+      },
+      {
+        icon: '⏱️',
+        title: 'NEW: Time Shift',
+        desc: 'Drag the whole dashboard up to ±30 days in either direction. The terminator, gray line, sun and moon, satellite positions, tracks and footprints, the DE/DX rise-set tables and the VOACAP now-column all follow; live spots do not. A floating scrubber on the map (Map Layers → Time Shift), a red NOT REAL TIME badge in the header that snaps you back, and keys [ ] for an hour, { } for a day, 0 for now. The feature people asked for most.',
+      },
+      {
+        icon: '🎯',
+        title: 'NEW: Opportunities',
+        desc: 'A ranked list of what is worth working right now: every cluster and activation spot from the last 15 minutes scored by what it does for your awards (NEW DXCC, NEW BAND, NEW ZONE, NEW GRID, NEW STATE from your native logbook), how many people are spotting it, and the ITU-R P.533 reliability from your QTH to that station this hour. Click a row to tune and set DX, 📓 to log it. Optional alert when a new DXCC enters the top five.',
+      },
+      {
+        icon: '📡',
+        title: 'NEW: Measured Beacon SNR (KiwiSDR monitor)',
+        desc: 'A Rig Bridge plugin follows the NCDXF/IBP schedule on a KiwiSDR you choose, retunes every ten seconds, reads the S-meter and logs real SNR for all 18 beacons on 20–10 m. The IBP panel gains a MEASURED view with a 24-hour heat strip per beacon and a measured-vs-P.533 column; Prediction Check gets a third, honest bar. Beacon Openings is a new alert feed. Pick the nearest public receiver from Settings → Rig Bridge.',
+      },
+      {
+        icon: '📅',
+        title: 'NEW: Contest Weekend Outlook',
+        desc: "NOAA SWPC's 27-day outlook now rides on the Contests panel: each contest inside the window shows a Quiet / Unsettled / Active / Storm pill with the predicted SFI, so you can see which weekends look good before you plan. A 27-Day Solar Outlook panel shows the full table with sparklines.",
+      },
+      {
+        icon: '📶',
+        title: 'NEW: Station Benchmark',
+        desc: 'How well is your station heard compared with everyone within 300 km? The server watches the RBN stream and, per skimmer, band and hour, compares your SNR against the median of your neighbours. Per-band ± dB bars with sample counts and a seven-day trend. RBN only for now — PSK Reporter does not carry SNR through our proxy.',
+      },
+      {
+        icon: '🗣️',
+        title: 'NEW: Spoken Alerts',
+        desc: 'Settings → Alerts can now speak: "Watchlist: Victor Kilo Nine Mike Alfa on 20 metres CW". Master toggle, per-feed toggles, voice and rate, and optional ITU phonetics for callsigns. Queued and de-duplicated so a burst of spots does not stack.',
+      },
+      {
+        icon: '🏠',
+        title: 'NEW: Home Assistant / MQTT',
+        desc: 'Self-hosted servers publish space weather, SWPC alerts, band openings and status to an MQTT broker, with Home Assistant discovery so the sensors appear by themselves. Rig Bridge publishes rig frequency, mode and PTT plus rotator position the same way. Set MQTT_PUBLISH_URL on the server; the bridge has a setup card.',
+      },
+      {
+        icon: '🎛️',
+        title: 'NEW: Remote Control API + Phone Remote',
+        desc: "Drive the display from anything that speaks HTTP: POST /api/control/de, dx, layout, theme, panels, mapview, satellite, time, title, alarm, stopwatch, rotator and capture, delivered to a display over SSE. Settings → Station shows the display id and a QR code; scan it and /remote gives you big touch buttons for DX, layouts, layers, satellites, time shift, alarms and rig tuning. The QR code carries a per-display pairing key, so the phone works on the hosted site too without ever seeing the server\'s admin key, and nobody else can drive or listen to your display. Works with Stream Deck, Node-RED, or curl. Documented in API.md.",
+      },
+      {
+        icon: '🖥️',
+        title: 'Kiosk: Demo Mode, Grayscale, Rotating Titles, PIN Lock',
+        desc: 'Demo mode makes a harmless random change every 30 seconds for a show booth; grayscale desaturates the map or the whole display; up to six titles rotate through the callsign box; and a kiosk PIN lock blocks Settings, layout changes and the palette on a touch screen (`?lock=1` on the kiosk URL, or `setup-pi.sh --lock-pin`).',
+      },
+      {
+        icon: '🛰️',
+        title: 'Satellites: Rotator Auto-Track, Doppler Tuning, hams.at, Sky View',
+        desc: 'The Rotator panel gains AUTO (DX bearing or the selected satellite, with pre-positioning before AOS and flip mode for rotators that go past 90°). Doppler tuning keeps the rig on the corrected downlink from the SatNOGS transmitter you pick. A SKY tab draws the next pass on a polar plot; an ALERTS tab lists your hams.at alerted passes with co-visibility. Stale TLEs are flagged and drawn dashed, with a Refresh TLEs button. New feed: Satellite Alerts.',
+      },
+      {
+        icon: '🌅',
+        title: 'NEW: Grayline, EME and Satellite Planners',
+        desc: 'Three planning panels. Grayline Planner finds the next seven days of mutual twilight between DE and DX. EME Planner plots moon elevation at both ends for 48 hours with mutual windows and echo delay. Satellite Planner does the same for any tracked bird over 24 hours. Click a window and the map jumps to that moment.',
+      },
+      {
+        icon: '⏰',
+        title: 'NEW: Alarm Clock',
+        desc: 'A daily alarm and a once-only alarm, DE local or UTC, with a header bell, a tone, a notification and a banner. The ⏰ button on any upcoming contest sets the once-only alarm to its start.',
+      },
+      {
+        icon: '📻',
+        title: 'DX Cluster: Watch Lists, Login Commands, a Console',
+        desc: 'A full watch-list grammar: bands (20-10M), sub-bands (40CW, 30FT8), MHz ranges, portable-call prefixes (VK/), and NADXCC / NAPREF / NAGRID / NABAND checked against your native logbook — in Off / Red / Only / Not modes, with separate lists for cluster spots, activations and the logbook. Custom telnet nodes can send your own commands after login, and a Cluster Console panel shows the raw session and lets you type to the node. The list no longer jumps while you scroll (a NEW button catches you up), map spot labels are configurable, IOTA references get badges and a filter, and UDP spots can set DX.',
+      },
+      {
+        icon: '🌀',
+        title: 'NEW: Tropical Cyclones, Fire Weather, Marine Buoys, Windy, WEFAX',
+        desc: 'Five weather panels and four layers: active storms worldwide with NHC and JTWC forecast tracks and cones; NWS Red Flag Warnings with their zone outlines; the nearest NDBC buoys with wind, waves and water temperature; an embedded Windy view centred on DE or DX; and NOAA radiofax charts from every station, with the broadcast frequencies one click from the rig.',
+      },
+      {
+        icon: '🗺️',
+        title: 'NEW: Political Boundaries, Nearest City, Launch Sites, Balloons',
+        desc: 'Country borders with US state and Canadian province lines in your own two colours. The cursor readout now names the nearest city. Launch pads with an upcoming orbital launch appear as rockets, and amateur high-altitude and pico balloons from SondeHub draw with six-hour trails.',
+      },
+      {
+        icon: '☀️',
+        title: 'NEW: NOAA Scales, Dst, Electron Flux, Eclipses, Planets, Space Launches',
+        desc: 'The R/S/G scales with a three-day forecast (also in the Space Wx Alerts header); the Kyoto Dst index with the 160 m interpretation; GOES electron flux in Solar Indices and Space Wx Trends; every solar and lunar eclipse through 2040 with local circumstances for your QTH; the seven classical planets with rise, set, azimuth and elevation (checked against JPL Horizons); and the next twenty orbital launches with countdowns. Plus an auto space-weather layer that turns Aurora or D-RAP on by itself when it matters.',
+      },
+      {
+        icon: '🧭',
+        title: 'Magnetic Bearings',
+        desc: 'Settings → Station → Bearings: True or Magnetic north. A full WMM2025 implementation computes the declination at DE; every bearing readout shows °M when magnetic.',
+      },
+      {
+        icon: '🔔',
+        title: 'NEW: HamAlert, Live Nets, Message of the Day',
+        desc: 'Your HamAlert triggers arrive as a live spot feed through a Rig Bridge plugin (or server-side on a self-hosted install) with their own panel and alert tone. The Nets panel gains a Live tab fed by NetLogger: active nets, NCS, check-in counts and the roster. Self-hosters can set a message of the day (env MOTD or the admin API) that shows as a dismissible banner.',
+      },
+      {
+        icon: '🥧',
+        title: 'Raspberry Pi Hardware: GPS, Sensors, GPIO, Brightness',
+        desc: 'Four Rig Bridge plugins for the Raspberry Pi shack. GPS (NMEA serial, gpsd, or a fifo) can set or follow your DE location; a BME280/BMP280 or any HTTP JSON sensor feeds an Environment panel with 24-hour history; GPIO lines give you a PTT/ON-AIR input, countdown and alarm buttons, and ON-AIR, alarm, countdown and satellite-visible outputs; an LTR-329 light sensor drives the backlight with two-point calibration. Alpha: none of it has been on real hardware yet, so field reports are very welcome.',
+      },
+      {
+        icon: '🚙',
+        title: 'NEW: Rover Mode',
+        desc: 'With GPS follow on, a Rover panel shows your live six-character grid, distance and ETA to each grid line, VUCC status for the grid you are in, and plays a Grid Change alert when you cross a line. QSOs logged while roving carry the live grid.',
+      },
+      {
+        icon: '🎯',
+        title: 'Prediction Check, Rebuilt Around Your DX',
+        desc: 'The panel used to compare the model\'s "best continent" against a count of spots, which told you nothing about the path you were working. It now runs one P.533 prediction for the DE → DX circuit (re-run the moment you change DX), counts spots between your continent and the DX continent, folds in measured beacons near DX when the KiwiSDR monitor is running, and gives each band a plain status: OPEN · confirmed, OPEN · no spots yet, OPEN · model said closed, MARGINAL or CLOSED — with a one-line explanation per row and a "What am I looking at?" block. A race that could leave the old panel on its loading text for ten minutes is gone. History Playback also behaves now: scrubbing into the past hides the live DX paths so only the replayed spots show, and the control tells you when you have scrubbed past the start of the recording.',
+      },
+      {
+        icon: '✅',
+        title: 'APRS Messages: Acknowledged Both Ways, Delivery Shown',
+        desc: "Rig Bridge 2.5 acknowledges messages sent to your callsign-SSID, which DireWolf leaves to the software using it, so the sender stops repeating them (#1244). Your own messages to a callsign go out with a message id and are re-sent at growing intervals until the station acknowledges them, up to six times like a Yaesu radio or aprs.fi, and the station's message list shows ✓ delivered, ↻ 2/6 while re-sending, or ✕ no ack (#1247). Messages to a net address or bulletin are still sent once. Both can be switched off, and the number of tries set, in Rig Bridge → APRS TNC, without a restart. Asked for by Michael, KE8PLM.",
+      },
+      {
+        icon: '📇',
+        title: 'Net Roster: Your Own Net Address, Several at Once, Remove an Entry',
+        desc: "Check-ins no longer have to go to the one worldwide EMCOMM address that every group in range shares. Addresses → Edit at the top of the Net Roster sets the addresses your station takes check-ins from — your group's club callsign (W8ROC, W8ROC-10) or an alias of up to 9 characters, several at once if you want to follow a neighbouring net too (#1237, #1239). Group the roster by address or net name, or show one address's roster at a time (#1240). The red ✕ removes a check-in, for example one sent with the wrong net name; the Event Log and the ICS 309 record the removal, your call and the reason (#1238). The Event Log also stops logging messages between two other stations. All asked for by Michael, KE8PLM.",
+      },
+      {
+        icon: '🖥️',
+        title: 'EmComm Sidebar: Choose Your Panels, Text Size and Width',
+        desc: "The EmComm sidebar toolbar has A− / A+ next to Expand all / Collapse all, scaling every panel from 70% to 200% like the Dockable layout's per-panel buttons; click the percentage to reset (#1232). Drag the divider between the map and the sidebar to make the sidebar wider or narrower (260 to 900 pixels, the map always keeps at least 300), use the arrow keys on it, or double-click it to reset; the width is remembered in that browser (#1233). Both asked for by Michael, KE8PLM.",
+      },
+      {
+        icon: '🩹',
+        title: 'FIX: Sharp APRS on the Globe, Two Crashes, Update Ready, Microphone',
+        desc: 'Pick which panels the sidebar shows, or switch the whole sidebar between sets of them: All, Net control, Shelters & resources, or your own saved sets (Panels → Choose, #1241). APRS stations on the 3D globe are now drawn as their own sharp, outlined dots with crisp callsign tags and a hover tooltip, at any zoom; they used to be painted into the world-wide overlay image of the globe and turned into blurry squares when you zoomed in (#1234, KE8PLM). The Propagation panel could take the whole dashboard down with React error #310 when its data finished loading, and switching to the azimuthal view always failed and quietly fell back to the flat map; both are fixed. A first visit gets one prompt instead of a stack. Live streams no longer hold up Update ready → Reload in Chrome. The server had blocked the microphone for every page; OpenHamClock itself may now use it (the Decoder needs it), embedded frames still may not.',
+      },
+      {
+        icon: '📚',
+        title: 'Manual and API Docs',
+        desc: 'Every item above has a section in the built-in manual and, where it adds endpoints, in API.md — including the full remote-control command table.',
+      },
+    ],
+  },
+  {
+    version: '26.10.5',
+    date: '2026-10-16',
+    heading:
+      'Hotfix: APRS messages sent from OpenHamClock now reach the Rig Bridge you set up. Before, they only went out if that Rig Bridge was on the same computer as the OpenHamClock server, at port 5555, and a message that never left was still shown as sent. Also: cleaner shelter beacons.',
+    features: [
+      {
+        icon: '📨',
+        title: 'FIX: APRS Messages Go Out Through Your Rig Bridge',
+        desc: 'The MSG box in the EmComm layout handed each message to the OpenHamClock server, which always looked for Rig Bridge on its own computer at port 5555. A Rig Bridge on another port or another computer (a Pi next to the radio, say) never got the message, while incoming APRS kept working, because your browser reads Rig Bridge directly. Messages now go straight to the Rig Bridge set in Settings → Rig Bridge (through the server only over Cloud Relay or with rig control off). A message that does not go out now stays in the box with the reason, such as "TNC not connected", instead of being logged as sent. And every MSG button opens the box in view at the bottom of the sidebar with the cursor in it (#1242). Reported by Michael, KE8PLM (#1243).',
+      },
+      {
+        icon: '🏠',
+        title: 'FIX: Altitude No Longer Shows in Shelter Reports',
+        desc: 'A shelter beacon from the aprs.fi app that included altitude showed as "/A=000921OPEN": the altitude was read but left in the text. Altitude and course/speed are position data and now come out of the comment once read, so the report shows OPEN with its Beds and Water badges. Reported by Michael, KE8PLM (#1235).',
+      },
+    ],
+  },
+  {
+    version: '26.10.4',
+    date: '2026-10-16',
+    heading:
+      "Hotfix: fixes from this week's reports. With the CQ / ITU Zones layer on you could not move the DX marker, satellite tracks were hard to see, and APRS shelter reports came through garbled or six times over. Also in this release: Cloud Relay commands are now signed end to end. If you use Cloud Relay, reconnect it once in Settings → Rig Bridge to keep PTT working (details below).",
+    features: [
+      {
+        icon: '🌐',
+        title: 'FIX: Clicking the Map Moves DX Again with CQ / ITU Zones On',
+        desc: "With the CQ / ITU Zones layer on, every click on the map landed inside a zone and opened that zone's popup, which swallowed the click, so the DX marker never moved. Zone names and numbers now show when you hover, and a click sets DX as usual. Reported by Scott.",
+      },
+      {
+        icon: '🛰',
+        title: 'FIX: Satellite Tracks You Can Actually See',
+        desc: "Tracks for satellites you have not selected were a 1-pixel line at 15% opacity, easy to lose on a busy map; they are now thicker and about three times as bright. Click a satellite (the ISS, say) to select it for the full bright track and footprint. A selected track's older end no longer fades to nothing either. Reported by Ed, N4ENT.",
+      },
+      {
+        icon: '🏠',
+        title: 'FIX: APRS Shelter Reports and Messages, Cleaned Up',
+        desc: 'Shelter beacons from the aprs.fi app ended in stray characters like !w\\z!: that is an optional APRS extension carrying extra position precision, and it is now removed from the text (#1235). Resource tags typed in capitals, such as [BEDS 12/20] or [WATER 100], are recognised, and every badge now shows its name, e.g. 💧 Water 100 or 🛏️ Beds 12/20, so the numbers are not ambiguous (#1236). Radios resend an unacknowledged message up to six times, and messages to an alias such as EMCOMM are never acknowledged; repeats are now logged once and no longer re-run a net check-in (#1230). The EmComm only button no longer gets cut off on a narrow sidebar (#1231). All reported by Michael, KE8PLM.',
+      },
+      {
+        icon: '🔐',
+        title: 'Cloud Relay: Signed Commands, Private Reads — Reconnect Once',
+        desc: 'Connect Cloud Relay now also creates a command key that goes from your browser straight to Rig Bridge and never to the server. Rig Bridge only tunes, keys or transmits for commands signed with it, and only your browser can read your rig state, decodes, APRS, MeshCom and WSJT-X data through the relay; knowing the session id is no longer enough. If you paired before this update, update Rig Bridge to 2.4.0 and re-run Connect Cloud Relay once: Settings → Rig Bridge, press Disconnect, then Connect Cloud Relay, and paste the new settings into Rig Bridge. Until you do, PTT and transmit over the relay stay off; tuning (and reading) keeps working until 31 January 2027. Also fixed: after a server restart or an idle hour, Rig Bridge could poll the relay thousands of times a second and lock itself out; it now backs off and recovers by itself. Restarting the relay no longer piles up duplicate subscriptions (#1228, by adamancini).',
+      },
+      {
+        icon: '🗺️',
+        title: 'APRS Switches in Settings, WSJT-X Port Sharing',
+        desc: "Settings → Map Layers → Amateur Radio now has APRS Stations and APRS Callsign Labels switches; before, the only way to hide the APRS symbols was the Dockable layout's panel header. Rig Bridge now shares the WSJT-X UDP port with GridTracker, Log4OM and other listeners instead of claiming it (#1224, by adamancini).",
+      },
+      {
+        icon: '🔧',
+        title: 'update.sh Repairs a Half-Finished Update',
+        desc: 'An update cut off part way (a dropped SSH session, or a small Pi running out of memory during the build) left the server unable to start, and running update.sh again only said "Already up to date". The script now checks the install even when there is nothing new to pull and offers to reinstall and rebuild; the automatic updater does this by itself, and ./scripts/update.sh --repair forces it. The list of changes also prints without opening a pager (#1227).',
+      },
+      {
+        icon: '🩹',
+        title: 'FIX: First Run, Winlink, Globe Dots, Telemetry, Version Badge',
+        desc: 'Settings opens by itself on a first visit again, and touch devices get the Compact or Tablet layout again; a theme saved on first load had made every visit look like a return visit. The Winlink panel no longer sits on "Loading..." forever when the server cannot answer. Station dots on the 3D globe stay sharp when you zoom in (#1234, KE8PLM). The rotator panel no longer breaks a React rule that could crash it. APRS telemetry, broken on every frame since a parser rewrite, is stored again; N3FJP QSOs without a grid are placed by callsign lookup again; a satellite data error no longer hides its own message; and the version badge beside your callsign no longer shows the previous version for up to an hour after an update.',
+      },
+    ],
+  },
+  {
+    version: '26.10.3',
+    date: '2026-10-15',
+    heading:
+      'Hotfix: the Moon is back. NASA changed the links its Dial-A-Moon service hands out, and OpenHamClock had been refusing them since — so the Lunar panel showed a plain sliver and the 3D globe lost its moon. No action needed on your side once your server is updated.',
+    features: [
+      {
+        icon: '🌙',
+        title: 'FIX: Moon Image Missing from the Lunar Panel and the 3D Globe',
+        desc: "The Lunar panel shows NASA's photo-real render of today's moon and the 3D globe places it at its true position with the real phase. NASA's Dial-A-Moon API started returning plain http:// links for those images; the server's safety check only accepted https:// and rejected every one, so the image endpoint answered \"temporarily unavailable\" and the panel fell back to a drawn sliver. The check now accepts either scheme for a nasa.gov address and always fetches over https. Self-hosted: pull the update and restart; the hosted site is already fixed. Reported by K0CJH.",
+      },
+    ],
+  },
+  {
+    version: '26.10.2',
+    date: '2026-10-14',
+    heading:
+      'Hotfix for 26.10.1: the EmComm layout crashed on open for everyone, hosted and self-hosted. Reported by Michael, KE8PLM, within hours of the release — thank you.',
+    features: [
+      {
+        icon: '🚨',
+        title: 'FIX: EmComm Layout Crashed on Open',
+        desc: 'Opening EmComm mode showed "OpenHamClock hit an error — Cannot access \'xt\' before initialization" and the whole layout went down. The per-station message history added in 26.10.1 registered its "Messages ↗" listener above the function it calls, which React evaluates during render. Moved it below. If you were stuck on the error page, a hard refresh (Ctrl+F5) is all you need. Reported by KE8PLM (#1223).',
+      },
+    ],
+  },
+  {
+    version: '26.10.1',
+    date: '2026-10-14',
+    heading:
+      'Same-day follow-up to 26.10.0 with the four requests that were still open: APRS icons and tags you can size up for a big screen, an EmComm-only map that keeps roster stations visible, a per-station message history for whoever is running the net, and RF-heard stations shared with every browser on the server.',
+    features: [
+      {
+        icon: '🔍',
+        title: 'NEW: APRS Icon Size',
+        desc: 'A size button beside the Aa labels toggle — in the dockable APRS panel and the EmComm Stations header — cycles the APRS symbols and callsign tags through 0.75×, 1×, 1.25×, 1.5× and 2× on the flat map, the azimuthal view and the 3D globe. For a laptop in the field or a wall screen in an EOC. Remembered per browser. Requested by Michael, KE8PLM.',
+      },
+      {
+        icon: '🚨',
+        title: 'NEW: EmComm-Only Map',
+        desc: 'An EmComm only toggle in the EmComm Stations header keeps just the stations with a recognised EmComm symbol or a Net Roster entry on the map. A roster station whose beacon has aged out is put back from its last known position, so checking in never makes a station disappear from the map. Remembered per browser. Requested by KE8PLM.',
+      },
+      {
+        icon: '📜',
+        title: 'NEW: Message History per Station',
+        desc: 'Hover a Net Roster row, or press HIST on a roster or EmComm Stations row, and a panel lists every message exchanged with that station — received and sent, newest first, with time and direction — and a MSG button to reply. Messages ↗ in an APRS map popup opens the same panel, so a station that has dropped off the roster is still one click away. The server now keeps your own sent messages too, so both sides of a conversation appear. For the operator taking over a net who needs the last ten minutes in one glance. Requested by KE8PLM.',
+      },
+      {
+        icon: '📡',
+        title: 'RF Stations Shared Across Every Browser',
+        desc: 'On a Raspberry Pi or EOC server, the "Local RF" stations used to exist only in the one browser attached to Rig Bridge; every other computer saw an empty list. Rig Bridge\'s APRS TNC plugin now sends each received frame to the OpenHamClock server as well (server URL and on/off switch in its settings, on by default), so the server\'s station cache — and every browser reading it — sees RF stations whether or not a browser is connected to Rig Bridge. Frames that arrive both ways are counted once. Requested by Jason Taggart.',
+      },
+    ],
+  },
+  {
+    version: '26.10.0',
+    date: '2026-10-14',
+    heading:
+      'A one-week release built from on-air testing. Wavelog users can pull their log into OpenHamClock automatically, logbook QSOs draw on the map in all three projections, and logging the station you just tuned to is one click. The APRS panel grew up: sort by call, age or distance; callsign tags on the map; click a marker and the list scrolls to it; the radio or software behind each station is named; and stations now show on the azimuthal and 3D views. EmComm over RF got seven fixes, from net check-ins that never reached the roster to a clock that printed the seconds twice. Plus the sun is live again after NASA froze its images.',
+    features: [
+      {
+        icon: '🔄',
+        title: 'NEW: Wavelog Pull Sync',
+        desc: "If Wavelog is your logbook of record, OpenHamClock can now pull it. Settings → Integrations → Wavelog: paste the URL and API key, pick the station profiles, and the native logbook fills from Wavelog in pages of 2,000 QSOs, advancing its cursor only after each page is safely stored. Point Wavelog's MQTT at the server and a new QSO in Wavelog rings the doorbell so the pull happens within seconds instead of on a timer. Your browser keeps the credentials and the cursor; the server only proxies and listens. Wavelog stays the source of truth. By twicklund76.",
+      },
+      {
+        icon: '🗺️',
+        title: 'NEW: Your Logbook on the Map',
+        desc: "A map button in the Logbook panel toggles a Logbook QSOs layer: a dot per worked position in the band's colour with a great-circle line from your station, on the flat map, the azimuthal view and the 3D globe. It follows the panel's band, mode and search filter, so the map shows exactly the QSOs the table lists; close the panel and the whole log shows. QSOs are placed by logged grid, falling back to the DXCC entity's position (drawn hollow) when there is none, and grouped per position and band with a popup listing the calls. Lines are drawn up to 500 dots; past that only dots, with a note, so a 10,000-QSO log does not become a white web. Measured at 11 ms to build the points for 10,000 QSOs. By Koen, KoenVdH.",
+      },
+      {
+        icon: '📓',
+        title: 'NEW: Log the Station You Just Tuned To',
+        desc: 'Click a spot to tune the rig, work the station, then press +QSO in the Logbook panel: the call and grid are already filled in, as long as the rig is still within 3 kHz of the spot. The Rig button in an open QSO form does the same, and clears a call that came from a spot once you have tuned well away from it — a call you typed yourself is never touched. The memory is dropped the moment a QSO with that call is saved, and nothing is remembered unless rig control is on. By Koen, KoenVdH.',
+      },
+      {
+        icon: '📡',
+        title: 'The APRS Panel Grows Up',
+        desc: "Five requests from a week of on-air testing by Michael, KE8PLM. Sort the station list by call, age or distance from a Sort row, remembered per browser. An Aa button draws callsign tags beside the APRS symbols on the map, in the dockable panel and the EmComm layout. Click a station on the map and the panel scrolls to its row and highlights it; click a row and the map pans and pulses on the station on all three views, not just the flat map. Each station now shows the radio or software that sent it — Yaesu FT5D, Kenwood TM-D710, DireWolf — identified from the packet's tocall or Mic-E type code using the aprs-deviceid table Hessu, OH7LZB, maintains for aprs.fi; the raw Mic-E type bytes that used to trail the comment are gone. And APRS stations finally draw on the azimuthal and 3D views, which only ever had the flat map.",
+      },
+      {
+        icon: '🚨',
+        title: 'FIX: EmComm Over RF, Seven Ways',
+        desc: 'All found by KE8PLM with a real TNC. Net check-ins sent over RF never reached the Net Roster: the browser dropped every non-position frame, and even the server path never applied the command — RF frames are now forwarded to the server and both paths apply check-ins and check-outs, so CQ NETNAME over the air works for the first time. A Yaesu\'s message id ({02 plus a carriage return) no longer trails the status text. Replies went out under the SSID rig-bridge started with rather than the one you saved; the APRS TNC plugin now reads your callsign and SSID live. The Event Log\'s Clear button really clears instead of re-logging the whole board. The header printed the seconds twice and no date; it shows the UTC date and time once. An ordinary message containing the word "open" no longer turns its sender into a Nearby Shelter. And FEMA disaster declarations, which arrived as one identical row per county, are grouped per declaration with dates, counties, a link to fema.gov and a source line.',
+      },
+      {
+        icon: '☀️',
+        title: 'FIX: Solar Images Are Live Again',
+        desc: 'NASA\'s "latest" SDO images stopped updating on September 21 while still answering requests, so every instance showed a three-week-old sun. Each image source now reports its date; anything older than three hours is skipped for the next source (LMSAL, then SOHO), and if nothing fresh answers the freshest stale image is served rather than a broken panel. This went to the hosted site as a silent hotfix on October 8 and ships to self-hosters here.',
+      },
+      {
+        icon: '🧹',
+        title: 'Fixes and Housekeeping',
+        desc: "The daily satellite transmitter refresh no longer pages the uptime monitor every afternoon. October security advisories cleared across the packages. Under the Vite dev server the P.533 propagation engine loads again, the vendor download script works on macOS, and CONTRIBUTING's quick start includes the step it was missing — all by Koen, KoenVdH, from a fresh clone. The HF propagation service image builds natively per architecture instead of under emulation. Two APRS parser regexes CodeQL flagged are bounded. Dead code in the Rig Bridge APRS TNC plugin removed.",
+      },
+    ],
+  },
+  {
+    version: '26.9.0',
+    date: '2026-10-08',
+    heading:
+      'A two-week release driven by your bug reports. APRS now hears what your TNC hears: Yaesu and Kenwood Mic-E beacons, igate traffic, objects and compressed positions all show up — an eleven-hour side-by-side with DireWolf came out 164 to 163. Clicking a spot lands the radio exactly on frequency the first time. A new Clock layout fills the screen with a big digital clock, and an Idle Clock setting brings it up on its own when nobody has touched the display. Plus the band plan stops crying wolf at 14.105, kiosk weather stays current, and the Rig Listener downloads are back on the Releases page.',
+    features: [
+      {
+        icon: '🕐',
+        title: 'NEW: Clock Layout and Idle Clock',
+        desc: 'A layout that is a big digital clock and nothing else: UTC very large with seconds, local time with its zone beneath, the date, and your callsign and grid in the corner, in your theme and font. Tap the big time to make local the large one — it remembers. Pick it like any layout, add it to a Scene Rotation, or let it appear on its own: Settings → Display → Idle Clock shows it after 2 to 60 minutes with no input, and the first touch, mouse movement or key press brings your previous layout straight back. For shack TVs and club displays between nets.',
+      },
+      {
+        icon: '📡',
+        title: 'APRS Hears Everything Your TNC Hears',
+        desc: "Neither of our APRS parsers understood Mic-E, the default beacon format on Yaesu and Kenwood radios, so every FT-5D, FT-3D, FTM-400 and TH-D74 heard over RF was silently dropped — and that turned out to be only half of it. Third-party frames (igates re-transmitting internet traffic over RF) were dropped whole, object reports had an offset bug that read the timestamp as the latitude, and compressed base-91 positions were never supported. All four are decoded now, along with items and position ambiguity; objects are keyed by their own name so a digipeater's repeater object no longer overwrites the digipeater. The server and the Rig Bridge TNC path now share one parser with a guard test so they can't drift. Verified against the reference aprslib parser and, better, against an eleven-hour DireWolf capture from KE8PLM: 164 stations decoded, 163 in OpenHamClock, the last one fixed since. Reported by Jason Taggart and Michael, KE8PLM.",
+      },
+      {
+        icon: '🎛️',
+        title: 'FIX: Clicking a Spot Lands the Radio on Frequency, First Time',
+        desc: "Clicking a POTA, SOTA or cluster station used to leave Yaesu rigs close but not on the spot, and a second click fixed it. We were sending the frequency and the mode at the same time; Yaesu radios move the dial by about 1.4 kHz when the mode changes, so whenever the mode landed after the frequency the radio ended up off by that much. The tune now does what operators' own macros do: mode first, then frequency, then the frequency once more after the mode settles. Reported by KE8PLM on an FTDx10 and FT-991A, confirmed by onzarob on an FT-950 — tested from the symptom rather than on a bench radio, so tell us if your rig still lands short.",
+      },
+      {
+        icon: '📊',
+        title: 'FIX: The Band Plan Stops Crying Wolf',
+        desc: 'Tune to 14.105 and the privilege bar said "Outside Amateur Extra privileges". The band plan\'s SSB segments on 20, 15 and 10 metres began below where US phone privileges actually start, so those digital stretches were flagged for every class. They are Data segments now, the bar draws adjacent same-type segments as one block instead of two, the tooltip names the emission type ("No Phone privileges here") rather than implying your licence is short, and 60 metres is modelled as it really is under the February 2026 rules — the 5351.5–5366.5 kHz band plus four channels — instead of one continuous range that said yes at 5340 kHz. Reported by KE8PLM.',
+      },
+      {
+        icon: '🌤️',
+        title: 'FIX: Kiosk Weather Stays Current',
+        desc: 'On an always-on display the DE weather panel could go hours stale. The browser fetches Open-Meteo directly, and the poll interval was a two-hour leftover from a server cache that no longer exists on that path. It is 15 minutes now, matching how often Open-Meteo refreshes its current conditions. Diagnosed and fixed by brstiefel1.',
+      },
+      {
+        icon: '🔧',
+        title: 'FIX: WSJT-X Decodes No Longer Freeze with Rig Bridge Running',
+        desc: 'Self-hosters running Rig Bridge could see the WSJT-X decode list freeze on a decode from half an hour ago while the server kept receiving fresh ones. The hook flipped to "local mode" on the first Rig Bridge message of any kind and then stopped polling for good. It now switches only on real WSJT-X data and keeps the fallback alive. Also gone: a console error on every VOACAP heatmap fetch. Both by SQ8BWM, in his first two PRs.',
+      },
+      {
+        icon: '📥',
+        title: 'Rig Listener Downloads Are Back',
+        desc: 'The rig-listener Windows, Mac and Linux executables had quietly stopped attaching to releases since 26.4.0: the Intel Mac build was pinned to a GitHub runner that was retired in December, so every release sat in a queue for a day and gave up. Fixed, and the 26.8.0 release was back-filled. Intel Mac builds end when GitHub retires its last x86 runner in late 2027.',
+      },
+    ],
+  },
+  {
+    version: '26.8.0',
+    date: '2026-09-24',
+    heading:
+      "The September drop proper, three weeks after the encore. The 3D globe learned to bounce signals off the Moon: a new EME layout plans mutual windows, draws the DE→Moon→DX path, and shows live moonbounce activity from PSK Reporter — with a satellite-relay mode on the same chassis. Band-opening alerts finally know which coast you're on, APRS symbols survive a refresh, the EmComm sidebar remembers itself, and the manual got pictures.",
+    features: [
+      {
+        icon: '🌙',
+        title: 'NEW: EME (Moonbounce) Layout — Beta',
+        desc: "A layout built around the Moon. The 3D globe pins itself to frame Earth and Moon together and draws the DE→Moon→DX legs — solid in each station's colour while that end can see the Moon, dashed red below the horizon. The rail shows Moon Now (azimuth/elevation, rise/set, distance, path-loss delta, declination, phase at both ends), Sky Tracks for the next pass, a 48-hour Mutual Windows table with a minimum-elevation filter, a DX target with grid lock, and EME Spots pulled from the cluster on EME bands. Live activity comes from a band-wide PSK Reporter feed of Q65 and JT65 reports at 50 MHz and up — they plot on the globe as station dots with faint sender→Moon→receiver legs. The Moon is drawn at a compressed 12 Earth radii so both bodies fit on screen; the maths behind it is at true distance.",
+      },
+      {
+        icon: '🛰️',
+        title: 'NEW: Satellite Relay Mode — Experimental',
+        desc: 'Flip the MOON/SAT switch in the EME header and the same chassis works a bird instead: only the chosen satellite and its footprint are drawn, legs run DE→satellite→DX, and the rail ranks candidate relay satellites by their next mutual pass, shows live az/el/range for both ends with Doppler at DE, and lists 24 hours of mutual passes with per-station AOS and LOS. Cluster satellite spots and the AMSAT status line show for each candidate. Verified against an ISS-like orbit; we have not yet caught a live pass with real SatNOGS transmitter data, hence the label.',
+      },
+      {
+        icon: '📻',
+        title: 'Band Openings Now Know Your CQ Zone',
+        desc: '"EU → NA open" is true on the East Coast and useless on the West Coast. The server now keys the same RBN and cluster surge detection by the CQ zone of the stations doing the hearing, alongside the continent view, and Settings → Alerts → Band Openings grew a Scope: My CQ zone (the new default — read from your callsign, override it if your prefix lies about where you live), My continent, or Worldwide as before. Alerts read "20m opening EU→zone 3 (12 spots, 4x baseline)". Per-zone thresholds match the continent ones for now; we\'ll tune them on real data. Suggested by Mike Bass, N7WLC.',
+      },
+      {
+        icon: '📡',
+        title: 'APRS: Dwell Time, Survives a Refresh, and a Clear Button',
+        desc: "Stations heard over RF through your TNC used to live only in the browser's memory — one refresh and every symbol was gone, which is the wrong moment to lose situational awareness during a net. RF and internet stations are now retained in browser storage and come straight back on reload. A Dwell setting (30 minutes to 12 hours, default 60) decides how long a station lingers after it was last heard, and it applies even past the server's own one-hour cache. A Clear button flushes the map and list on demand; cleared stations stay gone until they beacon again. Both controls sit on the APRS panel and in the EmComm Stations header. Requested by mbrun-plm.",
+      },
+      {
+        icon: '🚨',
+        title: 'EmComm: Panels Remember Themselves',
+        desc: 'Switch from Emcomm to Dockable and back and every sidebar section snapped open again. A small Panels row at the top of the sidebar now offers Remember (the default — each section comes back the way you left it, across layout switches and reloads), Expanded, or Collapsed as the starting state, plus Expand all and Collapse all buttons. Requested by mbrun-plm.',
+      },
+      {
+        icon: '🎯',
+        title: 'A Locate Ring You Can Actually See',
+        desc: "Click a station in a panel and the map pulses a ring around it — in the theme's cyan, which vanished on light and satellite basemaps. The rings are now a white core with a dark halo and a magenta glow, independent of the theme, and they start outside the marker and hold their brightness longer instead of hiding behind it for the first third of the animation. Requested by mbrun-plm.",
+      },
+      {
+        icon: '📖',
+        title: 'The Manual Got Pictures',
+        desc: "The built-in manual (Settings → Help) is now illustrated throughout with current screenshots of every layout, the major panels, and this cycle's new features, and the in-app renderer learned to show images and galleries. The screenshots ship inside the app, so they work offline too.",
+      },
+      {
+        icon: '🎅',
+        title: 'Santa Tracker',
+        desc: 'On 24–25 December UTC the 3D globe and the flat map track Santa along a NORAD-style westward route with about 120 stops, complete with a procedurally built sleigh and a status chip in the corner of the globe. Parents who need a preview before the big night can add ?santa=1 to the URL any day of the year (?santa=off puts it away).',
+      },
+      {
+        icon: '🍁',
+        title: 'CANParks Retired',
+        desc: 'The CANParks program has shut down and its API is gone, so the activations program, its map layer, panel tab, filters, alerts and the POTA cross-reference chip have been removed. Your other four programs are untouched.',
+      },
+      {
+        icon: '🔒',
+        title: 'Security Updates & Fixes',
+        desc: "All 64 open Dependabot alerts across the five packages were cleared (in-range audit fixes, Vitest 4, Electron 41 for the desktop wrapper, and a qs override wherever Express 4 pins the old one). The server's startup banner is no longer cut short by the log rate limiter. The OpenHamClock cluster node's DX Summit poller is now off unless explicitly enabled.",
+      },
+    ],
+  },
+  {
+    version: '26.7.4',
+    date: '2026-09-12',
+    heading: 'One-fix hotfix: the VOACAP antenna you pick now stays picked. Thanks to N3DD for the report.',
+    features: [
+      {
+        icon: '📡',
+        title: 'FIX: VOACAP Antenna Choice No Longer Reverts to Isotropic',
+        desc: "Choose an antenna in the Propagation panel, save anything in Settings later, refresh — and the antenna was back to Isotropic. The Settings save rebuilt the propagation block from only the two fields it edits (mode and power) and silently dropped the antenna, so the next load filled the gap with the default. It now keeps the existing block and overrides just mode and power. As a belt-and-braces measure for self-hosted installs with settings sync, any change still waiting in the 2-second sync debounce is now pushed on page unload, so a refresh straight after a change can no longer let the server's older copy win. If you already lost your antenna this way you will see Isotropic once more after updating; pick it again and it sticks. Reported by N3DD.",
+      },
+    ],
+  },
+  {
+    version: '26.7.3',
+    date: '2026-09-10',
+    heading:
+      'Third hotfix of the cycle, and the first with a new feature in it. Two more EmComm reports from Michael (@mbrun-plm), plus a request of his that turned into something every layout gets; a QSO-layer ask from Alan McDonald on Facebook; and a Docker fix from @9M2PJU.',
+    features: [
+      {
+        icon: '🎯',
+        title: 'Click a Panel Row to Find It on the Map',
+        desc: 'Any station, shelter, gateway, or spot listed in a panel can now pull the map to it. In EmComm mode the EmComm Stations, Nearby Winlink Gateways, and Net Roster rows are clickable (roster entries once an APRS position has been heard), pan the map to the target, and drop a short expanding-ring pulse on it so your eye lands on the right dot in a busy view. In the Dockable layout every spot click you already use — DX Cluster, POTA/SOTA/WWFF, PSK Reporter, MeshCom — now pulses the target and pans to it when it is off-screen; if it is already in view the map stays put. APRS panel rows, which looked clickable but did nothing, now behave like every other panel. Flat map only for now; the Azimuthal and 3D globe projections ignore the request. Requested by @mbrun-plm.',
+      },
+      {
+        icon: '🏷️',
+        title: 'Callsign Labels on the Logged-QSO Layers',
+        desc: 'A dot at the end of a QSO path said nothing about who you worked, while the DX spots beside it carried callsign pills. Both logged-QSO layers — Logged QSOs (API) and Logged QSOs (N3FJP) — now draw the same style pill beside each contact, in the layer\'s colour (a per-QSO colour sent through the REST API carries into its pill), and N3FJP live-entry previews get a trailing "?" so a half-typed call reads as tentative. The pills follow the map\'s existing Show/Hide Calls button, so one control governs spot and QSO labels alike. Asked for by Alan McDonald on Facebook.',
+      },
+      {
+        icon: '⏱️',
+        title: 'FIX: EmComm Station Age No Longer Reads "NaNh ago"',
+        desc: 'The EmComm Stations list read a precomputed age that only stations from the server feed carry; beacons arriving over RF from the rig-bridge TNC have just a timestamp, so the maths produced NaN. A shared helper now derives minutes-since-heard from the timestamp and only falls back to the server value when there is no timestamp. The Dockable APRS panel uses it too, so its ages now tick live between polls instead of freezing at fetch time. Reported by @mbrun-plm (#1180).',
+      },
+      {
+        icon: '📋',
+        title: 'FIX: EmComm Event Log Comes Back After Clear',
+        desc: "Clearing the Event Log left it empty until a page refresh. The log records activity by diffing each feed against what it had already seen, and Clear wiped the stored events but not those snapshots — so only a brand-new station or alert could ever log again. Clear now resets the baselines and re-runs the recording pass immediately: the current stations, alerts, roster, shelter and field reports, and this session's received messages re-log right away, the same result a refresh gave you, minus the reload, so the map keeps its hours of RF-heard beacons. Reported by @mbrun-plm (#1181).",
+      },
+      {
+        icon: '🐳',
+        title: 'FIX: Self-Hosted Fonts on Alpine Docker Builds',
+        desc: 'The vendor-download script extracted Google Fonts URLs with a Perl-regex grep flag that Alpine\'s BusyBox grep does not have, so container builds silently downloaded zero font files and the "self-hosted" image quietly fell back to Google\'s CDN. It now uses a POSIX extended regex that works on Alpine, Debian, and macOS alike. Thanks @9M2PJU (#1179).',
+      },
+    ],
+  },
   {
     version: '26.7.2',
     date: '2026-09-03',
@@ -1726,6 +2223,7 @@ const LS_KEY = 'openhamclock_lastSeenVersion';
 export default function WhatsNew({ showWhatsNew }) {
   const [visible, setVisible] = useState(false);
   const [currentVersion, setCurrentVersion] = useState(null);
+  const [lastSeenVersion, setLastSeenVersion] = useState(null);
 
   useEffect(() => {
     // Fetch the running version from the server
@@ -1739,6 +2237,7 @@ export default function WhatsNew({ showWhatsNew }) {
         setCurrentVersion(version);
 
         const lastSeen = localStorage.getItem(LS_KEY);
+        setLastSeenVersion(lastSeen);
         // Show if never seen, or if the stored version differs from current
         if (!lastSeen || lastSeen !== version) {
           // Only show if we actually have changelog entries for this version
@@ -1776,7 +2275,16 @@ export default function WhatsNew({ showWhatsNew }) {
 
   if (!visible || !currentVersion) return null;
 
-  const entry = CHANGELOG.find((c) => c.version === currentVersion) || CHANGELOG[0];
+  // Every entry newer than the version this browser last saw, newest first.
+  // Someone who updated 26.10.0 → 26.10.1 within the hour never saw the
+  // 26.10.0 notes; showing only the running version's entry lost them.
+  // CHANGELOG is newest-first, so the slice runs from the current entry up
+  // to (not including) the last-seen one. Unknown last-seen (fresh install,
+  // or opened from the header link) shows just the current entry.
+  const ci = CHANGELOG.findIndex((c) => c.version === currentVersion);
+  const li = lastSeenVersion ? CHANGELOG.findIndex((c) => c.version === lastSeenVersion) : -1;
+  const entries = ci >= 0 && li > ci ? CHANGELOG.slice(ci, li) : [CHANGELOG[Math.max(ci, 0)]].filter(Boolean);
+  const entry = entries[0];
   if (!entry) return null;
 
   return (
@@ -1835,7 +2343,9 @@ export default function WhatsNew({ showWhatsNew }) {
                 marginBottom: '8px',
               }}
             >
-              OpenHamClock v{entry.version}
+              {entries.length > 1
+                ? `OpenHamClock v${entries[entries.length - 1].version} → v${entry.version}`
+                : `OpenHamClock v${entry.version}`}
             </div>
             <div
               style={{
@@ -1897,48 +2407,70 @@ export default function WhatsNew({ showWhatsNew }) {
 
           {/* Feature list */}
           <div style={{ padding: '0 24px 16px' }}>
-            {entry.features.map((f, i) => (
-              <div
-                key={i}
-                style={{
-                  display: 'flex',
-                  gap: '12px',
-                  padding: '10px 0',
-                  borderBottom: i < entry.features.length - 1 ? '1px solid rgba(255,255,255,0.06)' : 'none',
-                }}
-              >
-                <div
-                  style={{
-                    fontSize: '20px',
-                    lineHeight: '28px',
-                    flexShrink: 0,
-                    width: '28px',
-                    textAlign: 'center',
-                  }}
-                >
-                  {f.icon}
-                </div>
-                <div>
+            {entries.map((en, idx) => (
+              <div key={en.version}>
+                {idx > 0 && (
+                  <div style={{ marginTop: '14px', paddingTop: '10px', borderTop: '1px solid rgba(255,255,255,0.12)' }}>
+                    <div
+                      style={{
+                        fontSize: '12px',
+                        fontFamily: 'var(--font-mono)',
+                        color: 'var(--accent-cyan, #00ffcc)',
+                        letterSpacing: '0.1em',
+                        textTransform: 'uppercase',
+                      }}
+                    >
+                      v{en.version} · {en.date}
+                    </div>
+                    <div style={{ fontSize: '12px', color: 'var(--text-muted, #888)', marginTop: '4px' }}>
+                      {en.heading}
+                    </div>
+                  </div>
+                )}
+                {en.features.map((f, i) => (
                   <div
+                    key={i}
                     style={{
-                      fontWeight: '600',
-                      fontSize: '14px',
-                      color: 'var(--text-primary, #e0e0e0)',
-                      marginBottom: '3px',
+                      display: 'flex',
+                      gap: '12px',
+                      padding: '10px 0',
+                      borderBottom: i < en.features.length - 1 ? '1px solid rgba(255,255,255,0.06)' : 'none',
                     }}
                   >
-                    {f.title}
+                    <div
+                      style={{
+                        fontSize: '20px',
+                        lineHeight: '28px',
+                        flexShrink: 0,
+                        width: '28px',
+                        textAlign: 'center',
+                      }}
+                    >
+                      {f.icon}
+                    </div>
+                    <div>
+                      <div
+                        style={{
+                          fontWeight: '600',
+                          fontSize: '14px',
+                          color: 'var(--text-primary, #e0e0e0)',
+                          marginBottom: '3px',
+                        }}
+                      >
+                        {f.title}
+                      </div>
+                      <div
+                        style={{
+                          fontSize: '12px',
+                          lineHeight: '1.5',
+                          color: 'var(--text-muted, #999)',
+                        }}
+                      >
+                        {f.desc}
+                      </div>
+                    </div>
                   </div>
-                  <div
-                    style={{
-                      fontSize: '12px',
-                      lineHeight: '1.5',
-                      color: 'var(--text-muted, #999)',
-                    }}
-                  >
-                    {f.desc}
-                  </div>
-                </div>
+                ))}
               </div>
             ))}
           </div>

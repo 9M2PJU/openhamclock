@@ -50,7 +50,7 @@ const SPECS = {
     title: 'HUNTER',
     accent: 'var(--accent-amber)',
     panels: ['dx-cluster', 'activations', 'sun-moon'],
-    mapLayers: { showPOTA: true, showSOTA: true, showWWFF: true, showCANParks: true, showDXPaths: true },
+    mapLayers: { showPOTA: true, showSOTA: true, showWWFF: true, showDXPaths: true },
     pluginLayers: { grayline: true },
   },
   weather: {
@@ -63,7 +63,6 @@ const SPECS = {
       showSOTA: false,
       showWWFF: false,
       showWWBOTA: false,
-      showCANParks: false,
       showDXPaths: false,
       showPSKReporter: false,
       showWSJTX: false,
@@ -88,7 +87,6 @@ const SPECS = {
       showSOTA: false,
       showWWFF: false,
       showWWBOTA: false,
-      showCANParks: false,
       showDXPaths: false,
       showPSKReporter: false,
       showSatellites: false,
@@ -132,8 +130,6 @@ export default function FocusLayout(props) {
     filteredSotaSpots,
     wwbotaSpots,
     filteredWwbotaSpots,
-    canparksSpots,
-    filteredCanparksSpots,
     mySpots,
     swpcAlerts,
     filteredPskSpots,
@@ -148,12 +144,10 @@ export default function FocusLayout(props) {
     setShowSotaFilters,
     setShowWwffFilters,
     setShowWwbotaFilters,
-    setShowCanparksFilters,
     potaFilters,
     sotaFilters,
     wwffFilters,
     wwbotaFilters,
-    canparksFilters,
     mapLayers,
     toggleDeDxMarkers,
     toggleDXPaths,
@@ -166,8 +160,6 @@ export default function FocusLayout(props) {
     toggleSOTALabels,
     toggleWWBOTA,
     toggleWWBOTALabels,
-    toggleCANParks,
-    toggleCANParksLabels,
     toggleSatellites,
     togglePSKReporter,
     toggleWSJTX,
@@ -198,7 +190,6 @@ export default function FocusLayout(props) {
     showWWFF: toggleWWFF,
     showSOTA: toggleSOTA,
     showWWBOTA: toggleWWBOTA,
-    showCANParks: toggleCANParks,
     showSatellites: toggleSatellites,
     showPSKReporter: togglePSKReporter,
     showWSJTX: toggleWSJTX,
@@ -409,19 +400,6 @@ export default function FocusLayout(props) {
             wwbotaFilters={wwbotaFilters}
             setShowWwbotaFilters={setShowWwbotaFilters}
             filteredWwbotaSpots={filteredWwbotaSpots}
-            canparksData={canparksSpots.data}
-            canparksLoading={canparksSpots.loading}
-            canparksLastUpdated={canparksSpots.lastUpdated}
-            canparksLastChecked={canparksSpots.lastChecked}
-            showCANParks={mapLayers.showCANParks}
-            onToggleCANParks={toggleCANParks}
-            showCANParksLabels={mapLayers.showCANParksLabels}
-            toggleCANParksLabels={toggleCANParksLabels}
-            onCANParksSpotClick={handleParkSpotClick}
-            onCANParksHoverSpot={setHoveredSpot}
-            canparksFilters={canparksFilters}
-            setShowCanparksFilters={setShowCanparksFilters}
-            filteredCanparksSpots={filteredCanparksSpots}
           />
         );
       default:
@@ -452,7 +430,6 @@ export default function FocusLayout(props) {
         wwffSpots={bareMap ? [] : filteredWwffSpots ? filteredWwffSpots : wwffSpots.data}
         sotaSpots={bareMap ? [] : filteredSotaSpots ? filteredSotaSpots : sotaSpots.data}
         wwbotaSpots={bareMap ? [] : filteredWwbotaSpots ? filteredWwbotaSpots : wwbotaSpots.data}
-        canparksSpots={bareMap ? [] : filteredCanparksSpots ? filteredCanparksSpots : canparksSpots.data}
         mySpots={bareMap ? [] : mySpots.data}
         dxPaths={bareMap ? [] : dxClusterData.paths}
         dxFilters={dxFilters}
@@ -472,8 +449,6 @@ export default function FocusLayout(props) {
         showSOTALabels={mapLayers.showSOTALabels}
         showWWBOTA={mapLayers.showWWBOTA}
         showWWBOTALabels={mapLayers.showWWBOTALabels}
-        showCANParks={mapLayers.showCANParks}
-        showCANParksLabels={mapLayers.showCANParksLabels}
         showSatellites={mapLayers.showSatellites}
         showPSKReporter={mapLayers.showPSKReporter}
         showPSKPaths={mapLayers.showPSKPaths}

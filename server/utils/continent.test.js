@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { continentForCall, coarseContinentForCall, extractPrefixPart } from './continent.js';
+import { continentForCall, coarseContinentForCall, zoneForCall, extractPrefixPart } from './continent.js';
 
 describe('extractPrefixPart', () => {
   it('passes through simple calls', () => {
@@ -110,5 +110,30 @@ describe('continentForCall', () => {
         throw new Error('not loaded');
       }),
     ).toBe('OC');
+  });
+});
+
+describe('zoneForCall', () => {
+  const lookup = (call) => ({ W6XYZ: { cq: 3 }, G4ABC: { cq: '14' }, BAD1: { cq: 99 }, NOZONE: {} })[call] || null;
+
+  it('returns the cty.dat CQ zone as a number', () => {
+    expect(zoneForCall('W6XYZ', lookup)).toBe(3);
+    expect(zoneForCall('G4ABC', lookup)).toBe(14);
+  });
+
+  it('returns null when the zone is missing, invalid, or there is no lookup', () => {
+    expect(zoneForCall('NOZONE', lookup)).toBeNull();
+    expect(zoneForCall('BAD1', lookup)).toBeNull();
+    expect(zoneForCall('UNKNOWN', lookup)).toBeNull();
+    expect(zoneForCall('W6XYZ', null)).toBeNull();
+    expect(zoneForCall('', lookup)).toBeNull();
+  });
+
+  it('never throws when the lookup does', () => {
+    expect(
+      zoneForCall('W6XYZ', () => {
+        throw new Error('boom');
+      }),
+    ).toBeNull();
   });
 });

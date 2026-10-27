@@ -6,13 +6,23 @@
 const fs = require('fs');
 const path = require('path');
 const { maidenheadToLatLon } = require('../server/utils/grid');
+const { resolveAppDirs } = require('./utils/appPaths');
 
-const ROOT_DIR = path.join(__dirname, '..');
+// ROOT_DIR is where the server writes (.env, config.json, data/). ASSET_DIR is
+// where bundled files live (dist/, public/, package.json). They are the same
+// directory in a checkout and differ only inside a packaged single-file
+// executable — see server/utils/appPaths.js.
+const { ASSET_DIR, ROOT_DIR, IS_PACKAGED } = resolveAppDirs({
+  moduleDir: __dirname,
+  packaged: Boolean(process.pkg),
+  execPath: process.execPath,
+  env: process.env,
+});
 
 // Read version from package.json as single source of truth
 const APP_VERSION = (() => {
   try {
-    const pkg = JSON.parse(fs.readFileSync(path.join(ROOT_DIR, 'package.json'), 'utf8'));
+    const pkg = JSON.parse(fs.readFileSync(path.join(ASSET_DIR, 'package.json'), 'utf8'));
     return pkg.version || '0.0.0';
   } catch {
     return '0.0.0';
@@ -21,10 +31,12 @@ const APP_VERSION = (() => {
 
 // Auto-create .env from .env.example on first run
 const envPath = path.join(ROOT_DIR, '.env');
-const envExamplePath = path.join(ROOT_DIR, '.env.example');
+const envExamplePath = path.join(ASSET_DIR, '.env.example');
 
 if (!fs.existsSync(envPath) && fs.existsSync(envExamplePath)) {
-  fs.copyFileSync(envExamplePath, envPath);
+  // read+write rather than copyFileSync so the template can come from a
+  // packaged executable's read-only snapshot
+  fs.writeFileSync(envPath, fs.readFileSync(envExamplePath));
   console.log('[Config] Created .env from .env.example');
   console.log('[Config] ⚠️  Please edit .env with your callsign and locator, then restart');
 }
@@ -47,6 +59,11 @@ if (fs.existsSync(envPath)) {
 
 const PORT = Number(process.env.PORT) || 3000;
 const HOST = process.env.HOST || '0.0.0.0';
+// Interface the HTTP and LAN HTTPS listeners bind to. HOST only names the
+// address shown in the startup banner; binding has always been every
+// interface, and many installs reach their dashboard from phones that way, so
+// that stays the default. BIND_HOST=127.0.0.1 keeps the server on this machine.
+const BIND_HOST = process.env.BIND_HOST || '0.0.0.0';
 
 // Trust proxy setting
 const TRUST_PROXY =
@@ -57,6 +74,11 @@ const TRUST_PROXY =
     : process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID
       ? 1
       : false;
+
+// Take the client IP from Cloudflare's CF-Connecting-IP header. Only safe when
+// the origin is reachable exclusively through Cloudflare (anyone reaching it
+// directly can forge the header), so it is off unless explicitly enabled.
+const TRUST_CLOUDFLARE = process.env.TRUST_CLOUDFLARE === 'true' || process.env.TRUST_CLOUDFLARE === '1';
 
 // Security: API key for write operations
 const API_WRITE_KEY = process.env.API_WRITE_KEY || '';
@@ -278,9 +300,13 @@ module.exports = {
   CONFIG,
   APP_VERSION,
   ROOT_DIR,
+  ASSET_DIR,
+  IS_PACKAGED,
   PORT,
   HOST,
+  BIND_HOST,
   TRUST_PROXY,
+  TRUST_CLOUDFLARE,
   API_WRITE_KEY,
   METRICS_AUTH_KEY,
   ITURHFPROP_URL,

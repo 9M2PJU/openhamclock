@@ -46,13 +46,17 @@ COUNTER=0
 cp /tmp/gfonts-raw.css "$VENDOR_DIR/fonts/fonts.css"
 
 # Extract all woff2 URLs, download them, rewrite CSS
-grep -oP 'https://fonts\.gstatic\.com/[^\)]+' /tmp/gfonts-raw.css | sort -u | while read url; do
+grep -oE 'https://fonts\.gstatic\.com/[^)]+' /tmp/gfonts-raw.css | sort -u | while read url; do
   COUNTER=$((COUNTER + 1))
   FILENAME="font-${COUNTER}.woff2"
   curl -sL "$url" -o "$VENDOR_DIR/fonts/$FILENAME"
   # Escape URL for sed (slashes)
   ESCAPED_URL=$(echo "$url" | sed 's/[\/&]/\\&/g')
-  sed -i "s|$ESCAPED_URL|/vendor/fonts/$FILENAME|g" "$VENDOR_DIR/fonts/fonts.css"
+  # Write to a temp file and move it into place rather than `sed -i`: GNU sed
+  # takes `-i` alone, but BSD sed (macOS) reads the next argument as a backup
+  # suffix and fails, aborting the whole download on a Mac.
+  sed "s|$ESCAPED_URL|/vendor/fonts/$FILENAME|g" "$VENDOR_DIR/fonts/fonts.css" > "$VENDOR_DIR/fonts/fonts.css.tmp"
+  mv "$VENDOR_DIR/fonts/fonts.css.tmp" "$VENDOR_DIR/fonts/fonts.css"
 done
 
 # Clean up

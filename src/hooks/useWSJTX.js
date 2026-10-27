@@ -11,11 +11,13 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useVisibilityRefresh } from './useVisibilityRefresh';
 import { apiFetch } from '../utils/apiFetch';
 import { getRelaySessionId } from '../utils/relaySession';
+import { relayReadHeaders } from '../utils/relaySign';
 
 const POLL_FAST = 2000; // 2s when data is flowing
 const POLL_SLOW = 30000; // 30s idle check — is anything connected?
 const API_URL = '/api/wsjtx';
 const DECODES_URL = '/api/wsjtx/decodes';
+const WSJTX_SSE_EVENTS = new Set(['decode', 'status', 'qso', 'clear', 'wspr', 'decode-update']);
 
 export function useWSJTX(enabled = true) {
   const [sessionId] = useState(getRelaySessionId);
@@ -58,7 +60,8 @@ export function useWSJTX(enabled = true) {
       const base = lastTimestamp.current ? `${DECODES_URL}?since=${lastTimestamp.current}` : DECODES_URL;
       const sep = base.includes('?') ? '&' : '?';
       const url = `${base}${sep}session=${sessionId}`;
-      const res = await apiFetch(url);
+      // Relay read token when this browser holds the Cloud Relay key ({} otherwise)
+      const res = await apiFetch(url, { headers: await relayReadHeaders(sessionId) });
       if (!res) return; // backed off globally
       if (res.status === 429) {
         // Back off for 30 seconds on rate limit
@@ -103,7 +106,7 @@ export function useWSJTX(enabled = true) {
     // Skip if we're in a rate-limit backoff window
     if (Date.now() < backoffUntil.current) return;
     try {
-      const res = await apiFetch(`${API_URL}?session=${sessionId}`);
+      const res = await apiFetch(`${API_URL}?session=${sessionId}`, { headers: await relayReadHeaders(sessionId) });
       if (!res) return; // backed off globally
       if (res.status === 429) {
         backoffUntil.current = Date.now() + 30000;
@@ -143,7 +146,11 @@ export function useWSJTX(enabled = true) {
       // But if SSE has gone silent for >30 s, assume rig-bridge disconnected and
       // resume polling so the UI doesn't show stale data indefinitely.
       if (isLocalMode.current) {
-        if (Date.now() - lastSseAt.current < SSE_STALE_MS) return;
+        if (Date.now() - lastSseAt.current < SSE_STALE_MS) {
+          // Keep the loop alive so the staleness check above runs again later.
+          timer = setTimeout(tick, POLL_FAST);
+          return;
+        }
         isLocalMode.current = false; // SSE appears stale — fall back to polling
       }
       const interval = hasDataFlowing.current ? POLL_FAST : POLL_SLOW;
@@ -177,6 +184,15 @@ export function useWSJTX(enabled = true) {
     if (!enabled) return;
     const handler = (e) => {
       const msg = e.detail;
+
+      // rig-bridge sends plugin-init on every SSE connect and also streams
+      // APRS and other plugin data. Only actual WSJT-X data means SSE is the
+      // source; anything else must not stop server polling.
+      const carriesWsjtx =
+        msg.type === 'plugin-init'
+          ? Array.isArray(msg.decodes) && msg.decodes.length > 0
+          : WSJTX_SSE_EVENTS.has(msg.event);
+      if (!carriesWsjtx) return;
 
       // Mark local mode on the first SSE message and refresh the heartbeat on every one.
       // The polling loop checks lastSseAt and resets isLocalMode if SSE goes silent for >30 s.

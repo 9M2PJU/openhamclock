@@ -28,8 +28,11 @@ const {
   CONFIG,
   APP_VERSION,
   ROOT_DIR,
+  ASSET_DIR,
+  IS_PACKAGED,
   PORT,
   HOST,
+  BIND_HOST,
   API_WRITE_KEY,
   METRICS_AUTH_KEY,
   ITURHFPROP_URL,
@@ -92,10 +95,11 @@ const app = express();
 
 // ── Apply middleware (security, rate limiting, compression, caching, monitoring) ──
 const applyMiddleware = require('./server/middleware');
-const { endpointStats, writeLimiter, requireWriteAuth } = applyMiddleware(app, {
+const { endpointStats, writeLimiter, ingestLimiter, requireWriteAuth, INTERNAL_TOKEN } = applyMiddleware(app, {
   CONFIG,
   PORT,
   TRUST_PROXY: config.TRUST_PROXY,
+  TRUST_CLOUDFLARE: config.TRUST_CLOUDFLARE,
   API_WRITE_KEY,
   CORS_ORIGINS,
 });
@@ -110,6 +114,8 @@ const ctx = {
   CONFIG,
   APP_VERSION,
   ROOT_DIR,
+  ASSET_DIR,
+  IS_PACKAGED,
   PORT,
   HOST,
   ITURHFPROP_URL,
@@ -146,6 +152,8 @@ const ctx = {
   upstream,
   requireWriteAuth,
   writeLimiter,
+  ingestLimiter,
+  INTERNAL_TOKEN,
   endpointStats,
   maintainCache,
 };
@@ -177,8 +185,10 @@ Object.assign(ctx, {
 });
 
 // ── Serve static files ──
-const distDir = path.join(ROOT_DIR, 'dist');
-const publicDir = path.join(ROOT_DIR, 'public');
+// Bundled frontend + static files come from ASSET_DIR (the repo root, or the
+// read-only snapshot inside a packaged executable). Writes go to ROOT_DIR.
+const distDir = path.join(ASSET_DIR, 'dist');
+const publicDir = path.join(ASSET_DIR, 'public');
 const distExists = fs.existsSync(path.join(distDir, 'index.html'));
 
 const staticOptions = {
@@ -252,7 +262,6 @@ Object.assign(ctx, spaceWeatherExports);
 // 3. Remaining routes (can use callsign + space-weather exports)
 require('./server/routes/rotator')(app, ctx);
 require('./server/routes/spots')(app, ctx);
-require('./server/routes/canparks')(app, ctx);
 require('./server/routes/emcomm')(app, ctx);
 const swpcAlertsExports = require('./server/routes/swpc-alerts')(app, ctx);
 Object.assign(ctx, swpcAlertsExports); // refreshSwpcAlerts + onSwpcAlertsRefreshed (used by push.js)
@@ -294,6 +303,7 @@ require('./server/routes/repeaters')(app, ctx); // hearham.com repeater director
 require('./server/routes/pota-spot')(app, ctx); // POTA activator self-spotting + park lookup
 require('./server/routes/aprs')(app, ctx);
 require('./server/routes/field-reports')(app, ctx); // EmComm field reports (Winlink Express CSV ingest)
+require('./server/routes/incident')(app, ctx); // shared EmComm incident: roster, event log, reports across sites
 require('./server/routes/wsjtx')(app, ctx);
 require('./server/routes/n1mm')(app, ctx);
 require('./server/routes/openapi')(app, ctx); // Open QSO-layer API (#1015) — see docs/API.md
@@ -306,6 +316,24 @@ require('./server/routes/config-routes')(app, ctx);
 require('./server/routes/geo-time')(app, ctx);
 require('./server/routes/admin')(app, ctx);
 require('./server/routes/push')(app, ctx); // Web Push (dormant without VAPID keys); needs swpc-alerts exports
+require('./server/routes/ibp')(app, ctx); // NCDXF/IBP beacon SNR measurements from Rig Bridge KiwiSDR monitors
+require('./server/routes/hams-at')(app, ctx); // hams.at satellite pass alerts (key passed through, never stored)
+require('./server/routes/control')(app, ctx); // Remote-control API + phone remote (docs/API.md#remote-control-api)
+require('./server/routes/solar-outlook')(app, ctx); // SWPC 27-day outlook (Contests pills + Solar Outlook panel)
+require('./server/routes/benchmark')(app, ctx); // Station benchmark — taps the RBN stream via ctx.onRbnSpot
+require('./server/routes/mqtt-publish')(app, ctx); // Outbound MQTT + Home Assistant discovery (dormant without MQTT_PUBLISH_URL)
+require('./server/routes/noaa-scales')(app, ctx); // NOAA R/S/G scales + 3-day forecast (NOAA Scales panel)
+require('./server/routes/dst')(app, ctx); // Kyoto Dst index with SWPC fallback (Dst panel)
+require('./server/routes/space-wx-activity')(app, ctx); // aurora peak + D-RAP max for the auto space-weather layer
+require('./server/routes/space-launches')(app, ctx); // Launch Library 2 upcoming launches (Space Launches panel + layer)
+require('./server/routes/tropical')(app, ctx); // NHC + JTWC tropical cyclones (Tropical panel + layer)
+require('./server/routes/fire-weather')(app, ctx); // NWS Red Flag / Fire Weather Watch alerts
+require('./server/routes/ndbc')(app, ctx); // NDBC buoy observations (Marine panel + layer)
+require('./server/routes/wefax')(app, ctx); // NWS radiofax chart catalogue + GIF proxy (WEFAX panel)
+require('./server/routes/motd')(app, ctx); // Message of the day (env MOTD or /api/admin/motd)
+require('./server/routes/netlogger')(app, ctx); // NetLogger live nets proxy (60 s cache)
+require('./server/routes/hamalert')(app, ctx); // HamAlert server feed (dormant without HAMALERT_USER/PASS)
+require('./server/routes/balloons')(app, ctx); // SondeHub Amateur balloon telemetry proxy (2 min cache)
 
 // Subsystem health background refresher (read by /api/health).
 const health = require('./server/health');
@@ -332,8 +360,8 @@ app.get('/metrics', async (req, res) => {
 
 // ── Catch-all for SPA ──
 app.get('*', (req, res) => {
-  const distIndex = path.join(ROOT_DIR, 'dist', 'index.html');
-  const publicIndex = path.join(ROOT_DIR, 'public', 'index.html');
+  const distIndex = path.join(distDir, 'index.html');
+  const publicIndex = path.join(publicDir, 'index.html');
   const indexPath = fs.existsSync(distIndex) ? distIndex : publicIndex;
   res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
   res.setHeader('CDN-Cache-Control', 'no-store'); // Cloudflare: never cache at edge
@@ -361,64 +389,77 @@ app.use((err, req, res, next) => {
 });
 
 // ── Start server ──
-app.listen(PORT, '0.0.0.0', () => {
-  console.log('');
-  console.log('╔═══════════════════════════════════════════════════════╗');
-  console.log('║                                                       ║');
-  console.log('║   ██████╗ ██████╗ ███████╗███╗   ██╗                  ║');
-  console.log('║  ██╔═══██╗██╔══██╗██╔════╝████╗  ██║                  ║');
-  console.log('║  ██║   ██║██████╔╝█████╗  ██╔██╗ ██║                  ║');
-  console.log('║  ██║   ██║██╔═══╝ ██╔══╝  ██║╚██╗██║                  ║');
-  console.log('║  ╚██████╔╝██║     ███████╗██║ ╚████║                  ║');
-  console.log('║   ╚═════╝ ╚═╝     ╚══════╝╚═╝  ╚═══╝                  ║');
-  console.log('║                                                       ║');
-  console.log('║  ██╗  ██╗ █████╗ ███╗   ███╗ ██████╗██╗     ██╗  ██╗  ║');
-  console.log('║  ██║  ██║██╔══██╗████╗ ████║██╔════╝██║     ██║ ██╔╝  ║');
-  console.log('║  ███████║███████║██╔████╔██║██║     ██║     █████╔╝   ║');
-  console.log('║  ██╔══██║██╔══██║██║╚██╔╝██║██║     ██║     ██╔═██╗   ║');
-  console.log('║  ██║  ██║██║  ██║██║ ╚═╝ ██║╚██████╗███████╗██║  ██╗  ║');
-  console.log('║  ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝     ╚═╝ ╚═════╝╚══════╝╚═╝  ╚═╝  ║');
-  console.log('║                                                       ║');
-  console.log('╚═══════════════════════════════════════════════════════╝');
-  console.log('');
+// BIND_HOST (server/config.js): every interface by default; 127.0.0.1 keeps
+// the server on this machine.
+app.listen(PORT, BIND_HOST, () => {
+  // The startup banner is ~40 lines; write it straight to stdout so the
+  // console rate limiter (20-line burst) cannot drop the "Server running at"
+  // line that tells the user where to point their browser.
+  const say = (line = '') => process.stdout.write(`${line}\n`);
+  say('');
+  say('╔═══════════════════════════════════════════════════════╗');
+  say('║                                                       ║');
+  say('║   ██████╗ ██████╗ ███████╗███╗   ██╗                  ║');
+  say('║  ██╔═══██╗██╔══██╗██╔════╝████╗  ██║                  ║');
+  say('║  ██║   ██║██████╔╝█████╗  ██╔██╗ ██║                  ║');
+  say('║  ██║   ██║██╔═══╝ ██╔══╝  ██║╚██╗██║                  ║');
+  say('║  ╚██████╔╝██║     ███████╗██║ ╚████║                  ║');
+  say('║   ╚═════╝ ╚═╝     ╚══════╝╚═╝  ╚═══╝                  ║');
+  say('║                                                       ║');
+  say('║  ██╗  ██╗ █████╗ ███╗   ███╗ ██████╗██╗     ██╗  ██╗  ║');
+  say('║  ██║  ██║██╔══██╗████╗ ████║██╔════╝██║     ██║ ██╔╝  ║');
+  say('║  ███████║███████║██╔████╔██║██║     ██║     █████╔╝   ║');
+  say('║  ██╔══██║██╔══██║██║╚██╔╝██║██║     ██║     ██╔═██╗   ║');
+  say('║  ██║  ██║██║  ██║██║ ╚═╝ ██║╚██████╗███████╗██║  ██╗  ║');
+  say('║  ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝     ╚═╝ ╚═════╝╚══════╝╚═╝  ╚═╝  ║');
+  say('║                                                       ║');
+  say('╚═══════════════════════════════════════════════════════╝');
+  say('');
   const displayHost = HOST === '0.0.0.0' ? 'localhost' : HOST;
-  console.log(`  \uD83C\uDF10 OpenHamClock v${APP_VERSION}`);
-  console.log(`  \uD83C\uDF10 Server running at http://${displayHost}:${PORT}`);
-  if (HOST === '0.0.0.0') {
-    console.log(`  \uD83D\uDD17 Network access: http://<your-ip>:${PORT}`);
+  say(`  \uD83C\uDF10 OpenHamClock v${APP_VERSION}`);
+  say(`  \uD83C\uDF10 Server running at http://${displayHost}:${PORT}`);
+  if (BIND_HOST === '0.0.0.0' || BIND_HOST === '::') {
+    say(`  \uD83D\uDD17 Network access: http://<your-ip>:${PORT}`);
+  } else {
+    say(`  \uD83D\uDD12 Listening on ${BIND_HOST} only (BIND_HOST)`);
   }
-  console.log('  \uD83D\uDCE1 API proxy enabled for NOAA, POTA, SOTA, DX Cluster');
-  console.log(`  \uD83D\uDCCB Log level: ${LOG_LEVEL} (set LOG_LEVEL=debug for verbose)`);
+  say('  \uD83D\uDCE1 API proxy enabled for NOAA, POTA, SOTA, DX Cluster');
+  say(`  \uD83D\uDCCB Log level: ${LOG_LEVEL} (set LOG_LEVEL=debug for verbose)`);
   if (WSJTX_ENABLED) {
-    console.log(`  \uD83D\uDD0A WSJT-X UDP listener on port ${WSJTX_UDP_PORT}`);
+    say(`  \uD83D\uDD0A WSJT-X UDP listener on port ${WSJTX_UDP_PORT}`);
   }
   if (config.WSJTX_RELAY_KEY) {
-    console.log(`  \uD83D\uDD01 WSJT-X relay endpoint enabled (POST /api/wsjtx/relay)`);
+    say(`  \uD83D\uDD01 WSJT-X relay endpoint enabled (POST /api/wsjtx/relay)`);
   }
   if (N1MM_ENABLED) {
-    console.log(`  \uD83D\uDCE5 N1MM UDP listener on port ${N1MM_UDP_PORT}`);
+    say(`  \uD83D\uDCE5 N1MM UDP listener on port ${N1MM_UDP_PORT}`);
   }
   if (AUTO_UPDATE_ENABLED) {
-    console.log(`  \uD83D\uDD04 Auto-update enabled every ${AUTO_UPDATE_INTERVAL_MINUTES || 60} minutes`);
+    say(`  \uD83D\uDD04 Auto-update enabled every ${AUTO_UPDATE_INTERVAL_MINUTES || 60} minutes`);
   }
   if (!API_WRITE_KEY) {
-    console.log('');
-    console.log(
+    say('');
+    say(
       '  \u26A0\uFE0F  API_WRITE_KEY is not set \u2014 write endpoints (settings, update, rotator, QRZ) are unprotected.',
     );
-    console.log('     Set API_WRITE_KEY in .env to secure POST endpoints.');
+    say('     Set API_WRITE_KEY in .env to secure POST endpoints.');
   }
-  console.log('  \uD83D\uDDA5\uFE0F  Open your browser to start using OpenHamClock');
-  console.log('');
+  say('  \uD83D\uDDA5\uFE0F  Open your browser to start using OpenHamClock');
+  say('');
+  if (IS_PACKAGED) {
+    say(`  \uD83D\uDCC1 Settings and data folder: ${ROOT_DIR}`);
+    say('     (.env, config.json and data/ live here; set OPENHAMCLOCK_HOME to move them)');
+    say('');
+  }
   if (CONFIG.callsign !== 'N0CALL') {
-    console.log(`  \uD83D\uDCFB Station: ${CONFIG.callsign} @ ${CONFIG.gridSquare}`);
+    say(`  \uD83D\uDCFB Station: ${CONFIG.callsign} @ ${CONFIG.gridSquare}`);
   } else {
-    console.log('  \u26A0\uFE0F  Configure your station in .env file');
+    say('  \u26A0\uFE0F  Configure your station in .env file');
   }
-  console.log('');
-  console.log('  In memory of Elwood Downey, WB0OEW');
-  console.log('  73 de OpenHamClock contributors');
-  console.log('');
+  say('');
+  say('  In memory of Elwood Downey, WB0OEW');
+  say('  73 de OpenHamClock contributors');
+  say('');
 
   ctx.startAutoUpdateScheduler();
 
@@ -456,7 +497,36 @@ app.listen(PORT, '0.0.0.0', () => {
   setTimeout(() => {
     if (ctx.prewarmN0NBH) ctx.prewarmN0NBH();
   }, 3000);
+
+  // Packaged executable launched interactively (double-click / terminal):
+  // open the app in the default browser so "download and run" is all it takes.
+  // Headless (systemd, no TTY) and OPEN_BROWSER=false skip this.
+  if (IS_PACKAGED && process.stdout.isTTY && process.env.OPEN_BROWSER !== 'false') {
+    openInBrowser(`http://localhost:${PORT}`);
+  }
+
+  // Optional HTTPS on the LAN (HTTPS_PORT) — a secure context for browsers
+  // opening a Pi's dashboard by IP, which microphone access (Decoder panel)
+  // requires. See server/utils/lanHttps.js.
+  require('./server/utils/lanHttps').startLanHttps(app, { dataDir: path.join(ROOT_DIR, 'data'), host: BIND_HOST });
 });
+
+function openInBrowser(url) {
+  const { spawn } = require('child_process');
+  const [cmd, args] =
+    process.platform === 'win32'
+      ? ['cmd', ['/c', 'start', '', url]]
+      : process.platform === 'darwin'
+        ? ['open', [url]]
+        : ['xdg-open', [url]];
+  try {
+    const child = spawn(cmd, args, { detached: true, stdio: 'ignore' });
+    child.on('error', () => {});
+    child.unref();
+  } catch {
+    /* no desktop session — the banner already shows the URL */
+  }
+}
 
 // Graceful shutdown
 process.on('SIGTERM', () => {

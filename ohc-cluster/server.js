@@ -18,9 +18,9 @@
  *   NODE_CALL     node callsign shown to telnet users     (default K0CJH-2)
  *   RBN_ENABLED   set to '0' to disable RBN ingest
  *   HAMQTH_ENABLED set to '0' to disable HamQTH ingest
- *   POTA_ENABLED / SOTA_ENABLED / DXSUMMIT_ENABLED / DXSPIDER_ENABLED /
- *   WWFF_ENABLED / PNP_ENABLED
+ *   POTA_ENABLED / SOTA_ENABLED / DXSPIDER_ENABLED / WWFF_ENABLED / PNP_ENABLED
  *                 set to '0' to disable the matching human-spot poller
+ *   DXSUMMIT_ENABLED  set to '1' to enable dxsummit.fi polling (off by default)
  *   DXSPIDER_PROXY_URL  our proxy's base URL (defaults to production)
  *   LOG_LEVEL     debug | info | warn   (default info)
  */
@@ -120,6 +120,7 @@ const pollerDefs = [
   { flag: 'SOTA_ENABLED', name: 'sota', url: 'https://api2.sota.org.uk/api/spots/60/all', parse: parseSotaSpots },
   {
     flag: 'DXSUMMIT_ENABLED',
+    optIn: true, // dxsummit.fi is off unless explicitly enabled
     name: 'dxsummit',
     url: 'http://www.dxsummit.fi/api/v1/spots?limit=50',
     parse: parseDxSummitSpots,
@@ -135,7 +136,8 @@ const pollerDefs = [
 ];
 const pollers = [];
 for (const def of pollerDefs) {
-  if (process.env[def.flag] === '0') continue;
+  const enabled = def.optIn ? process.env[def.flag] === '1' : process.env[def.flag] !== '0';
+  if (!enabled) continue;
   const poller = new JsonPoller({
     name: def.name,
     url: def.url,

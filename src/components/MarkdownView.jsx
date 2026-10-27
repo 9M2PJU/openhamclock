@@ -5,7 +5,9 @@
  * extras): #/##/### headings (any level 1–6 accepted), paragraphs,
  * **bold**, *italic* / _italic_, `code`, fenced code blocks, links,
  * unordered/ordered lists (one nesting level), tables, blockquotes,
- * and horizontal rules.
+ * horizontal rules, images (`![alt](src)`), and the manual's screenshot
+ * galleries (an HTML `<table>` of `<img>` + `<sub>` cells, which GitHub
+ * renders side by side) — those are parsed into a grid, never injected.
  *
  * Everything renders as React elements — no dangerouslySetInnerHTML.
  * Headings get GitHub-style slug ids (utils/slugify.js) so #anchors
@@ -69,11 +71,15 @@ export function stripInlineMarkdown(text) {
 
 // ── Inline parsing ──────────────────────────────────────────────────
 
-// Ordered alternation: code span, bold, link, *italic*, _italic_
+// Ordered alternation: code span, bold, image, link, *italic*, _italic_
 const INLINE_RE =
-  /`([^`]+)`|\*\*([^*]+)\*\*|\[([^\]]+)\]\(([^)\s]+)\)|\*([^*\s][^*]*)\*|(^|[\s(])_([^_]+)_(?=$|[\s.,;:!?)])/;
+  /`([^`]+)`|\*\*([^*]+)\*\*|!\[([^\]]*)\]\(([^)\s]+)\)|\[([^\]]+)\]\(([^)\s]+)\)|\*([^*\s][^*]*)\*|(^|[\s(])_([^_]+)_(?=$|[\s.,;:!?)])/;
 
-function parseInline(text, keyPrefix, linkRenderer) {
+const defaultImageRenderer = (alt, src, key) => (
+  <img key={key} src={src} alt={alt} loading="lazy" style={{ maxWidth: '100%', borderRadius: '6px' }} />
+);
+
+export function parseInline(text, keyPrefix, linkRenderer, imageRenderer = defaultImageRenderer) {
   const nodes = [];
   let rest = String(text);
   let i = 0;
@@ -101,15 +107,17 @@ function parseInline(text, keyPrefix, linkRenderer) {
         </code>,
       );
     } else if (m[2] !== undefined) {
-      nodes.push(<strong key={key}>{parseInline(m[2], key, linkRenderer)}</strong>);
-    } else if (m[3] !== undefined) {
-      nodes.push(linkRenderer(m[3], m[4], key));
+      nodes.push(<strong key={key}>{parseInline(m[2], key, linkRenderer, imageRenderer)}</strong>);
+    } else if (m[4] !== undefined) {
+      nodes.push(imageRenderer(m[3] || '', m[4], key));
     } else if (m[5] !== undefined) {
-      nodes.push(<em key={key}>{parseInline(m[5], key, linkRenderer)}</em>);
+      nodes.push(linkRenderer(m[5], m[6], key));
     } else if (m[7] !== undefined) {
-      // _italic_ — m[6] is the leading whitespace/paren we must keep
-      if (m[6]) nodes.push(m[6]);
-      nodes.push(<em key={key}>{parseInline(m[7], key, linkRenderer)}</em>);
+      nodes.push(<em key={key}>{parseInline(m[7], key, linkRenderer, imageRenderer)}</em>);
+    } else if (m[9] !== undefined) {
+      // _italic_ — m[8] is the leading whitespace/paren we must keep
+      if (m[8]) nodes.push(m[8]);
+      nodes.push(<em key={key}>{parseInline(m[9], key, linkRenderer, imageRenderer)}</em>);
     }
     rest = rest.slice(m.index + m[0].length);
   }
@@ -118,7 +126,7 @@ function parseInline(text, keyPrefix, linkRenderer) {
 
 // ── Block parsing ───────────────────────────────────────────────────
 
-function parseBlocks(markdown) {
+export function parseBlocks(markdown) {
   const lines = String(markdown || '')
     .replace(/\r\n?/g, '\n')
     .split('\n');
@@ -171,6 +179,34 @@ function parseBlocks(markdown) {
         i++;
       }
       blocks.push({ type: 'blockquote', text: quote.join('\n') });
+      continue;
+    }
+
+    // Screenshot gallery: an HTML <table> whose cells hold <img> + <sub>
+    // (the manual's side-by-side layout on GitHub). Parsed, not injected.
+    if (/^<table\b/i.test(trimmed)) {
+      const html = [];
+      while (i < lines.length) {
+        html.push(lines[i]);
+        const done = /<\/table>/i.test(lines[i]);
+        i++;
+        if (done) break;
+      }
+      const src = html.join('\n');
+      const rows = src.split(/<tr\b[^>]*>/i).slice(1);
+      const cols = rows.length ? (rows[0].match(/<td\b/gi) || []).length : 0;
+      const items = [];
+      const cellRe = /<img\b([^>]*)>(?:\s*<br\s*\/?>)?\s*(?:<sub>([\s\S]*?)<\/sub>)?/gi;
+      let m;
+      while ((m = cellRe.exec(src))) {
+        const attrs = m[1] || '';
+        const srcAttr = attrs.match(/\bsrc="([^"]+)"/);
+        if (!srcAttr) continue;
+        const altAttr = attrs.match(/\balt="([^"]*)"/);
+        const alt = altAttr ? altAttr[1] : '';
+        items.push({ src: srcAttr[1], alt, caption: (m[2] || alt).trim() });
+      }
+      if (items.length) blocks.push({ type: 'gallery', items, cols: Math.max(1, cols || 2) });
       continue;
     }
 
@@ -239,6 +275,7 @@ function parseBlocks(markdown) {
         /^(-{3,}|\*{3,}|_{3,})$/.test(nt) ||
         /^>\s?/.test(nt) ||
         nt.startsWith('|') ||
+        /^<table\b/i.test(nt) ||
         ulRe.test(nxt) ||
         olRe.test(nxt)
       )
@@ -269,8 +306,38 @@ const headingStyles = {
   6: { fontSize: '12px', color: 'var(--text-muted)', margin: '14px 0 6px' },
 };
 
-export const MarkdownView = ({ markdown }) => {
+/**
+ * @param {object} props
+ * @param {string} props.markdown
+ * @param {(src:string)=>string} [props.resolveImage] maps an image path as
+ *   written in the markdown (e.g. "images/manual/x.jpg") to a URL the app
+ *   can load — bundled asset, served file, or a GitHub raw URL.
+ */
+export const MarkdownView = ({ markdown, resolveImage }) => {
   const rootRef = useRef(null);
+
+  const renderImage = useCallback(
+    (alt, src, key) => {
+      const url = resolveImage ? resolveImage(src) : src;
+      return (
+        <img
+          key={key}
+          src={url}
+          alt={alt}
+          loading="lazy"
+          style={{
+            display: 'block',
+            maxWidth: '100%',
+            height: 'auto',
+            margin: '4px 0',
+            borderRadius: '6px',
+            border: '1px solid var(--border-color)',
+          }}
+        />
+      );
+    },
+    [resolveImage],
+  );
 
   const scrollToAnchor = useCallback((id) => {
     const root = rootRef.current;
@@ -331,14 +398,14 @@ export const MarkdownView = ({ markdown }) => {
           const Tag = `h${block.level}`;
           return (
             <Tag key={key} id={id} style={{ ...headingStyles[block.level], scrollMarginTop: '8px' }}>
-              {parseInline(block.text, key, renderLink)}
+              {parseInline(block.text, key, renderLink, renderImage)}
             </Tag>
           );
         }
         case 'paragraph':
           return (
             <p key={key} style={{ lineHeight: 1.6, margin: '0 0 12px', color: 'var(--text-secondary)' }}>
-              {parseInline(block.text, key, renderLink)}
+              {parseInline(block.text, key, renderLink, renderImage)}
             </p>
           );
         case 'hr':
@@ -356,7 +423,7 @@ export const MarkdownView = ({ markdown }) => {
                 color: 'var(--text-muted)',
               }}
             >
-              {parseInline(block.text, key, renderLink)}
+              {parseInline(block.text, key, renderLink, renderImage)}
             </blockquote>
           );
         case 'codeblock':
@@ -384,12 +451,12 @@ export const MarkdownView = ({ markdown }) => {
             <ListTag key={key} style={{ margin: '0 0 12px', paddingLeft: '24px', color: 'var(--text-secondary)' }}>
               {block.items.map((item, ii) => (
                 <li key={`${key}-${ii}`} style={{ marginBottom: '6px', lineHeight: 1.55 }}>
-                  {parseInline(item.text, `${key}-${ii}`, renderLink)}
+                  {parseInline(item.text, `${key}-${ii}`, renderLink, renderImage)}
                   {item.children.length > 0 && (
                     <ul style={{ margin: '6px 0 0', paddingLeft: '20px' }}>
                       {item.children.map((child, ci) => (
                         <li key={`${key}-${ii}-${ci}`} style={{ marginBottom: '4px' }}>
-                          {parseInline(child, `${key}-${ii}-${ci}`, renderLink)}
+                          {parseInline(child, `${key}-${ii}-${ci}`, renderLink, renderImage)}
                         </li>
                       ))}
                     </ul>
@@ -417,7 +484,7 @@ export const MarkdownView = ({ markdown }) => {
                           whiteSpace: 'nowrap',
                         }}
                       >
-                        {parseInline(cell, `${key}-h${ci}`, renderLink)}
+                        {parseInline(cell, `${key}-h${ci}`, renderLink, renderImage)}
                       </th>
                     ))}
                   </tr>
@@ -436,7 +503,7 @@ export const MarkdownView = ({ markdown }) => {
                             verticalAlign: 'top',
                           }}
                         >
-                          {parseInline(cell, `${key}-r${ri}-${ci}`, renderLink)}
+                          {parseInline(cell, `${key}-r${ri}-${ci}`, renderLink, renderImage)}
                         </td>
                       ))}
                     </tr>
@@ -445,11 +512,34 @@ export const MarkdownView = ({ markdown }) => {
               </table>
             </div>
           );
+        case 'gallery':
+          return (
+            <div
+              key={key}
+              style={{
+                display: 'grid',
+                gridTemplateColumns: `repeat(${block.cols}, minmax(0, 1fr))`,
+                gap: '10px',
+                margin: '0 0 16px',
+              }}
+            >
+              {block.items.map((it, ii) => (
+                <figure key={`${key}-${ii}`} style={{ margin: 0, minWidth: 0 }}>
+                  {renderImage(it.alt, it.src, `${key}-${ii}-img`)}
+                  {it.caption && (
+                    <figcaption style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>
+                      {it.caption}
+                    </figcaption>
+                  )}
+                </figure>
+              ))}
+            </div>
+          );
         default:
           return null;
       }
     });
-  }, [blocks, renderLink]);
+  }, [blocks, renderLink, renderImage]);
 
   return (
     <div ref={rootRef} style={{ fontSize: '13px', minWidth: 0 }}>
