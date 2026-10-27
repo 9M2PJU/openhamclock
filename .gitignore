@@ -142,3 +142,14 @@ parts/
 prime/
 stage/
 .snapcraft/
+
+# Android TV wrapper (local build outputs — the APK is built per machine)
+android-tv/app/build/
+android-tv/build/
+android-tv/.gradle/
+android-tv/local.properties
+*.apk
+*.aab
+
+# Roku channel (sideload package built by roku/package.sh)
+roku/dist/
