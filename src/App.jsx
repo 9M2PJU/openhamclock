@@ -763,6 +763,8 @@ const App = () => {
   // layout (APRS panel may be docked). Everyone else generates zero traffic.
   const aprsData = useAPRS({
     enabled: mapLayers.showAPRS || config.layout === 'emcomm' || config.layout === 'dockable',
+    // Centre of this viewer's internet APRS area (radius set in the APRS panel)
+    location: config.location,
   });
   const ibp = useIBP(config.location?.lat ?? null, config.location?.lon ?? null);
   const meshcomData = useMeshCom();
