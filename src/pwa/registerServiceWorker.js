@@ -94,7 +94,7 @@ function watchForUpdates(reg) {
   // A worker may already be parked in waiting (e.g. the toast was dismissed
   // last session).
   if (reg.waiting && navigator.serviceWorker.controller) {
-    showUpdateToast(reg.waiting);
+    handleWaitingWorker(reg.waiting);
   }
   reg.addEventListener('updatefound', () => {
     const installing = reg.installing;
@@ -103,10 +103,22 @@ function watchForUpdates(reg) {
       // 'installed' with an existing controller = an update, not first
       // install. First installs activate silently.
       if (installing.state === 'installed' && navigator.serviceWorker.controller) {
-        showUpdateToast(installing);
+        handleWaitingWorker(installing);
       }
     });
   });
+}
+
+/** A waiting worker for this page's own build is only the worker catching
+ *  up: navigations are network-first, so the page already runs the new
+ *  code and there is nothing to reload into. It is left to take over when
+ *  the tabs close (forcing skipWaiting here was seen to stall activation
+ *  and the next navigation behind it). The toast is for a worker from a
+ *  different build — one a tab running newer code registered. */
+function handleWaitingWorker(worker) {
+  const workerVersion = new URL(worker.scriptURL).searchParams.get('v');
+  if (workerVersion === VERSION) return;
+  showUpdateToast(worker);
 }
 
 /** Unregister everything and clear ohc-* caches (the ?nosw escape hatch).
